@@ -53,6 +53,7 @@ The client is a web application: any device on the venue network — tablet, lap
 - Per-technician cue filter — each operator sees only their relevant cues
 - Personal cue categories — each operator organizes their own cues into freely named categories (e.g. QLab, Ableton Live, console, spatial, music) for grouping and color accents
 - Notes displayed alongside the script — side by side on wide screens, or as tappable help bubbles anchored to their line on narrow screens
+- Multilingual UI — per-device language preference; English and French at launch (see UI localization)
 - Red frame peripheral warning on pre-cue alert
 - Independent browsing mode without disrupting other clients (see Multi-Operator Protocol)
 - Persistent footer — current cue, next cue, estimated time to next cue
@@ -375,6 +376,16 @@ The fuzzy-matching normalization pipeline adapts per language:
 
 - RTL scripts (Arabic, Hebrew) render via Flutter's bidi support — a client concern; matching is script-agnostic
 - Cue shorthand tokens are Latin-script with explicit delimiters, isolated from bidi runs, so notation parses identically inside RTL text
+
+### UI localization
+
+Distinct from script languages: the **application UI itself is multilingual**. Launch languages are **English and French**; more follow once the app is stable.
+
+- UI language is a **per-device preference** — the sound operator can run French while the LX operator runs English on the same show
+- Applies everywhere text is shown: client, prep pages, warnings, banners, import reports
+- Design rule enforced by the protocol: WebSocket messages carry **typed events and parameters, never display prose** — each client renders warnings and banners in its own UI language. Nothing localized ever crosses the wire
+- Flutter's standard i18n tooling (ARB files) for the client; the same string catalogs serve the browser-delivered prep pages
+- Show content (script text, cue labels, notes) is never translated — it displays exactly as authored
 
 ---
 
