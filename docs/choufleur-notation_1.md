@@ -222,7 +222,7 @@ The five built-ins are always present; custom entries follow the `custom` rule o
 ```
 
 - `weight` ∈ {1, 2, 3} — a re-anchoring confidence multiplier for the position tracker. 3 = "this phrase is unmistakable and unique in the play".
-- Scene boundaries are **implicit weight-3 landmarks**; they need no entry here. Explicit landmarks add re-anchoring points inside scenes.
+- Scene and act boundaries are **implicit weight-3 landmarks**; they need no entry here. Explicit landmarks add re-anchoring points inside scenes. Act boundaries additionally carry hold semantics (see PRD, *Show structure and holds*).
 
 ---
 
@@ -237,7 +237,7 @@ BCP-47 tags — in practice ISO 639-1 subtags (`fr`, `en`, `sv`, `ar`, `ja`), wi
 ### 8.2 Inheritance (most specific wins)
 
 ```
-line.lang  →  character.lang  →  scene.lang  →  show.defaultLang
+line.lang  →  character.lang  →  scene.lang  →  act.lang  →  show.defaultLang
 ```
 
 A `lang` field is always an **array**. A line tagged `["fr", "en"]` is bilingual: the tracker decodes/matches it against both languages and keeps the better score. `null` or absent means "inherit".
@@ -311,8 +311,9 @@ Cue **types** (§6.2) are shared production vocabulary — LX, SND, VID… Cue *
 | `manual` | `{ "kind": "manual" }` | Armed only by an operator action |
 | `timer` | `{ "kind": "timer", "afterRef": "<cueId or lineId>", "offsetSec": 45 }` | Warn N seconds after another event |
 | `visual` | `{ "kind": "visual", "source": "<detectorId>", "event": "<name>" }` | Driven by a stage event, not dialogue — e.g. a performer position from **Tagada** |
+| `music` | `{ "kind": "music", "source": "<followerId>", "position": { "bar": 24, "beat": 3 } }` | Driven by musical score position from a future score-following engine — musical theatre, opera |
 
-This is how visual cues enter the system later without a format break.
+This is how visual and musical cues enter the system later without a format break.
 
 ---
 
@@ -339,17 +340,24 @@ A show file is a single UTF-8 JSON document. Version 1 uses no container; a zip 
     { "id": "char-marie", "name": "MARIE", "lang": null, "channels": [3] },
     { "id": "char-ingrid", "name": "INGRID", "lang": ["sv"], "channels": [5] }
   ],
-  "scenes": [
+  "acts": [
     {
-      "id": "sc-1-2",
-      "title": "Act 1, Scene 2",
+      "id": "act-1",
+      "title": "Act 1",
       "lang": null,
-      "lines": [
-        { "id": "L-0142-a3f9c1", "character": "char-marie",
-          "text": "Tu ne devrais pas être ici.", "lang": null },
-        { "id": "L-0143-77d0be", "character": "char-ingrid",
-          "text": "Jag förstår inte. I don't understand any of it.",
-          "lang": ["sv", "en"] }
+      "scenes": [
+        {
+          "id": "sc-1-2",
+          "title": "Scene 2",
+          "lang": null,
+          "lines": [
+            { "id": "L-0142-a3f9c1", "character": "char-marie",
+              "text": "Tu ne devrais pas être ici.", "lang": null },
+            { "id": "L-0143-77d0be", "character": "char-ingrid",
+              "text": "Jag förstår inte. I don't understand any of it.",
+              "lang": ["sv", "en"] }
+          ]
+        }
       ]
     }
   ],

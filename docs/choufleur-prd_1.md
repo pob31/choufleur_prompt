@@ -47,7 +47,7 @@ The client is a web application: any device on the venue network — tablet, lap
 
 - Receives position updates from server
 - Displays current script page — always showing where the show is
-- Role picker on join — each operator selects which cue types they follow
+- Role picker on join — each operator selects which cue types they follow; operator access gated by a short show code, with a view-only role for guests (see Access control)
 - Per-technician cue filter — each operator sees only their relevant cues
 - Personal cue categories — each operator organizes their own cues into freely named categories (e.g. QLab, Ableton Live, console, spatial, music) for grouping and color accents
 - Notes displayed alongside the script — side by side on wide screens, or as tappable help bubbles anchored to their line on narrow screens
@@ -118,6 +118,16 @@ Available on both server and client devices.
 - Position takeover for recovery — see Manual Drive under Multi-Operator Protocol
 - Browsing ahead does not affect other devices
 
+### Show structure and holds
+
+The script is structured as acts containing scenes (notation spec §11), and the tracker has an explicit notion of "the show is not currently running":
+
+- **Preshow hold** — armed at the top of act 1; the tracker ignores walk-in music and audience noise instead of hunting for matches in it (exactly the conditions where ASR hallucinates)
+- **Intermission hold** — entered at an act boundary; re-arms at the top of the next act
+- Holds engage automatically at act ends and release on first confident match of the next act's opening lines, with a manual release always available
+- Act boundaries are implicit weight-3 landmarks with hold semantics; act tops are natural quick-jump targets
+- The pace/ETA model is calibrated **per act**
+
 ### Run Controls (Rehearsal)
 
 Rehearsals do not run linearly. These controls are available to all operators and every use is attributed on all clients:
@@ -181,6 +191,20 @@ Known compound failure mode, stated explicitly: skip tolerance can advance past 
 - Practical for simpler setups or tablet-only deployments
 - Loses per-actor channel advantage but sufficient for page tracking and cue warnings
 
+### Ambient / area microphones — for unmic'ed actors
+
+Not every production mics its actors. Ambient stage mics (boundary/PZM at the stage edge, hanging mics, shotguns) are a supported input class, with honest expectations:
+
+- An ambient channel is configured as a **zone channel** — it carries no character identity; the tracker matches its transcript against *any* expected speaker at the current position
+- Far-field audio degrades ASR: distance, reverb, and spill cost accuracy. The mitigating factor is the same as everywhere in Choufleur — alignment against a known script tolerates far higher word error rates than open transcription. Expect **line/cue-block-level confidence rather than word-level**; landmarks and scene anchors do more of the work
+- Multiple zone channels (downstage left/centre/right) each remain separate inputs — no identity, but coarse stage-position context and better local SNR than one distant mic
+- A high-pass filter and gentle compression on the feed before Choufleur helps; calibrate during tech rehearsal like any other channel
+- **Hybrid casts are the expected case**: mic'ed principals on per-actor channels, ambient zones covering everyone else — the tracker fuses both
+
+### Virtual soundcheck — tuning without actors
+
+Tracking thresholds, model sizes, and latency are tuned by **virtual soundcheck**, the standard Dante workflow: the console replays a multitrack recording of a rehearsal through the same feeds Choufleur normally receives. Choufleur cannot tell replay from live and needs no recording feature of its own; recording and its consent implications stay where they already live — in the venue's existing console workflow.
+
 ### Network audio
 
 - Dante ubiquitous in theatre — joins existing venue network infrastructure
@@ -192,6 +216,14 @@ Known compound failure mode, stated explicitly: skip tolerance can advance past 
 ## Multi-Operator Protocol
 
 All clients share the server's authoritative position by default.
+
+### Access control
+
+The client is a web page on the venue network, and venue WiFi is rarely locked down. Joining is therefore gated, lightly:
+
+- **Show code** — a short code (e.g. 4 digits, shown on the server screen) is required to join as an **operator**; entered once per device, remembered for the run of the show
+- **View-only role** — joins without the code (or with a separate view code): sees script position, cues, and warnings, but the server rejects `position_correction`, `manual_drive`, `position_jump`, and run-control messages from view-only clients. For assistant directors, guests, anyone who should watch but never steer
+- No accounts, no passwords — the goal is keeping a random phone in the audience from claiming manual drive, not enterprise auth
 
 ### Viewing states per client
 
@@ -272,6 +304,10 @@ Thresholds and window lengths are configurable and tuned during tech rehearsal.
 
 The two families are deliberately distinct because the operator response differs: divergence means *trust the actors, distrust the position*; input health means *fix the pipe — position may still be fine via other channels*.
 
+### Warning acknowledgment
+
+A standby warning can be **tapped to acknowledge** — "I'm on it" — which dims it locally so an already-alert operator isn't nagged. Optionally, the stage manager's client shows the acknowledgment state of upcoming cues across operators: the digital equivalent of hearing "standing by" on comms. Acknowledgment is never required — an unacknowledged warning simply keeps warning — and final warnings and the "now" flash always fire regardless.
+
 ### Warning modalities roadmap
 
 - **v1: visual only** — red frame, banners, footer
@@ -321,7 +357,7 @@ The expected language at any moment is read from the script's language tags — 
 
 ### Tagging model — line-level with inheritance
 
-Defined normatively in the notation spec (§8): a show default, overridable per scene, per character, and per line; most specific wins. A bilingual line is tagged with both languages (`["sv", "en"]`) and matched against both, keeping the better score. Mid-line, per-word code-switching is **out of scope for v1**.
+Defined normatively in the notation spec (§8): a show default, overridable per act, per scene, per character, and per line; most specific wins. A bilingual line is tagged with both languages (`["sv", "en"]`) and matched against both, keeping the better score. Mid-line, per-word code-switching is **out of scope for v1**.
 
 ### Language-aware matching
 
@@ -385,6 +421,8 @@ WebSocket handles all live show communication between server and clients.
 | Client → server | `position_jump` | Target page, act/scene, or cue (run control) |
 | Client → server | `run_pause` / `run_resume` | Pause tracking for director notes; resume, optionally from a previous position |
 | Client → server | `note_add` | Line id, text, operator id (show-mode double-tap notes) |
+| Client → server | `warning_ack` | Cue id, warning stage — acknowledge a standby ("I'm on it") |
+| Server → clients | `ack_state` | Acknowledgment states of upcoming cues (stage manager view) |
 
 ### Prep / rehearsal mode — REST
 
@@ -403,6 +441,43 @@ OSC excels at continuous parameter streams — fader values, spatial coordinates
 ### Why not MQTT
 
 Elegant for multi-client broadcast via topic subscriptions, but requires a broker process running alongside the server. WebSocket fan-out to connected clients is sufficient for Choufleur's scale.
+
+---
+
+## Failure Behavior and Degraded Modes
+
+A tool whose job is protecting attention must fail loudly and recover fast. Mid-show failure behavior is specified, not improvised:
+
+### Server crash
+
+- Current position, hold state, and run-control state are **journaled to disk continuously** (append-only, fsync'd at position changes)
+- On relaunch the server reloads the show file, restores the journaled position, and resumes in a **hold** state pending one confident match or a manual confirmation — it never resumes guessing
+- Clients auto-reconnect and resync full state on `hello`
+
+### Network drop
+
+- A client that loses its WebSocket shows an unmistakable **stale banner**: "connection lost — last position 40 s ago", with the stale position greyed, never displayed as live
+- Reconnection resyncs state fully; warnings missed while disconnected are shown as missed, not replayed as if current
+
+### Device sleep
+
+- The web client **must hold a screen wake lock** while in show mode — a locked tablet is a missed cue
+- If the platform denies the wake lock, the client says so at join time rather than failing silently during the show
+
+### Audio degradation
+
+- Channel loss escalates through the input-health warnings (Family B); the degrade path is per-channel → remaining channels → single mixed feed, and tracking quality follows gracefully rather than collapsing
+
+---
+
+## Run Log
+
+The server keeps a **flight recorder** for every run: an append-only JSONL file beside the show file (one per performance/rehearsal) recording timestamped position updates, warnings fired and acknowledged, divergence and input-health events, manual interventions (jumps, drives, corrections, pauses) with attribution, and per-channel confidence summaries.
+
+- Write-only during the show; reviewed afterwards
+- Tech-week tuning: "why did it lose act 2 scene 3 every night?" is answerable from the log, not from memory
+- Post-show note review shows each note in its run context
+- This is the substrate that makes future automated rehearsal reports nearly free
 
 ---
 
@@ -449,7 +524,8 @@ The remote is not useful without the server and vice versa — keeping them toge
 - Haptic warning modality (planned later addition — see Warning Modalities Roadmap)
 - Speaker diarization on the mixed feed
 - OSC output to show control systems (post-MVP consideration)
-- Automated rehearsal report generation (post-MVP consideration)
+- Automated rehearsal report generation (post-MVP consideration — the run log is its substrate)
+- **Score following for musical theatre and opera** (future direction — track position in the music as well as the text; the notation spec reserves a `music` anchor kind (§10) so musical cues arrive without a format break)
 
 ---
 
