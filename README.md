@@ -28,20 +28,21 @@ Design phase. No code yet — the documents below are the current state of the p
 
 ```
 choufleur/
-├── server/          # JUCE application — audio, ASR, position tracking
+├── server/          # Rust — audio capture, ASR, position tracking, web serving
 ├── remote/          # Flutter/Dart — web-first client; iPad/Android variants
 ├── docs/            # PRD, notation spec
-├── LICENSE          # GPL-3.0-or-later
+├── LICENSE-MIT      # MIT OR Apache-2.0 dual license
+├── LICENSE-APACHE   #
 └── README.md
 ```
 
 ## Related projects
 
-Part of an open source theatre tooling ecosystem, all GPL3, all built from direct professional practice: **Tagada** (stage position tracking), **S21 HiJack** (DiGiCo S21 snapshot extension), **WFS DIY** (open source wavefield synthesis), and an audio description workspace.
+Part of an open source theatre tooling ecosystem, all built from direct professional practice: **Tagada** (stage position tracking), **S21 HiJack** (DiGiCo S21 snapshot extension), **WFS DIY** (open source wavefield synthesis), and an audio description workspace.
 
 ## License
 
-[GPL-3.0-or-later](LICENSE). Show files you produce with Choufleur are your data — the GPL does not apply to them.
+Dual-licensed [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE), at your option — the Rust ecosystem convention. Show files you produce with Choufleur are your data.
 
 ---
 

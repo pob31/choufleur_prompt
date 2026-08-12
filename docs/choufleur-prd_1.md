@@ -4,7 +4,7 @@
 
 Version 0.2 — Draft — August 2026
 
-Licensed under GPL-3.0-or-later — see the License section.
+Dual-licensed under MIT OR Apache-2.0 — see the License section.
 
 ---
 
@@ -29,6 +29,8 @@ The system never triggers cues. It warns. The technician always makes the call.
 ## Architecture
 
 ### Server (macOS primary, Windows secondary)
+
+A headless, compiled **Rust** service. There is no native server GUI: prep and configuration are browser pages served by the server itself, consistent with the web-first client. A thin native shell (menu-bar/tray app for launch, device pickup, and status) is a post-MVP nicety, never a dependency.
 
 - Multi-channel audio input via Dante or direct console feeds (up to 16 channels)
 - Per-channel active speaker detection — ASR only runs on open/speaking channels
@@ -97,7 +99,7 @@ Load-management strategies, in order of importance:
 
 ### Rehearsal / Prep Mode
 
-Available on both server and client devices.
+A browser page served by the server — usable from the server machine or any client device.
 
 - Import Word script (.docx) — inline cue shorthand parsed and stripped on import (see Script Format and Prep Workflow)
 - Assign lines to characters
@@ -380,14 +382,20 @@ The fuzzy-matching normalization pipeline adapts per language:
 
 | Component | Target |
 |-----------|--------|
-| Server | macOS primary (Apple Silicon M1+ baseline), Windows secondary (best-effort, reduced channels) |
+| Server | Rust, headless; macOS primary (Apple Silicon M1+ baseline), Windows secondary (best-effort, reduced channels) |
+| Audio capture | cpal — CoreAudio (macOS), WASAPI/ASIO (Windows) |
+| ASR engine | whisper-rs (whisper.cpp bindings, Metal/CoreML); Silero VAD via ONNX Runtime; model size per show/language (see ASR section) |
+| Network stack | tokio + axum — WebSocket, REST, and the served web client |
 | Client | Web-first (any browser on the venue network); iPad/Android as installable Flutter variants |
-| Audio framework | JUCE |
-| ASR engine | Whisper family via whisper.cpp or faster-whisper; model size per show/language (see ASR section) |
 | Script import | .docx (OOXML) parsed server-side |
-| Show file | Open versioned JSON per [choufleur-notation_1.md](choufleur-notation_1.md) |
+| Show file | Open versioned JSON (serde-typed) per [choufleur-notation_1.md](choufleur-notation_1.md) |
 
-Note: the browser client implies WebSocket as the transport — browsers speak neither raw OSC nor UDP, which reinforces the protocol choice below.
+Implementation notes:
+
+- The heavy ASR work is native C/C++ (whisper.cpp, ONNX Runtime) regardless of host language; Rust orchestrates it and owns the show-critical process — memory safety matters most in hour three of a performance
+- Windows caveat: Dante Virtual Soundcard's WDM mode presents as separate stereo pairs; its ASIO mode exposes one multi-channel device, and cpal's ASIO backend requires the Steinberg SDK at build time
+- Python is welcome as an **offline research harness** — replaying virtual-soundcheck recordings to experiment with matching algorithms — but never in the show path
+- The browser client implies WebSocket as the transport — browsers speak neither raw OSC nor UDP, which reinforces the protocol choice below
 
 ---
 
@@ -500,12 +508,13 @@ Single repository containing server and client as sibling projects.
 
 ```
 choufleur/
-├── server/          # JUCE application — audio, ASR, position tracking
+├── server/          # Rust — audio capture, ASR, position tracking, web serving
 ├── remote/          # Flutter/Dart — web-first client; iPad/Android variants
 ├── docs/            # PRD, notation spec, architecture notes
 │   ├── choufleur-prd_1.md
 │   └── choufleur-notation_1.md
-├── LICENSE          # GPL-3.0-or-later
+├── LICENSE-MIT      # MIT OR Apache-2.0 dual license
+├── LICENSE-APACHE   #
 └── README.md
 ```
 
@@ -541,9 +550,10 @@ The remote is not useful without the server and vice versa — keeping them toge
 
 ## License
 
-Choufleur is free software, licensed under the **GNU General Public License v3.0 or later** (GPL-3.0-or-later). See the `LICENSE` file at the repository root.
+Choufleur is free software, dual-licensed under **MIT OR Apache-2.0** — the Rust ecosystem convention, letting users pick either. See `LICENSE-MIT` and `LICENSE-APACHE` at the repository root.
 
-- Show files produced with Choufleur are **user data** — the GPL does not apply to them
+- Contributions are accepted under the same dual license (Apache-2.0's patent grant is why both are offered)
+- Show files produced with Choufleur are **user data** — no license terms apply to them
 - Whisper model weights are distributed under their own license (MIT for OpenAI's released weights) and are not part of Choufleur's source
 
 ---
@@ -559,7 +569,7 @@ Choufleur is part of a broader open source theatre tooling ecosystem:
 | **WFS DIY** | Wavefield synthesis — open source spatial audio |
 | **Describer tool** | Audio description workspace for accessibility |
 
-All GPL3. All built from direct professional practice. Tagada is also the intended `source` for future visual cue anchors (notation spec §10).
+All open source, all built from direct professional practice (the sibling projects are GPL3; Choufleur is MIT/Apache-2.0). Tagada is also the intended `source` for future visual cue anchors (notation spec §10).
 
 ---
 

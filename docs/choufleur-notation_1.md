@@ -4,7 +4,7 @@
 
 Version 1.0 — Draft — August 2026
 
-Licensed under GPL-3.0-or-later. Show files produced with this format are user data and are not covered by the GPL.
+Dual-licensed under MIT OR Apache-2.0. Show files produced with this format are user data — no license terms apply to them.
 
 ---
 
