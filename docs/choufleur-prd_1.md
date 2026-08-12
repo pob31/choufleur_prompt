@@ -420,12 +420,13 @@ WebSocket handles all live show communication between server and clients.
 - Browser-native — the web client requires no extra library
 - Event-driven message model maps naturally to script position updates, cue warnings, operator state broadcasts
 - JSON payloads for all messages
+- On join, a `hello` message carries the protocol version and a full-state snapshot; reconnecting clients resync the same way
 
 **Message types**
 
 | Direction | Message | Payload |
 |-----------|---------|---------|
-| Server → clients | `position_update` | Script position, confidence level, current cue |
+| Server → clients | `position_update` | `{ seq, lineId, lineIndex, withinLineFraction?, confidence, actId, sceneId }` — seq monotonic per run, lineId durable, lineIndex for cheap scrolling |
 | Server → clients | `cue_warning` | Cue id, type, warning stage (standby/final), lead time remaining |
 | Server → clients | `position_attributed` | Corrected position, operator device name |
 | Server → clients | `tracking_lost` | Last known position, confidence decay state |
@@ -523,7 +524,8 @@ choufleur/
 ├── remote/          # Flutter/Dart — web-first client; iPad/Android variants
 ├── docs/            # PRD, notation spec, architecture notes
 │   ├── choufleur-prd_1.md
-│   └── choufleur-notation_1.md
+│   ├── choufleur-notation_1.md
+│   └── choufleur-devplan_1.md
 ├── LICENSE-MIT      # MIT OR Apache-2.0 dual license
 ├── LICENSE-APACHE   #
 └── README.md
