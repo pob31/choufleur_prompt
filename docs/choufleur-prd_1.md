@@ -49,6 +49,7 @@ The client is a web application: any device on the venue network — tablet, lap
 - Displays current script page — always showing where the show is
 - Role picker on join — each operator selects which cue types they follow
 - Per-technician cue filter — each operator sees only their relevant cues
+- Personal cue categories — each operator organizes their own cues into freely named categories (e.g. QLab, Ableton Live, console, spatial, music) for grouping and color accents
 - Notes displayed alongside the script — side by side on wide screens, or as tappable help bubbles anchored to their line on narrow screens
 - Red frame peripheral warning on pre-cue alert
 - Independent browsing mode without disrupting other clients (see Multi-Operator Protocol)
@@ -227,6 +228,12 @@ Each operator configures which cue types they see:
 - Flys — fly cues only
 - Stage manager — all cues
 
+### Personal cue categories
+
+Within their filtered cues, each operator can define their own second-level **categories** — for a sound engineer, perhaps *QLab*, *Ableton Live*, *Console*, *Spatial*, *Music*. Categories are freely named, carry a color, and are used for grouping and secondary filtering in the client.
+
+Categories are strictly personal: they live in the operator's own subtree of the show file and reference shared cues by id, so identically named categories belonging to different operators are independent objects that can never collide or leak between displays (notation spec §9.2). Cue *types* (LX, SND, …) remain the shared production vocabulary; categories are how each operator organizes their own corner of it.
+
 Warnings are personal. Script position is shared.
 
 ---
@@ -387,7 +394,7 @@ REST handles all request-response interactions during prep. Cleaner than fitting
 - Script import and character assignment
 - Cue tagging and landmark configuration
 - Audio device configuration
-- Per-operator cue filter preferences
+- Per-operator cue filter preferences and personal cue categories
 
 ### Why not OSC
 

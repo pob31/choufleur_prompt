@@ -14,7 +14,7 @@ This document is the normative reference for:
 
 - **Line identity** — how every script line receives a stable ID, and how IDs survive script rewrites, cuts, and re-imports (§3)
 - **Shorthand notation** — the human-readable cue notation used on screen and typed inline in the source `.docx` (§4, §5)
-- **Annotation layers** — cues, landmarks, language tags, and operator notes, all anchored to line IDs (§6–§9)
+- **Annotation layers** — cues, landmarks, language tags, operator notes, and personal cue categories (§6–§9)
 - **Anchor model** — including reserved anchor kinds for future visual, timer, and manual cues (§10)
 - **Show file format** — the open, versioned JSON document that carries a whole production (§11, §12)
 
@@ -248,7 +248,11 @@ Line-level is the finest granularity. Mid-line, per-word code-switching is **out
 
 ---
 
-## 9. Operator Note Layers
+## 9. Operator Layers — Notes and Categories
+
+Everything under `operators.<opId>` is personal: notes, filter preferences, and cue categories. Two operators can use identical category names without any interaction — the namespace is the operator, so `"music"` for the sound operator and `"music"` for the video operator are unrelated objects.
+
+### 9.1 Notes
 
 Notes are per-operator and private by default.
 
@@ -257,6 +261,14 @@ Notes are per-operator and private by default.
   "sound-pierre": {
     "displayName": "Pierre",
     "filter": ["SND", "SM"],
+    "categories": [
+      { "id": "cat-qlab",    "name": "QLab",        "color": "#3FA7D6" },
+      { "id": "cat-ableton", "name": "Ableton Live","color": "#9C6ADE" },
+      { "id": "cat-console", "name": "Console",     "color": "#E5B800" },
+      { "id": "cat-spatial", "name": "Spatial",     "color": "#59A96A" },
+      { "id": "cat-music",   "name": "Music",       "color": "#E0533D" }
+    ],
+    "cueCategories": { "cue-snd-7": "cat-qlab" },
     "notes": [
       {
         "id": "note-0007",
@@ -275,6 +287,17 @@ Notes are per-operator and private by default.
 - Show-mode double-tap notes append here via the `note_add` WebSocket message and are reviewed post-show.
 - Clients render notes beside the script (wide layouts) or as tappable bubbles anchored to their line (narrow layouts) — see PRD, *Architecture / Client*.
 - Notes are annotations anchored to line IDs and therefore **survive script re-imports** via §3; orphaned notes follow the §3.4 consent rules.
+
+### 9.2 Personal cue categories
+
+Cue **types** (§6.2) are shared production vocabulary — LX, SND, VID… Cue **categories** are a personal, second-level organization an operator lays over the cues they follow: a sound operator might split theirs into *QLab*, *Ableton Live*, *Console*, *Spatial*, *Music*.
+
+- `categories` — the operator's own registry: `{ "id", "name", "color" }`. Free-form names; each operator configures their own set.
+- `cueCategories` — a map from cue id to one of the operator's category ids. Unassigned cues are simply *uncategorized*; assignment is always optional.
+- **Independence is structural.** Categories live only under the owner's `operators.<opId>` subtree and reference shared cues by id. They never appear on the shared cue object (§6.1), so identically named categories belonging to different operators can never collide, merge, or leak into each other's displays.
+- Clients may use categories for grouping, color accents, and secondary filtering within the operator's cue filter.
+- Categories travel with the operator fragment (§11.2): exporting an operator's subtree carries `categories` and `cueCategories` along with notes and filters. On merge, category assignments referencing a cue id that no longer exists are surfaced for review, never silently dropped (§2, principle 5).
+- Categories have no inline `.docx` shorthand — they are personal organization, configured in the client, not part of the shared script annotation pass (§5).
 
 ---
 
@@ -340,7 +363,12 @@ A show file is a single UTF-8 JSON document. Version 1 uses no container; a zip 
     "landmarks": [ { "lineId": "L-0142-a3f9c1", "weight": 3 } ]
   },
   "operators": {
-    "sound-pierre": { "displayName": "Pierre", "filter": ["SND"], "notes": [] }
+    "sound-pierre": {
+      "displayName": "Pierre", "filter": ["SND"],
+      "categories": [ { "id": "cat-qlab", "name": "QLab", "color": "#3FA7D6" } ],
+      "cueCategories": { "cue-snd-7": "cat-qlab" },
+      "notes": []
+    }
   },
   "orphans": [],
   "calibration": { "paceByScene": {}, "channelProfiles": {} }
@@ -350,8 +378,8 @@ A show file is a single UTF-8 JSON document. Version 1 uses no container; a zip 
 ### 11.2 Rules
 
 - **Versioning.** `formatVersion` is `major.minor`. Readers accept any file with a known major version and **ignore and preserve unknown fields** (minor versions only add fields). Breaking changes bump the major version.
-- **Shared vs per-operator.** Everything outside `operators.<opId>` is shared production content. Each operator's filter preferences and notes live under their key.
-- **Operator fragments.** An operator can export their layer as a fragment file — `"format": "choufleur-operator"`, carrying one `opId` subtree — which merges into a show file by `opId` (notes merged by note `id`, newest `createdAt` wins on conflict). This is how personal notes move between a home tablet and the venue file.
+- **Shared vs per-operator.** Everything outside `operators.<opId>` is shared production content. Each operator's filter preferences, personal cue categories (§9.2), and notes live under their key.
+- **Operator fragments.** An operator can export their layer as a fragment file — `"format": "choufleur-operator"`, carrying one `opId` subtree — which merges into a show file by `opId` (notes merged by note `id`, newest `createdAt` wins on conflict; `categories`/`cueCategories` replaced wholesale as one personal set). This is how personal notes and categories move between a home tablet and the venue file.
 - **Orphans** (§3) live at top level so any tool can surface them.
 - **Encoding.** UTF-8 throughout, NFC-normalized text on import.
 
