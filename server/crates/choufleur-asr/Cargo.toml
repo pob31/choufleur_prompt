@@ -9,9 +9,17 @@ repository.workspace = true
 
 [dependencies]
 choufleur-core = { workspace = true }
+ort = "=2.0.0-rc.13"
+rubato = "5"
 serde = { workspace = true }
 thiserror = { workspace = true }
+whisper-rs = { version = "0.16", features = ["metal"] }
 
-# Deliberately not yet depended upon: whisper-rs (metal), ort (Silero), rubato.
-# They pull in a multi-minute native build, so they land with the code that
-# actually calls them rather than sitting in the manifest ahead of it.
+[dev-dependencies]
+hound = "3.5"
+
+# ort is pinned exactly: the 2.0 release candidates change API between rc's, and
+# a silent bump would break the Silero call sites rather than merely warn.
+# whisper-rs needs "metal" requested explicitly - its default feature set is
+# empty and whisper-rs-sys/build.rs sets GGML_METAL=OFF without it, which would
+# quietly give us a CPU-only build and a completely different latency picture.

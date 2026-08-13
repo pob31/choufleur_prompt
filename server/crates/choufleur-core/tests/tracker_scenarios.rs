@@ -123,6 +123,7 @@ impl SegBuilder {
                 no_speech_prob: 0.02,
             },
             forced_split: false,
+            interim: false,
         }
     }
 }

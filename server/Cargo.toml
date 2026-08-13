@@ -9,7 +9,10 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.82"
+# Floor set by our dependencies, not by our own code: ort 2.0.0-rc.13 declares
+# 1.88 and whisper-rs-sys 0.15 declares 1.88. Claiming anything lower would be a
+# lie that only shows up as a compile failure on an older toolchain.
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/pobo/choufleur"
 

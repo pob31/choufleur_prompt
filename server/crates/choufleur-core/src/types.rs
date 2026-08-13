@@ -37,6 +37,12 @@ pub struct TranscriptSegment {
     /// rather than on silence — the text is likely cut mid-word at both ends.
     #[serde(default)]
     pub forced_split: bool,
+    /// True when this is a *partial* hypothesis: the speaker is still talking and
+    /// more of this line is coming. Interim segments are what keep detection lag
+    /// inside the PRD's budget, but they carry a prefix of the line rather than
+    /// the line, so they are believed more cautiously.
+    #[serde(default)]
+    pub interim: bool,
 }
 
 impl TranscriptSegment {

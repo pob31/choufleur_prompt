@@ -76,6 +76,7 @@ fn bench(c: &mut Criterion) {
             no_speech_prob: 0.02,
         },
         forced_split: false,
+        interim: false,
     };
 
     c.bench_function("tracker_update_600_line_script", |b| {

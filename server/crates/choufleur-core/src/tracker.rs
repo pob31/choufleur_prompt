@@ -379,11 +379,13 @@ impl<'a> Tracker<'a> {
     ) {
         let from = self.confidence;
         self.position = best.span.last();
-        self.confidence = if best.fuzzy >= self.cfg.word_threshold && !weak {
+        self.confidence = if best.fuzzy >= self.cfg.word_threshold && !weak && !seg.interim {
             Confidence::Word
         } else {
-            // A one-word confirmation places us, but it is not a word-level match
-            // in the PRD's sense — there was almost nothing to match.
+            // Two ways to be placed without a word-level match in the PRD's sense:
+            // a one-word confirmation, where there was almost nothing to match; and
+            // an interim hypothesis, which is a *prefix* of the line rather than the
+            // line. Both locate the show; neither is an exact transcript match.
             Confidence::Line
         };
         self.unmatched_speech_s = 0.0;
