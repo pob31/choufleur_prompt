@@ -1,0 +1,30 @@
+# Rust
+server/target/
+**/*.rs.bk
+
+# Models — fetched by scripts/fetch-models.sh, never committed
+server/models/
+
+# Corpus audio lives on external storage; manifests + scripts + ground truth are committed
+corpus/**/*.wav
+corpus/**/*.aiff
+corpus/**/*.flac
+corpus/**/audio/
+
+# ...except the synthetic fixture, which is generated rather than recorded. Its
+# hashes depend on the local speech synthesis, so committing them would produce
+# spurious diffs. Regenerate with: choufleur-replay make-fixture corpus/fixture-smoke
+corpus/fixture-smoke/
+
+# Replay outputs
+*.jsonl
+!corpus/**/ground-truth.jsonl
+out/
+
+# Python research sidecar
+research/.venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store

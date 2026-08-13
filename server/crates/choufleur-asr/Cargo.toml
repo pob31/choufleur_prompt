@@ -1,0 +1,17 @@
+[package]
+name = "choufleur-asr"
+description = "Speech segmentation and recognition for Choufleur. Buffers in, transcript segments out; knows nothing of files, devices, or the tracker."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+choufleur-core = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+# Deliberately not yet depended upon: whisper-rs (metal), ort (Silero), rubato.
+# They pull in a multi-minute native build, so they land with the code that
+# actually calls them rather than sitting in the manifest ahead of it.

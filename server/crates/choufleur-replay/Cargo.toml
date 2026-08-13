@@ -1,0 +1,17 @@
+[package]
+name = "choufleur-replay"
+description = "Offline replay, tracking and evaluation harness for Choufleur. The regression and tuning backbone."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+choufleur-core = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+hound = { workspace = true }
+sha2 = { workspace = true }

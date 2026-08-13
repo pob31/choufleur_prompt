@@ -1,0 +1,23 @@
+[package]
+name = "choufleur-core"
+description = "Pure tracking logic for Choufleur: normalization, fuzzy matching, position tracker. Zero I/O, zero async, no wall clock."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+unicode-normalization = { workspace = true }
+unicode-properties = { workspace = true }
+rapidfuzz = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "match_hot_path"
+harness = false
