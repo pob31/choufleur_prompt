@@ -10,7 +10,56 @@ use std::path::PathBuf;
 use choufleur_replay::cmd;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use choufleur_core::prompt::BiasMode;
+use clap::{Parser, Subcommand, ValueEnum};
+
+/// How much the recogniser is told about what to expect.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum Bias {
+    /// No prompt at all — the control condition for the sweep.
+    None,
+    /// A per-show constant: title and character names.
+    Static,
+    /// The lines the tracker expects next. Only meaningful with `track --from-audio`.
+    Tracker,
+}
+
+impl From<Bias> for BiasMode {
+    fn from(b: Bias) -> Self {
+        match b {
+            Bias::None => BiasMode::None,
+            Bias::Static => BiasMode::Static,
+            Bias::Tracker => BiasMode::Tracker,
+        }
+    }
+}
+
+/// Shared by `transcribe` and `track --from-audio`.
+#[derive(clap::Args, Clone, Debug)]
+struct AudioArgs {
+    /// Whisper ggml model. Found automatically if fetch-models.sh has been run.
+    #[arg(long)]
+    model: Option<PathBuf>,
+    /// Silero VAD onnx model.
+    #[arg(long)]
+    vad_model: Option<PathBuf>,
+    /// Pace the run against the wall clock and measure end-to-end latency.
+    #[arg(long)]
+    realtime: bool,
+    #[arg(long, value_enum, default_value_t = Bias::Static)]
+    bias: Bias,
+    /// Use the mixed feed instead of the per-actor channels (the degraded mode).
+    #[arg(long)]
+    mixdown: bool,
+    /// Restrict to these logical channels, e.g. --channels 1,3.
+    #[arg(long, value_delimiter = ',')]
+    channels: Option<Vec<u16>>,
+    /// How often to emit a partial hypothesis while someone is still speaking.
+    /// 0 disables it, which restores the end-of-utterance latency floor: detection
+    /// lag can then be no better than the length of the line being spoken.
+    #[arg(long)]
+    interim_ms: Option<u32>,
+}
 
 #[derive(Parser)]
 #[command(
@@ -37,12 +86,32 @@ enum Command {
         update_hashes: bool,
     },
 
-    /// Track a script from an existing transcript, writing a position trace.
+    /// Transcribe a corpus's audio into timestamped segments.
+    Transcribe {
+        corpus: PathBuf,
+        #[arg(long, short = 'o', default_value = "out/segments.jsonl")]
+        out: PathBuf,
+        #[command(flatten)]
+        audio: AudioArgs,
+        #[arg(long)]
+        audio_root: Option<PathBuf>,
+    },
+
+    /// Track a script, from an existing transcript or straight from audio.
     Track {
         corpus: PathBuf,
-        /// Segments produced by `transcribe`.
+        /// Segments produced by `transcribe`. Mutually exclusive with --from-audio.
+        #[arg(long, conflicts_with = "from_audio")]
+        segments: Option<PathBuf>,
+        /// Transcribe and track in one pass, so the tracker can bias its own
+        /// recognition with the lines it expects next.
         #[arg(long)]
-        segments: PathBuf,
+        from_audio: bool,
+        /// With --from-audio, also write the segments for later replay.
+        #[arg(long, requires = "from_audio")]
+        segments_out: Option<PathBuf>,
+        #[command(flatten)]
+        audio: AudioArgs,
         #[arg(long, short = 'o', default_value = "trace.jsonl")]
         out: PathBuf,
         /// JSON file of `TrackerConfig` overrides.
@@ -106,21 +175,61 @@ fn main() -> Result<()> {
             audio_root,
             update_hashes,
         } => cmd::verify::run(&corpus, audio_root, update_hashes),
+        Command::Transcribe {
+            corpus,
+            out,
+            audio,
+            audio_root,
+        } => cmd::transcribe::run(
+            &corpus,
+            &out,
+            audio.model.as_deref(),
+            audio.vad_model.as_deref(),
+            audio.realtime,
+            audio.bias.into(),
+            audio.mixdown,
+            audio.channels,
+            audio.interim_ms,
+            audio_root,
+        ),
         Command::Track {
             corpus,
             segments,
+            from_audio,
+            segments_out,
+            audio,
             out,
             tracker_config,
             audio_root,
             timings,
-        } => cmd::track::run(
-            &corpus,
-            &segments,
-            &out,
-            tracker_config.as_deref(),
-            audio_root,
-            timings,
-        ),
+        } => match (from_audio, segments) {
+            (true, _) => cmd::track::run_from_audio(
+                &corpus,
+                &out,
+                segments_out.as_deref(),
+                tracker_config.as_deref(),
+                audio.model.as_deref(),
+                audio.vad_model.as_deref(),
+                audio.realtime,
+                audio.bias.into(),
+                audio.mixdown,
+                audio.channels,
+                audio.interim_ms,
+                audio_root,
+                timings,
+            ),
+            (false, Some(segments)) => cmd::track::run(
+                &corpus,
+                &segments,
+                &out,
+                tracker_config.as_deref(),
+                audio_root,
+                timings,
+            ),
+            (false, None) => {
+                anyhow::bail!("track needs either --segments <file> or --from-audio")
+            }
+        },
         Command::Eval {
             corpus,
             trace,

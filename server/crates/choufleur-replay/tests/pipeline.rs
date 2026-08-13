@@ -91,6 +91,7 @@ fn perfect_segments(f: &Fixture) -> Vec<SegmentRecord> {
                 avg_logprob: -0.2,
                 no_speech_prob: 0.01,
                 forced_split: false,
+                interim: false,
                 decode_ms: Some(150),
                 latency_ms: None,
                 filtered: None,
@@ -134,6 +135,7 @@ fn interim_segments(f: &Fixture, interval: f64) -> Vec<SegmentRecord> {
             out.push(SegmentRecord {
                 t_end: t,
                 text: words[..n].join(" "),
+                interim: true,
                 ..base.clone()
             });
             t += interval;
@@ -329,6 +331,7 @@ fn improvised_material_is_reported_as_uncertainty_not_as_motion() {
                 avg_logprob: -0.4,
                 no_speech_prob: 0.02,
                 forced_split: false,
+                interim: false,
                 decode_ms: Some(150),
                 latency_ms: None,
                 filtered: None,
@@ -387,6 +390,7 @@ fn filtered_segments_are_recorded_but_never_tracked() {
             avg_logprob: -1.4,
             no_speech_prob: 0.87,
             forced_split: false,
+            interim: false,
             decode_ms: Some(90),
             latency_ms: None,
             filtered: Some("repetition_loop".into()),

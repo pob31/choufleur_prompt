@@ -51,6 +51,9 @@ pub struct SegmentRecord {
     pub no_speech_prob: f32,
     #[serde(default)]
     pub forced_split: bool,
+    /// A partial hypothesis emitted while the speaker was still talking.
+    #[serde(default)]
+    pub interim: bool,
     /// Milliseconds spent inside Whisper for this segment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decode_ms: Option<u64>,
@@ -79,6 +82,7 @@ impl SegmentRecord {
                 no_speech_prob: self.no_speech_prob,
             },
             forced_split: self.forced_split,
+            interim: self.interim,
         }
     }
 
@@ -274,6 +278,7 @@ mod tests {
             avg_logprob: -0.31,
             no_speech_prob: 0.02,
             forced_split: false,
+            interim: false,
             decode_ms: Some(180),
             latency_ms: None,
             filtered: None,
