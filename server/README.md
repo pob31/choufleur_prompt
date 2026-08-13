@@ -25,7 +25,7 @@ cargo bench -p choufleur-core
 | Crate | What it is |
 |---|---|
 | `choufleur-core` | The tracking engine. Normalization (notation §3.2), language-aware matching, span enumeration, and the position tracker. **Pure**: no I/O, no async, no clock — time arrives on transcript segments, which is what makes replay and live runs the same computation. |
-| `choufleur-asr` | Buffers in, transcript segments out. The VAD segmentation policy and the hallucination filter are here; the model-bound stages (resampling, Silero, Whisper) are the next milestone. Knows nothing of files, devices, or the tracker. |
+| `choufleur-asr` | Buffers in, transcript segments out: streaming 48→16 kHz resampling, Silero VAD, the segmentation policy, Whisper decoding, and the hallucination filter. Knows nothing of files, devices, or the tracker. |
 | `choufleur-replay` | The CLI harness: build or verify a corpus, track it, score it. The regression and tuning backbone, permanently — not a prototype. |
 
 Dependency direction is one-way: `core` depends on nothing internal, `asr` depends
@@ -34,10 +34,23 @@ on `core` for its types, `replay` depends on both.
 ## The replay CLI
 
 ```bash
-cargo run -p choufleur-replay -- make-fixture corpus/fixture-smoke
-cargo run -p choufleur-replay -- verify       corpus/fixture-smoke
-cargo run -p choufleur-replay -- track        corpus/fixture-smoke --segments out/segments.jsonl -o out/trace.jsonl
-cargo run -p choufleur-replay -- eval         corpus/fixture-smoke --trace out/trace.jsonl --pretty
+# From the repository root, with models fetched:
+choufleur-replay make-fixture corpus/fixture-smoke
+choufleur-replay verify       corpus/fixture-smoke
+choufleur-replay transcribe   corpus/fixture-smoke -o out/segments.jsonl
+choufleur-replay track        corpus/fixture-smoke --segments out/segments.jsonl -o out/trace.jsonl
+choufleur-replay eval         corpus/fixture-smoke --trace out/trace.jsonl --segments out/segments.jsonl --pretty
+```
+
+`transcribe` and `track` both take `--realtime`, which paces the run against the
+wall clock and measures the end-to-end latency an operator would actually feel.
+`track --from-audio` does both jobs in one pass, which is the only mode where
+`--bias tracker` means anything: the tracker primes the decoder with the lines it
+expects next.
+
+```bash
+choufleur-replay track corpus/fixture-smoke --from-audio --bias tracker --realtime \
+    -o out/trace.jsonl --segments-out out/segments.jsonl
 ```
 
 `eval` exits non-zero when the devplan's go/no-go gate is not met, so it works as
@@ -69,9 +82,21 @@ against the real corpus. Two constraints are not obvious and are easy to break:
 
 - `prior_floor` must stay above `accept_threshold`, or a perfect match a few lines
   ahead becomes unacceptable and `window_ahead` is silently decorative.
-- `interim_interval_ms` trades compute for latency directly. Setting it to 0
-  restores end-of-utterance segmentation, which puts a floor under detection lag
-  equal to the length of the line being spoken.
+- `interim_interval_ms` (`--interim-ms`) trades compute for latency directly, and
+  the exchange rate is measured: disabling it takes detection lag from a 1.56 s
+  median to 2.67 s — past the gate — while raising throughput from 8.3× to 15.2×
+  real time. Each decode costs a near-constant ~160 ms whatever the segment length,
+  because whisper.cpp pads every input to a 30-second window, so
+  `load ≈ channels ÷ interval × 0.16`.
+
+## Models
+
+`../scripts/fetch-models.sh` puts them in `models/` (gitignored). The tools find
+them there automatically from either the repository root or `server/`; override
+with `--model` / `--vad-model`, or set `CHOUFLEUR_MODELS`.
+
+Silero **v5** is required: v4 exposes different tensors and is rejected with a
+message saying so rather than silently producing wrong probabilities.
 
 ## Known v0 limitations
 
@@ -86,3 +111,8 @@ Stated rather than discovered later:
 - Mic bleed is handled structurally, by per-channel identity and the
   character-mismatch penalty, not by level-thresholded attribution. The latter
   belongs upstream in the capture path and is not built yet.
+- The mixed-feed degrade is poor on a *multilingual* show, because a mixed feed has
+  no per-line language to force. See finding C in the Phase 0 notes.
+- Decoding is sequential across channels by design (one Whisper state, one ONNX
+  session). That is what makes a run reproducible; it also means the compute
+  ceiling is a single-stream ceiling.

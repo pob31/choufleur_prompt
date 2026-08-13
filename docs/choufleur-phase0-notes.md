@@ -13,23 +13,74 @@ on the way*, especially where reality disagreed with the plan.
 | Cargo workspace, `.gitignore`, READMEs | done |
 | `choufleur-core` — normalization, languages, matcher, script index, tracker v0, prompt biasing | done |
 | `choufleur-asr` — VAD segmentation policy, hallucination filter (both pure, no models) | done |
-| `choufleur-asr` — resampling, Silero via `ort`, whisper-rs engine | **not started** |
+| `choufleur-asr` — resampling, Silero VAD via `ort`, whisper-rs engine | done |
 | `choufleur-replay` — manifest, formats, WAV streaming, `verify`, `make-fixture`, `track`, `eval` | done |
-| `choufleur-replay` — streaming engine, virtual clock, `transcribe`, `track --from-audio` | **not started** |
+| `choufleur-replay` — streaming engine, virtual clock, `transcribe`, `track --from-audio` | done |
 | `corpus/README.md`, `research/align.py`, `scripts/fetch-models.sh` | done |
 | M0.1 corpus assembly, M0.4 sweep, the gate call | waiting on real recordings |
 
-104 tests pass; clippy is clean. Everything so far runs without models and without
-audio hardware, and the end-to-end path is exercised on a synthetic fixture.
+137 tests pass; fmt and clippy are clean. The pipeline runs end to end on audio:
+WAVs in, Whisper transcript, tracked position, scored report.
 
-**Nothing here has met real theatre audio yet.** Every threshold below is a
-starting point reasoned from first principles, not a measured value. M0.4 turns
-them against the real corpus and this file records the outcome.
+**Nothing here has met real theatre audio yet.** The numbers below are measured,
+but they are measured on *synthesized* speech — perfect diction, no reverb, no
+bleed, no overlap, no audience. They say the plumbing works and they price the
+compute honestly. They say nothing about the go/no-go gate, and no threshold
+should be tuned against them. M0.4 turns these dials against the real corpus.
 
 ---
 
+## Measured on the fixture (synthesized speech, 3 channels, 52.7 s, `small` + Metal, M-series)
+
+The whole point of building the harness first: these are outputs of
+`transcribe → track → eval`, not estimates.
+
+| Configuration | Speed | Detection lag (median / p95) | Coverage ±1 | Gate |
+|---|---|---|---|---|
+| Batch, interim every 1.5 s | **8.3× real time** | 1.56 s / 1.67 s | 100 % | PASS |
+| Batch, interim disabled | 15.2× real time | 2.67 s / 3.29 s | 99.7 % | **FAIL** (lag) |
+| Realtime, coupled, tracker-biased | 1.00× (paced) | 1.56 s / 1.67 s | 100 % | PASS |
+| Mixed feed (degraded mode) | 7.8× real time | 5.09 s / 19.9 s | 42.7 % | **FAIL** |
+
+End-to-end latency, realtime coupled run: **median 351 ms, p95 510 ms, max 535 ms**
+against a budget of 1.5 s typical / 3 s worst case. That is the number an operator
+actually feels, queue wait included, and it has four times the headroom the PRD asks
+for — on this material, at this channel count.
+
+Per-segment decode cost is **~160 ms and near-constant regardless of segment
+length**, because whisper.cpp zero-pads every input to a 30-second mel window. A
+1-second segment costs almost exactly what a 5-second one does. This single fact
+drives the whole latency/compute trade below.
+
 ## Verified third-party facts (checked, not remembered)
 
+The model-bound stages were written against the vendored crate sources rather than
+from memory, by agents that compiled and ran what they reported. Six of these would
+have been **silent** bugs — wrong answers with no error anywhere — and are the
+reason that verification was worth doing before writing a line of the integration:
+
+- **Silero's output state tensor is named `stateN`, not `state`.** Indexing
+  `SessionOutputs` by an unknown name *panics* rather than erroring, so this is
+  reached through `.get()`, which doubles as the v4-vs-v5 model check.
+- **A wrong VAD window length is silently accepted.** The model declares its input
+  shape as fully dynamic, so feeding 512 samples where 576 are required returns a
+  plausible probability computed from the wrong thing. `process_window` takes
+  `&[f32; 512]` so the compiler enforces what the model will not.
+- **`ort::inputs!` is not fallible in rc.13** — `inputs!{...}?` is a compile error,
+  though earlier release candidates required it.
+- **`set_suppress_non_speech_tokens` does not exist**; the real name is
+  `set_suppress_nst`.
+- **`set_initial_prompt` leaks a `CString` on every call** — `FullParams` has no
+  `Drop`. Prompts are pre-tokenized with `ctx.tokenize` and passed via `set_tokens`,
+  which allocates nothing. Over a show-length run with a fresh prompt per segment,
+  the leak would be steady.
+- **An invalid language code fails silently** and decodes with an out-of-range
+  token; validated up front with `get_lang_id`.
+- `temperature_inc` defaults to 0.2, which silently re-decodes poor segments at
+  rising temperatures and multiplies worst-case latency; set to 0 for a predictable
+  budget. `print_progress` defaults to *true* and will spam stdout mid-show.
+- `avg_logprob` is not exposed by the C API at all; it is computed here from
+  per-token `plog`, skipping special and timestamp tokens.
 - `rapidfuzz` 0.5 exposes `fuzz::ratio` only — **no `token_set_ratio`**. Implemented
   ourselves in `matcher.rs`.
 - `rapidfuzz::fuzz::ratio` returns **`[0, 1]`**, not the Python library's 0–100.
@@ -49,30 +100,40 @@ tensor API, rubato 5 `audioadapter` buffers, whisper-rs 0.16 setter names and th
 
 ## The two findings that change the design
 
-### A. Detection lag has a floor equal to the length of the line being spoken
+### A. Detection lag has a floor equal to the length of the line being spoken — and interim emission is what buys it back
 
-Measured, not theorized: `crates/choufleur-replay/tests/pipeline.rs` runs a perfect
-transcript through the real tracker and scores it with the real eval. Coverage is
-essentially perfect and there are no confident-wrong events — **and the lag gate
-fails**, at a median around the mean line duration.
+First predicted from a simulated transcript, now **confirmed on real audio and
+priced**. With one segment per utterance the tracker cannot learn a line until the
+actor has stopped saying it, so detection lag is bounded below by the line's own
+duration. Measured: median 2.67 s, p95 3.29 s, against a 2.0 s / 4.0 s gate — a
+clean failure with a perfect transcript and 99.7 % coverage. No matcher tuning
+recovers it, because nothing is wrong with the matching.
 
-The cause is structural. With one segment per utterance, the tracker cannot learn
-a line until the actor has stopped saying it. A four-second line lands four seconds
-late against a two-second gate, and no amount of matcher tuning recovers it.
+The fix is in segmentation: an open speech run is also emitted *interim* every
+`interim_interval_ms` (default 1500), carrying everything heard so far. Same audio,
+same tracker, same eval: **median 1.56 s, p95 1.67 s, gate met**. Exact coverage
+(±0 lines) also jumps from 6.7 % to 36.4 % — the tracker is not merely close more
+often, it is *right* more often.
 
-The fix is in segmentation, not matching: an open speech run is emitted *interim*
-every `interim_interval_ms` (default 1500), carrying everything heard so far. The
-tracker watches the line take shape and commits partway through. A companion test
-feeds the identical audio through interim segmentation and the lag gate passes.
+**The price, now measured.** Interim emission roughly doubles the decode count
+(18 segments → 37) and costs a little over half the throughput headroom: 15.2×
+real time falls to 8.3×. Because each decode is a near-constant ~160 ms, the
+arithmetic is simple and worth writing down for the venue:
 
-This is the PRD's "sliding-window / local-agreement policy for stable partial
-results" made concrete, and it is now the reason that policy is non-optional. The
-cost is real and unpriced: **every interim emission is a full Whisper decode**, so
-a 4 s line costs 3 decodes instead of 1. `interim_interval_ms` is therefore the
-main compute-vs-latency dial for M0.4, and it interacts directly with the
-"faster than real time on 3–4 concurrent channels" criterion. If compute turns out
-tight, interim emission on the *most recently active* channel only is the obvious
-degrade.
+> decodes per second ≈ (active channels) ÷ (interim interval in seconds)
+> compute load ≈ decodes per second × 0.16 s
+
+Four channels all speaking continuously at a 1.5 s interval is ~2.7 decodes/s,
+about 0.43 s of decode per second of audio — roughly 2.3× real time, still inside
+budget with `small` on Apple Silicon. `medium` is roughly 3× the decode cost and
+would land near 0.8× — i.e. **`medium` with interim emission on four simultaneous
+channels does not fit**, which matters because the PRD recommends `medium` for
+non-English shows. The degrade path, if the field proves this tight: interim
+emission only on the most recently active channel, or a longer interval, both of
+which trade lag back for compute along the curve above.
+
+`interim_interval_ms` is exposed as `--interim-ms` precisely so M0.4 can walk that
+curve rather than argue about it.
 
 ### B. A cut wider than skip tolerance costs one segment of staleness, unavoidably
 
@@ -182,6 +243,36 @@ coverage by more than half.
 
 ---
 
+### C. On a mixed feed, the thing that breaks first is *language*, not diarization
+
+The PRD offers a single mixed feed as a graceful degrade. Measured on a bilingual
+fixture, it is not graceful: coverage ±1 falls from 100 % to 42.7 %, with a
+confident-wrong event.
+
+The interesting part is the cause. It is not primarily lost speaker identity — it
+is that **a mixed feed has no per-line language to force**. Language is a property
+of the line (notation §8), and without knowing whose line is being spoken there is
+nothing to look it up by. The engine falls back to the show default and decodes the
+whole act as French, so English lines come back as French mishearings: *"I saw the
+smoke from the station platform"* becomes *"Je vois le smok de la plateforme
+station"*. That text is not recoverable by any amount of fuzzy matching.
+
+Letting the tracker supply the expected language (`track --from-audio --mixdown
+--bias tracker`) helps and removes the confident-wrong event — coverage ±3 rises
+from 73.7 % to 88 % — but it is chicken-and-egg: the tracker cannot advance on a
+mistranscribed line, so it keeps supplying the language of the line it is stuck on.
+
+A second, genuinely diarization-shaped problem compounds it: on a mixed feed the
+VAD hears continuous speech across a speaker change, so one segment spans several
+characters' lines.
+
+Practical consequence, worth stating before someone plans a show around it: the
+mixed-feed degrade is reasonable for a **monolingual** production and poor for a
+multilingual one. The PRD's *Out of Scope* list already defers mixed-feed
+diarization; this adds that multilingual mixed-feed tracking is deferred with it.
+
+---
+
 ## Open questions for the real corpus
 
 - Is `member_coverage_min: 0.5` too strict for far-field zone channels, where ASR
@@ -192,8 +283,11 @@ coverage by more than half.
   landmark re-anchoring impossible on the wrong channel, which is right, but also
   means a landmark line delivered by an understudy on a different mic never
   re-anchors.
-- What `interim_interval_ms` actually costs in decode time at 3–4 active channels —
-  finding A's open question, and the one that decides whether the latency budget
-  and the compute budget can be met at the same time.
+- Whether `medium` — which the PRD recommends for non-English shows — fits at all
+  with interim emission on four simultaneous channels. The arithmetic in finding A
+  says it does not on this machine; measuring it is one `--model` flag.
+- Whether real theatre audio changes the ~160 ms per-decode constant much. It is
+  dominated by the fixed 30-second mel window, so it should be stable, but reverb
+  and overlap make segments longer and more numerous.
 - Whether the honesty criterion should be restated as "no confident-wrong event
   longer than one segment" (finding B).

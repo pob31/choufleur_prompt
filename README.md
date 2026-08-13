@@ -17,15 +17,22 @@ It **never triggers anything**. Sound, lighting, video, flys — the operator al
 
 ## Status
 
-**Phase 0 — tracking-engine risk spike.** The offline harness exists: the tracking
-engine, the corpus tooling, and the evaluation that decides go/no-go. The
-recognition stage is not wired up yet, and no real theatre audio has been tracked,
-so the question Phase 0 exists to answer is still open.
+**Phase 0 — tracking-engine risk spike.** The offline pipeline runs end to end:
+audio in, speech recognised, script position tracked, run scored against the
+go/no-go criteria. On synthesized test audio it passes the gate at 8× real time
+with 351 ms median end-to-end latency.
+
+No real theatre audio has been tracked yet, so the question Phase 0 exists to
+answer is still open — synthesized speech is the easiest input this system will
+ever see.
 
 ```bash
-cd server && cargo test                                    # 104 tests, no models needed
-cargo run -p choufleur-replay -- make-fixture corpus/fixture-smoke
-cargo run -p choufleur-replay -- verify corpus/fixture-smoke
+cd server && cargo test          # 137 tests; those needing models skip without them
+../scripts/fetch-models.sh       # Whisper + Silero, ~490 MB, once
+cd .. && ./server/target/release/choufleur-replay make-fixture corpus/fixture-smoke
+./server/target/release/choufleur-replay transcribe corpus/fixture-smoke -o out/segments.jsonl
+./server/target/release/choufleur-replay track corpus/fixture-smoke --segments out/segments.jsonl -o out/trace.jsonl
+./server/target/release/choufleur-replay eval corpus/fixture-smoke --trace out/trace.jsonl --segments out/segments.jsonl
 ```
 
 | Document | Contents |
@@ -42,7 +49,7 @@ choufleur/
 ├── server/          # Rust workspace — see server/README.md
 │   └── crates/
 │       ├── choufleur-core     # tracking engine: normalization, matching, position
-│       ├── choufleur-asr      # buffers in, transcript segments out
+│       ├── choufleur-asr      # resample, VAD, Whisper: buffers in, segments out
 │       └── choufleur-replay   # offline replay, tracking and evaluation harness
 ├── corpus/          # evaluation recordings — manifests in git, audio is not
 ├── research/        # Python sidecar for forced alignment; never in the show path
