@@ -17,21 +17,38 @@ It **never triggers anything**. Sound, lighting, video, flys — the operator al
 
 ## Status
 
-Design phase. No code yet — the documents below are the current state of the project:
+**Phase 0 — tracking-engine risk spike.** The offline harness exists: the tracking
+engine, the corpus tooling, and the evaluation that decides go/no-go. The
+recognition stage is not wired up yet, and no real theatre audio has been tracked,
+so the question Phase 0 exists to answer is still open.
+
+```bash
+cd server && cargo test                                    # 104 tests, no models needed
+cargo run -p choufleur-replay -- make-fixture corpus/fixture-smoke
+cargo run -p choufleur-replay -- verify corpus/fixture-smoke
+```
 
 | Document | Contents |
 |----------|----------|
 | [docs/choufleur-prd_1.md](docs/choufleur-prd_1.md) | Product requirements — architecture, tracking, warnings, protocol, platform |
 | [docs/choufleur-notation_1.md](docs/choufleur-notation_1.md) | Normative spec — cue notation, line identity, language tagging, show file format |
 | [docs/choufleur-devplan_1.md](docs/choufleur-devplan_1.md) | Development plan — phased milestones, go/no-go gate, workspace layout, test strategy |
+| [docs/choufleur-phase0-notes.md](docs/choufleur-phase0-notes.md) | What building it has taught us, including two findings that change the design |
 
-## Planned repository layout
+## Repository layout
 
 ```
 choufleur/
-├── server/          # Rust — audio capture, ASR, position tracking, web serving
-├── remote/          # Flutter/Dart — web-first client; iPad/Android variants
-├── docs/            # PRD, notation spec
+├── server/          # Rust workspace — see server/README.md
+│   └── crates/
+│       ├── choufleur-core     # tracking engine: normalization, matching, position
+│       ├── choufleur-asr      # buffers in, transcript segments out
+│       └── choufleur-replay   # offline replay, tracking and evaluation harness
+├── corpus/          # evaluation recordings — manifests in git, audio is not
+├── research/        # Python sidecar for forced alignment; never in the show path
+├── scripts/         # model fetching
+├── remote/          # Flutter/Dart — web-first client (Phase 3, not started)
+├── docs/            # PRD, notation spec, development plan, notes
 ├── LICENSE-MIT      # MIT OR Apache-2.0 dual license
 ├── LICENSE-APACHE   #
 └── README.md
