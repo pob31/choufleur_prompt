@@ -2,10 +2,12 @@
 server/target/
 **/*.rs.bk
 
-# Models — fetched by scripts/fetch-models.sh, never committed
+# Models — fetched by scripts/fetch-models.sh, never committed. They are hundreds
+# of megabytes and carry their own licence (MIT, OpenAI / snakers4).
 server/models/
 
-# Corpus audio lives on external storage; manifests + scripts + ground truth are committed
+# Corpus audio lives on external storage; manifests, scripts and ground truth are
+# committed, and the manifest's SHA-256 per file is what ties the two together.
 corpus/**/*.wav
 corpus/**/*.aiff
 corpus/**/*.flac
@@ -16,15 +18,36 @@ corpus/**/audio/
 # spurious diffs. Regenerate with: choufleur-replay make-fixture corpus/fixture-smoke
 corpus/fixture-smoke/
 
-# Replay outputs
-*.jsonl
-!corpus/**/ground-truth.jsonl
+# Replay outputs.
+#
+# Scoped deliberately. An earlier repo-wide `*.jsonl` also swallowed committed
+# test fixtures — a golden trace under tests/ is exactly the artifact the devplan's
+# regression strategy calls for, and `git add -A` skipped it in silence. Ignore
+# where the outputs actually land instead: the default `out/`, and the repository
+# root for when someone runs `-o segments.jsonl` from there.
 out/
+/*.jsonl
+/report.json
 
 # Python research sidecar
 research/.venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # macOS
 .DS_Store
+# Resource forks. macOS scatters these across any non-HFS volume, which is exactly
+# what the corpus audio drive will be.
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
