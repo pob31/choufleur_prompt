@@ -156,11 +156,21 @@ The system maintains a probability distribution over current script position and
 
 ### How accurate is accurate enough
 
-The operator reads a page, not a line number. What they need is that **the page on
-screen is the right page, and the current line sits somewhere in the middle third
-of it** — near enough that the eye finds it without scrolling, with enough text
-visible above and below to follow the sense. Line-perfect tracking is not the
-requirement and never was.
+Think of the marker on a GPS. It stays in the middle of the screen and the map
+scrolls underneath it; you are never asked to find yourself on the map. Choufleur's
+script display works the same way: **the current line is held at the centre of the
+visible script and the text scrolls under it**, until the operator scrolls away
+themselves (see *Browsing* under Multi-Operator Protocol), after which one tap
+returns them to live.
+
+That is what sets the accuracy requirement, and it is a looser requirement than it
+first appears. Because the reported line is centred by construction, an error does
+not push the current line off the edge of the screen — it means the operator is
+centred on slightly the wrong part of the text, with the line actually being spoken
+still visible, a little above or below centre. What must hold is that **the line
+actually being spoken stays comfortably within the visible window**: roughly half a
+page either side, not one line. Line-perfect tracking is not the requirement and
+never was.
 
 This has consequences that run through the whole design:
 
@@ -168,8 +178,8 @@ This has consequences that run through the whole design:
   useful. A position frozen two minutes ago is worse than useless, because the page
   looks live and is not. Refusing to move is not the conservative choice it appears
   to be — see *Confidence levels* below, and the honesty rule that goes with it.
-- **Precision still matters near a cue.** Coarse position is fine for reading; it is
-  not fine for deciding when a standby fires. Cue leads expressed in lines rather
+- **Precision still matters near a cue.** Coarse position is fine for reading — the
+  operator's eye covers the difference — but not for deciding when a standby fires. Cue leads expressed in lines rather
   than seconds (see *Warning Design*) degrade gracefully with a coarse position,
   where a seconds-based lead needs a pace estimate the tracker may not have.
 - **The confidence level is what carries the honesty**, not the refusal to move. A

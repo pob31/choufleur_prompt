@@ -92,8 +92,11 @@ On real recordings, full act, `small` model (`medium` acceptable for non-English
 Three of these were revised after Phase 0 measured real material; the reasoning is
 in the [Phase 0 notes](choufleur-phase0-notes.md) and matters more than the numbers.
 
-**Page, not line.** The operator reads a page and needs the current line in the
-middle third of it (PRD, *How accurate is accurate enough*). ±1 line is a
+**Page, not line.** The client holds the current line at the centre of the visible
+script and scrolls the text under it, GPS-fashion (PRD, *How accurate is accurate
+enough*). An error therefore does not hide the line — it puts the operator slightly
+off-centre in the right region, with the spoken line still on screen. ±5 lines is
+that requirement made numeric for a typical page; ±1 line is a
 transcription-alignment criterion, not an operator one, and it is roughly five
 times stricter than the job requires — a system that satisfied every real need
 would have failed the old gate. ±1 is kept as a secondary *precision* figure
