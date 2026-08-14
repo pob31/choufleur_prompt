@@ -599,3 +599,116 @@ fn a_span_is_not_extended_over_a_line_that_was_not_heard() {
     let (idx, _, _) = position_of(&events).expect("the line that was said should match");
     assert_eq!(idx, 12, "must not run ahead to line 14 on unheard material");
 }
+
+#[test]
+fn stacked_turns_do_not_leave_the_tracker_confidently_wrong() {
+    // From a real night. An actor with a photographic memory lost his place, went
+    // upstage to read the script, and while he was gone his partner delivered all
+    // four of her paragraphs; he then returned and delivered all four of his. The
+    // scene was performed complete and in order per speaker, but the *interleaving*
+    // was gone — B B B B A A A A where the script says A B A B A B A B.
+    //
+    // This is the PRD's "inverted lines" compound failure, at scale: skip tolerance
+    // carries the position forward through B's block, and forward-only then refuses
+    // to go back for A's. What must not happen is the tracker asserting a confident
+    // position through several minutes of dialogue it has entirely misplaced.
+    let script = toy_script();
+    let p = prepared(&script);
+    let mut tracker = Tracker::new(&p, TrackerConfig::default());
+    let mut sb = SegBuilder::new();
+
+    tracker.update(&sb.say(Some(A), &script.lines[0].text, 2.5));
+    tracker.update(&sb.say(Some(B), &script.lines[1].text, 2.5));
+
+    // B's block first: lines 5, 7, 9 — hers out of the coming exchange.
+    let mut worst_confident_error = 0usize;
+    for i in [5usize, 9, 11] {
+        let events = tracker.update(&sb.say(Some(B), &script.lines[i].text, 2.5));
+        for e in &events {
+            if let TrackerEvent::Position {
+                line_index,
+                confidence,
+                ..
+            } = e
+            {
+                if *confidence >= Confidence::Line {
+                    worst_confident_error = worst_confident_error.max(line_index.abs_diff(i));
+                }
+            }
+        }
+    }
+    // Then his: lines 4, 6, 8 — all of them now behind the position.
+    for i in [4usize, 6, 8] {
+        let events = tracker.update(&sb.say(Some(A), &script.lines[i].text, 2.5));
+        for e in &events {
+            if let TrackerEvent::Position {
+                line_index,
+                confidence,
+                ..
+            } = e
+            {
+                if *confidence >= Confidence::Line {
+                    worst_confident_error = worst_confident_error.max(line_index.abs_diff(i));
+                }
+            }
+        }
+    }
+    assert!(
+        worst_confident_error <= 5,
+        "claimed a confident position {worst_confident_error} lines from the speaker"
+    );
+
+    // What it actually does, and it is the right thing: it holds its last known
+    // position at `Block` confidence throughout the disruption rather than chasing
+    // the stacked delivery, then re-acquires at the landmark. The operator's page
+    // goes stale for the duration — but it is *labelled* stale, which is the whole
+    // distinction the confidence levels exist to draw, and in a live run this is
+    // what raises the divergence warning and, if it persists, the help request.
+
+    // And the scene resumes normally. Whatever happened during the stack, the
+    // tracker has to come back — this is the part an operator would actually notice.
+    for i in 12..16 {
+        tracker.update(&sb.say(Some(&script.lines[i].character), &script.lines[i].text, 2.5));
+    }
+    assert!(
+        tracker.position() >= 14,
+        "never recovered after the stack: left at line {}",
+        tracker.position()
+    );
+}
+
+#[test]
+fn one_wrong_word_in_a_proper_noun_is_absorbed() {
+    // Also from a real night: "Polymédor" for "Polymestor", and several minutes of
+    // a company trying not to laugh. The slip itself must cost nothing — a single
+    // mangled proper noun is exactly what fuzzy matching is for — and the silence
+    // that follows must not decay confidence, since decay counts speech, not time.
+    let script = toy_script();
+    let p = prepared(&script);
+    let mut tracker = Tracker::new(&p, TrackerConfig::default());
+    let mut sb = SegBuilder::new();
+
+    tracker.update(&sb.say(Some(A), &script.lines[0].text, 2.5));
+    let events = tracker.update(&sb.say(
+        Some(B),
+        "Je sais, mais je suis venu quand mème.", // one word mangled
+        2.5,
+    ));
+    let (idx, conf, _) = position_of(&events).expect("a single wrong word must not lose the line");
+    assert_eq!(idx, 1);
+    assert!(conf >= Confidence::Line);
+
+    // Four minutes of the company recovering: no speech, so no decay.
+    sb.t += 240.0;
+    assert_eq!(
+        tracker.confidence(),
+        conf,
+        "silence must not decay confidence"
+    );
+    let events = tracker.update(&sb.say(Some(A), &script.lines[2].text, 2.5));
+    assert_eq!(
+        position_of(&events).map(|(i, ..)| i),
+        Some(2),
+        "should resume normally"
+    );
+}
