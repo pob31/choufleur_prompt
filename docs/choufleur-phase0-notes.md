@@ -999,6 +999,47 @@ Last, the stale-ID accident is the Phase 1 lesson: annotations keyed to position
 IDs do not survive a re-import. Line identity must be content-derived — which is what
 M1.4's hash-based IDs are for, now with a measured failure to justify them.
 
+### R. Inside the operator's window: on the line, or visibly lost — rarely in between
+
+The operator's question, verbatim: *on a 6-line window, on average, how often are we
+off the mark?* Answerable without hand labels by using the recording's own
+unambiguous moments as spot checks — a kept segment matching exactly one script line
+strongly, no runner-up close (repeats excluded by the uniqueness test itself), pins
+the show to that line at that instant. ~175 such anchors per Hécube night, one every
+40 s or so. `window_accuracy.py`.
+
+The caveat first: anchors exist only where the ASR heard something clean, which
+correlates with the tracker doing well. These are optimistic bounds — the honest
+reading is "when the show is knowable, is the display right?"
+
+| corpus | in a 6-line window | median error | p90 |
+| --- | --- | --- | --- |
+| Hécube 16 Nov (mixed feed) | **91 %** | 0 lines | 3 |
+| Hécube 17 Nov | **83 %** | 0 lines | 48 |
+| Lazzi (ambient) | 35 % | 25 lines | 459 |
+
+The distribution matters more than the average: it is **bimodal**. Median error is
+*zero* — when the display claims a position it is typically on the exact line, not
+merely near it. And when it is wrong it is wrong by tens to hundreds of lines, never
+subtly. The misses are not a fringe of ±5s; they are three episodes: the show's open
+before the first fix settles, the scene-2/4 Euripides twins (finding M, in both
+directions — and a few "misses" are the *anchor* fooled by the twin, so the
+measurement inherits the problem it measures), and one five-minute lost stretch on
+night 17 pinned at L0719.
+
+For the GPS UX this shape is the good one. The killer failure for operator trust is
+subtle wrongness — a page that looks plausible and is one scene off. That mode is
+nearly absent: the display is either right or *visibly, declaredly* lost, and the
+lost state already has its contract (say so, ask for guidance). It also says the
+6-line window is the right size to publish: nothing is gained below ±3 (91 % ≈ 91 %
+at ±5) because there is almost no mass at small-but-nonzero errors.
+
+Found en route, embarrassingly on theme: the first run of this measurement compared
+current-script anchors against traces tracked on the *old 996-line script*, and
+produced a beautifully tight median error of 10 — which was the index skew between
+the two script versions, not tracking error. Same lesson as finding Q, third
+occurrence today: nothing keyed by line index survives a re-import.
+
 ---
 
 ## Open questions for the real corpus
