@@ -1061,3 +1061,76 @@ occurrence today: nothing keyed by line index survives a re-import.
   and overlap make segments longer and more numerous.
 - Whether the honesty criterion should be restated as "no confident-wrong event
   longer than one segment" (finding B).
+
+### S. Watching it run: what an operator noticed in the first hour
+
+The live spike (`serve`) puts the script on a screen and plays the show through the
+speakers while it tracks. Four things surfaced in the first hour of somebody actually
+watching that no offline metric had produced in a week.
+
+**Playback and analysis must not share a thread.** The first version pushed audio from
+inside the engine loop, so every Whisper decode — ~600 ms — stalled the feed to a
+250 ms buffer. It warbled continuously. The compute budget was never the issue (8.4×
+real time on this material); sharing a thread was.
+
+**A buffer of exactly one block is not a buffer.** Capacity was `buffer_ms`, the
+producer hands over 250 ms at a time, so it had to wait for the queue to run *dry*
+before every push and the gap went out as silence. Worse than the noise: each inserted
+silence pushes the audio content later, so the sound fell steadily further behind while
+both clocks stayed technically correct. The operator described it exactly — "it's
+getting far ahead of the sound".
+
+**The display must never lead the voice.** The recogniser is handed a block before that
+block reaches the speaker, so without gating the screen announces a line before it is
+audible. That reads as broken even when the tracking is perfect. Updates are now held
+until their audio has been heard: the display may lag, never lead.
+
+**And the operator asked for the thing that actually fixes being lost:** click the line.
+Finding R says that when the tracker is wrong it is usually wrong by a *lot*, and
+`lost_search_all` can take a minute to recover — during which the person in the room
+can see the page and knows the answer. `Tracker::set_position` already existed for
+exactly this and had no route from a UI. It is now one tap, and it is the single most
+useful control in the spike.
+
+### T. Two lines that say the same thing are not two answers
+
+Reported from watching: *"there are places where the actors each say the words from the
+original text and the detection gets lost"*. That is a mechanism, not a mood, and the
+trace confirms it — **165 ambiguous rejections in one performance**, including a line
+scored **1.00**, a perfect match, thrown away because its twin tied it.
+
+The margin rule was written to keep the tracker quiet when two places fit equally well.
+The assumption underneath it is that the rivals are *different places*. When they carry
+the same words the assumption fails: either reading explains what was heard, so
+refusing to move is the one response guaranteed to be wrong. Picking the nearer copy
+costs a line or two; freezing costs the scene, because the decay timer then runs to
+lost and needs a human.
+
+`PreparedLine` now carries a hash of its normalized text and identical lines no longer
+silence each other (`equivalent_text_competes`, default off, switchable to keep it
+measurable). Measured: night 16 **91 % → 92 %** in a 6-line window with p90 error 3 → 2
+lines, ambiguous rejections 165 → 147; night 17 unchanged at 83 %. Real, and smaller
+than hoped — the test is exact text equality, while many ambiguities are between
+genuinely different lines that merely score alike.
+
+### U. The matcher is built for speeches; a quarter of this play is not
+
+Also reported from watching: *"fast dialogue is problematic somehow"*. Measured on
+night 16:
+
+| | accepted segments | rejected segments |
+| --- | --- | --- |
+| median words | 14 | 6 |
+| under 5 words | 9 % | **42 %** |
+
+And **268 of 984 lines (27 %)** of Hécube are under five words. Short text is weak
+evidence, and the weak-evidence path narrows deliberately to one line ahead, no
+multi-line spans, no landmark recovery — "Yes" is not allowed to relocate the show.
+That is right in isolation and wrong in aggregate: in a rapid exchange, if the position
+is off by a single line the correct answer is not in the window at all, so everything is
+rejected until the tracker decays to lost.
+
+This is the clearest remaining structural gap, and unlike the others it is not about
+audio at all. Candidate direction: on a zone or mixed feed a short segment should still
+be allowed multi-line spans, since one VAD segment routinely covers three short
+exchanges. It needs measuring against both nights before it is believed.

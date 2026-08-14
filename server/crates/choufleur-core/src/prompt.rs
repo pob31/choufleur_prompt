@@ -121,7 +121,7 @@ mod tests {
     use crate::script::{Character, Script, ScriptLine};
 
     fn script() -> Script {
-        let mk = |id: &str, ch: &str, text: &str| ScriptLine {
+        let mk = |id: &str, ch: &str, text: &str| ScriptLine { cut: false,
             id: id.into(),
             act: "act-1".into(),
             scene: "sc-1".into(),

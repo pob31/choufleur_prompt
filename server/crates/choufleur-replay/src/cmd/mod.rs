@@ -1,5 +1,6 @@
 pub mod eval;
 pub mod make_fixture;
+pub mod serve;
 pub mod track;
 pub mod transcribe;
 pub mod verify;

@@ -57,6 +57,15 @@ pub struct ScriptLine {
     /// boundaries are implicit weight-3 landmarks and need no entry here.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub landmark: u8,
+    /// Struck from this production, but kept in the script.
+    ///
+    /// Marked rather than deleted, on the notation spec's no-silent-data-loss rule: a
+    /// line cut this week may be restored next week, and anything anchored to it has
+    /// to survive in the meantime. The operator needs to *see* it — reading a page
+    /// that contains text nobody is going to say is how you lose your place — so it
+    /// stays in the display, visibly struck.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub cut: bool,
     /// Ways this line has actually been performed, as distinct from how it is
     /// written.
     ///
@@ -68,6 +77,10 @@ pub struct ScriptLine {
     /// principle 1: pristine text).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub alternates: Vec<String>,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 fn is_zero(n: &u8) -> bool {
@@ -135,6 +148,16 @@ impl Script {
 pub struct PreparedLine {
     pub index: usize,
     pub id: String,
+    /// Struck from this production; see `ScriptLine::cut`.
+    pub cut: bool,
+    /// Hash of the normalized text, so two lines that say the same thing can be
+    /// recognised as saying the same thing without comparing strings in the hot path.
+    ///
+    /// A production repeats itself — a chorus, a running joke, a company reading the
+    /// same passage aloud that they later perform. Those repetitions are not rival
+    /// *answers*; they are one answer written down twice, and the matcher needs to
+    /// know the difference.
+    pub text_key: u64,
     pub character: String,
     pub act: String,
     pub scene: String,
@@ -254,9 +277,17 @@ impl PreparedScript {
                 landmarks.push(index);
             }
             by_id.insert(line.id.clone(), index);
+            let text_key = {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                crate::normalize::normalize_base(&line.text).hash(&mut h);
+                h.finish()
+            };
             lines.push(PreparedLine {
                 index,
                 id: line.id.clone(),
+                cut: line.cut,
+                text_key,
                 character: line.character.clone(),
                 act: line.act.clone(),
                 scene: line.scene.clone(),
@@ -441,6 +472,7 @@ mod tests {
 
     fn line(id: &str, act: &str, scene: &str, ch: &str, text: &str) -> ScriptLine {
         ScriptLine {
+            cut: false,
             id: id.into(),
             act: act.into(),
             scene: scene.into(),

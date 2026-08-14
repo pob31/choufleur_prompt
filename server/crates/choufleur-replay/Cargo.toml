@@ -16,3 +16,7 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 hound = { workspace = true }
 sha2 = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+futures-util = { workspace = true }
+cpal = { workspace = true }

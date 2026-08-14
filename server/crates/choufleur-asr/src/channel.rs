@@ -58,6 +58,14 @@ impl ChannelFrontend {
 
     /// Gain currently applied to this channel, in dB. A channel pinned at the
     /// ceiling is reporting a problem with the desk, not with the actor.
+    /// The level the gain stage believes speech on this channel sits at.
+    ///
+    /// Worth surfacing next to the gain: together they say whether a channel is quiet
+    /// because the actor is far away or because the desk is set for a shout later.
+    pub fn speech_dbfs(&self) -> f32 {
+        self.agc.speech_dbfs()
+    }
+
     pub fn gain_db(&self) -> f32 {
         self.agc.gain_db()
     }

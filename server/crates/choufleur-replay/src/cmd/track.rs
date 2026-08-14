@@ -30,7 +30,7 @@ pub fn run(
 ) -> Result<()> {
     let corpus = Corpus::load(corpus_path, audio_root)?;
     let (_script, prepared) = super::load_script(&corpus.script_path())?;
-    let cfg = load_config(tracker_config)?;
+    let cfg = load_tracker_config(tracker_config)?;
     let segments: Vec<SegmentRecord> = read_jsonl(segments_path)?;
 
     let trace = track_segments(&prepared, cfg, &segments, timings);
@@ -120,7 +120,7 @@ fn empty_at(t: f64) -> TraceRecord {
     }
 }
 
-fn load_config(path: Option<&Path>) -> Result<TrackerConfig> {
+pub(crate) fn load_tracker_config(path: Option<&Path>) -> Result<TrackerConfig> {
     match path {
         None => Ok(TrackerConfig::default()),
         Some(p) => {
@@ -142,16 +142,30 @@ fn load_config(path: Option<&Path>) -> Result<TrackerConfig> {
 /// text on noise — which is why the hallucination filter runs regardless of bias
 /// mode and why `confident-wrong` is the metric that decides whether it earns its
 /// place. Run the sweep with `--bias none` as the control.
-struct TrackingConsumer<'a> {
-    tracker: Tracker<'a>,
-    script: &'a PreparedScript,
-    trace: Vec<TraceRecord>,
-    bias: BiasMode,
-    prompt_cfg: PromptConfig,
-    lang_of: HashMap<String, Vec<LangCode>>,
-    default_lang: LangCode,
-    static_prompt: String,
-    timings: bool,
+pub(crate) struct TrackingConsumer<'a> {
+    pub(crate) tracker: Tracker<'a>,
+    pub(crate) script: &'a PreparedScript,
+    pub(crate) trace: Vec<TraceRecord>,
+    pub(crate) bias: BiasMode,
+    pub(crate) prompt_cfg: PromptConfig,
+    pub(crate) lang_of: HashMap<String, Vec<LangCode>>,
+    pub(crate) default_lang: LangCode,
+    pub(crate) static_prompt: String,
+    pub(crate) timings: bool,
+}
+
+impl crate::live::PositionSource for TrackingConsumer<'_> {
+    fn position(&self) -> (usize, choufleur_core::tracker::Confidence) {
+        (self.tracker.position(), self.tracker.confidence())
+    }
+
+    fn steer_to(&mut self, line_index: usize) {
+        let events = self.tracker.set_position(line_index, Confidence::Line);
+        for ev in &events {
+            self.trace
+                .push(TraceRecord::from_event(0.0, None, ev));
+        }
+    }
 }
 
 impl Consumer for TrackingConsumer<'_> {
@@ -238,7 +252,7 @@ pub fn run_from_audio(
 ) -> Result<()> {
     let corpus = Corpus::load(corpus_path, audio_root)?;
     let (script, prepared) = super::load_script(&corpus.script_path())?;
-    let cfg = load_config(tracker_config)?;
+    let cfg = load_tracker_config(tracker_config)?;
 
     let mut ecfg = EngineConfig::new(
         super::resolve_model(whisper_model, super::DEFAULT_WHISPER_MODEL)?,

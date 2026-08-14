@@ -54,6 +54,17 @@ pub struct SegmentRecord {
     /// A partial hypothesis emitted while the speaker was still talking.
     #[serde(default)]
     pub interim: bool,
+    /// Gain the adaptive stage was applying when this segment closed, in dB, and the
+    /// level it had settled on for speech.
+    ///
+    /// Recorded because until now it was not. The gain has been on in every Phase 0
+    /// run and nobody could see what it did — the same mistake as a config field
+    /// nothing reads. A channel pinned near maximum is telling you about the desk,
+    /// not about the actor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gain_db: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speech_dbfs: Option<f32>,
     /// Milliseconds spent inside Whisper for this segment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decode_ms: Option<u64>,
@@ -269,6 +280,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("segments.jsonl");
         let recs = vec![SegmentRecord {
+            gain_db: None,
+            speech_dbfs: None,
             channel: 1,
             character: Some("char-marie".into()),
             t_start: 1.25,

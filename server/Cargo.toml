@@ -31,6 +31,10 @@ unicode-normalization = "0.1"
 unicode-properties = "0.1"
 rapidfuzz = "0.5"
 criterion = "0.7"
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "time", "signal"] }
+futures-util = "0.3"
+cpal = "0.15"
 
 [profile.release]
 debug = 1

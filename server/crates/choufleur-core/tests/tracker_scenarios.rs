@@ -77,7 +77,7 @@ fn toy_script() -> Script {
         lines: rows
             .iter()
             .enumerate()
-            .map(|(i, (scene, ch, text, lm))| ScriptLine {
+            .map(|(i, (scene, ch, text, lm))| ScriptLine { cut: false,
                 id: format!("L-{:04}", i + 1),
                 act: "act-1".into(),
                 scene: (*scene).into(),

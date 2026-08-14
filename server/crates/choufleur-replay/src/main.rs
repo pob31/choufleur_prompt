@@ -105,6 +105,37 @@ enum Command {
         audio_root: Option<PathBuf>,
     },
 
+    /// Run a corpus at real speed, audibly, with the script on a screen.
+    ///
+    /// The live spike: open the printed URL and watch the text follow the sound.
+    /// Not the real server (that is Phase 2) — a thin slice over this harness so the
+    /// display can be judged by eye and ear rather than by metric.
+    Serve {
+        corpus: PathBuf,
+        #[command(flatten)]
+        audio: AudioArgs,
+        #[arg(long)]
+        audio_root: Option<PathBuf>,
+        #[arg(long)]
+        tracker_config: Option<PathBuf>,
+        #[arg(long, default_value_t = 8080)]
+        port: u16,
+        /// Do not play the audio. Pacing then falls back to the wall clock.
+        #[arg(long)]
+        no_monitor: bool,
+        /// Output device to play through; substring match. Default device otherwise.
+        #[arg(long)]
+        output_device: Option<String>,
+        /// Monitor buffer. Kept short on purpose: whatever sits in it is audio the
+        /// screen has already seen, so a deep buffer would make the display look
+        /// faster than it is.
+        #[arg(long, default_value_t = 600)]
+        buffer_ms: u32,
+        /// Also write the trace, so a live run can be scored like an offline one.
+        #[arg(long, short = 'o')]
+        out: Option<PathBuf>,
+    },
+
     /// Track a script, from an existing transcript or straight from audio.
     Track {
         corpus: PathBuf,
@@ -207,6 +238,34 @@ fn main() -> Result<()> {
             audio.interim_ms,
             audio_root,
             audio.no_agc,
+        ),
+        Command::Serve {
+            corpus,
+            audio,
+            audio_root,
+            tracker_config,
+            port,
+            no_monitor,
+            output_device,
+            buffer_ms,
+            out,
+        } => cmd::serve::run(
+            &corpus,
+            tracker_config.as_deref(),
+            audio.model.as_deref(),
+            audio.vad_model.as_deref(),
+            audio.bias.into(),
+            audio.mixdown,
+            audio.channels,
+            audio.interim_ms,
+            audio_root,
+            audio.no_agc,
+            audio.realtime,
+            port,
+            !no_monitor,
+            output_device,
+            buffer_ms,
+            out,
         ),
         Command::Track {
             corpus,

@@ -92,6 +92,8 @@ fn perfect_segments(f: &Fixture) -> Vec<SegmentRecord> {
             let idx = f.index_of[&g.line_id];
             let line = &f.prepared.lines[idx];
             SegmentRecord {
+                gain_db: None,
+                speech_dbfs: None,
                 channel: g.channel.unwrap_or(1),
                 character: Some(line.character.clone()),
                 t_start: g.onset,
@@ -143,6 +145,8 @@ fn interim_segments(f: &Fixture, interval: f64) -> Vec<SegmentRecord> {
             let frac = (t - base.t_start) / dur;
             let n = ((words.len() as f64 * frac).round() as usize).clamp(1, words.len());
             out.push(SegmentRecord {
+                gain_db: None,
+                speech_dbfs: None,
                 t_end: t,
                 text: words[..n].join(" "),
                 interim: true,
@@ -332,6 +336,8 @@ fn improvised_material_is_reported_as_uncertainty_not_as_motion() {
         segments.insert(
             9 + k,
             SegmentRecord {
+                gain_db: None,
+                speech_dbfs: None,
                 channel: 2,
                 character: Some("char-john".into()),
                 t_start: at + k as f64 * 2.5,
@@ -391,6 +397,8 @@ fn filtered_segments_are_recorded_but_never_tracked() {
     segments.insert(
         4,
         SegmentRecord {
+            gain_db: None,
+            speech_dbfs: None,
             channel: 3,
             character: Some("char-sarah".into()),
             t_start: segments[3].t_end + 0.1,

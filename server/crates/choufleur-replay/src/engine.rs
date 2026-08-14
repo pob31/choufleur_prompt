@@ -76,6 +76,17 @@ pub trait Consumer {
     fn on_segment(&mut self, record: &SegmentRecord);
 }
 
+/// Sees every block of audio as it is read, before anything is done with it.
+///
+/// Exists so the live spike can make the run audible: the operator judges the system
+/// by whether text arrives with the voice, which requires hearing the same audio the
+/// recogniser is given. Implementations may block — the monitor's backpressure is
+/// what paces a live run — so this must only ever be attached to a run intended to
+/// happen at real speed.
+pub trait BlockSink {
+    fn on_block(&mut self, channel: u16, samples: &[f32]);
+}
+
 #[derive(Clone, Debug)]
 pub struct EngineConfig {
     pub whisper_model: PathBuf,
@@ -132,6 +143,8 @@ pub struct Engine {
     vad: SileroSession,
     whisper: WhisperEngine,
     filter: HallucinationFilter,
+    /// Optional tap on the raw blocks; see `BlockSink`.
+    monitor: Option<Box<dyn BlockSink>>,
 }
 
 impl Engine {
@@ -146,7 +159,17 @@ impl Engine {
             vad,
             whisper,
             filter,
+            monitor: None,
         })
+    }
+
+    /// Attach a tap that sees every block as it is read.
+    ///
+    /// Only the first selected channel is sent: monitoring exists so a person can
+    /// hear what is being analysed, and summing several actors' close mics would
+    /// produce something nobody's ears or the recogniser ever get.
+    pub fn set_monitor(&mut self, sink: Box<dyn BlockSink>) {
+        self.monitor = Some(sink);
     }
 
     /// Run the whole corpus through the pipeline.
@@ -173,6 +196,7 @@ impl Engine {
         let mut seq = 0u64;
         let mut block_buf: Vec<f32> = Vec::with_capacity(block_frames);
         let mut audio_t = 0.0f64;
+        let monitored = sources[0].index;
 
         loop {
             let mut any = false;
@@ -187,6 +211,13 @@ impl Engine {
                     src.frontend.finish(&mut self.vad, &mut pending)?;
                 } else {
                     any = true;
+                    if let Some(m) = self.monitor.as_mut() {
+                        if src.index == monitored {
+                            // Blocks until the device has room. This, not the clock,
+                            // is what paces a monitored run.
+                            m.on_block(src.index, &block_buf[..n]);
+                        }
+                    }
                     src.frontend
                         .push_block(&mut self.vad, &block_buf, &mut pending)?;
                 }
@@ -261,6 +292,8 @@ impl Engine {
             let verdict = self.filter.check(&decoded, seg.duration());
 
             let record = SegmentRecord {
+                gain_db: Some(src.frontend.gain_db()),
+                speech_dbfs: Some(src.frontend.speech_dbfs()),
                 channel,
                 character: src.character.clone(),
                 t_start: seg.t_start,

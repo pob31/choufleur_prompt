@@ -123,6 +123,13 @@ pub struct TrackerConfig {
     pub word_threshold: f64,
     /// **[sweep]** How far the best candidate must beat the runner-up.
     pub margin: f64,
+    /// Whether two lines carrying identical text should silence each other.
+    ///
+    /// `false` — the default — means they do not: see `is_rival`. Left switchable
+    /// because it changes what the margin rule means, and anything that changes
+    /// matching behaviour should be measurable against the corpus rather than argued
+    /// about.
+    pub equivalent_text_competes: bool,
     /// **[sweep]** Multiplier when a segment's channel character is not the
     /// candidate line's speaker.
     pub char_mismatch_penalty: f64,
@@ -252,6 +259,7 @@ impl Default for TrackerConfig {
             accept_threshold: 0.62,
             word_threshold: 0.88,
             margin: 0.06,
+            equivalent_text_competes: false,
             char_mismatch_penalty: 0.35,
             zone_factor: 1.0,
             // Gentle: a perfect match anywhere inside the window must still clear
@@ -767,17 +775,43 @@ impl<'a> Tracker<'a> {
                 None => best = Some(cand),
                 Some(b) => {
                     if better(&cand, b) {
-                        if cand.span.last() != b.span.last() {
+                        if self.is_rival(cand.span.last(), b.span.last()) {
                             runner_up = runner_up.max(b.score);
                         }
                         best = Some(cand);
-                    } else if cand.span.last() != b.span.last() {
+                    } else if self.is_rival(cand.span.last(), b.span.last()) {
                         runner_up = runner_up.max(cand.score);
                     }
                 }
             }
         }
         best.map(|b| (b, runner_up))
+    }
+
+    /// Whether two candidate end-lines are genuinely competing answers.
+    ///
+    /// A different line saying *different words* is a rival, and the margin rule
+    /// should silence us. A different line saying *the same words* is not: the show
+    /// says that sentence in two places and either reading explains what was just
+    /// heard, so refusing to move is the one response guaranteed to be wrong.
+    ///
+    /// Measured on Hécube: 165 rejections for ambiguity in one performance, including
+    /// a line scored **1.00** — a perfect match — thrown away because its twin tied
+    /// it. The company reads Euripides aloud and then performs it, and several actors
+    /// say the same original text in turn; every one of those moments froze the
+    /// tracker, which then decayed to lost and needed an operator to put it back.
+    /// Picking the nearer copy is a line or two of error. Freezing costs the scene.
+    fn is_rival(&self, a: usize, b: usize) -> bool {
+        if a == b {
+            return false;
+        }
+        if !self.cfg.equivalent_text_competes {
+            match (self.script.lines.get(a), self.script.lines.get(b)) {
+                (Some(x), Some(y)) if x.text_key == y.text_key => return false,
+                _ => {}
+            }
+        }
+        true
     }
 
     fn score_span(&mut self, seg: &TranscriptSegment, span: Span) -> Option<Candidate> {
