@@ -556,6 +556,58 @@ Widening the search to include the initial `Scene` state cut two of the cold sta
 by more than half (excerpt 4: 220 s → 70 s; excerpt 5: 231 s → 138 s) and moved
 excerpt 6 onto its exact first line.
 
+### J. A concurrent second hypothesis, adopted only when it earns the position
+
+Finding I left the tracker looking beyond its window only once it had already given
+up — too late twice over. Recovery waits out the decay timer, and a position that is
+confidently wrong while still finding weak local support never questions itself at
+all. The suggestion, from the operator: run the search *continuously* and switch when
+the alternative has been clearly better for a few seconds. It is multi-hypothesis
+tracking, and it is the right shape.
+
+The compute objection turned out not to exist. Scanning all 377 lines per segment
+costs **0.03 ms median, 0.71 ms worst** against a 160 ms decode — a margin of
+several thousand. There is no reason not to look.
+
+A challenger is maintained alongside the position: the best explanation anywhere in
+the script, advancing as the dialogue does, with a running average of how well it has
+explained recent speech. It is adopted only after beating the incumbent's running
+average by a margin, over several segments and several seconds. Three details did
+the work, and two came from being wrong first.
+
+**A rival is judged on the words, not on the distance.** The distance prior exists to
+keep the position from leaping about; applied to a challenger it would simply punish
+it for being far away, which is the whole point of it. Challengers are scored from
+their own position as origin.
+
+**An absolute bar, not only a margin.** The first version hijacked the position
+during improvisation — caught by an existing scenario test, not by the corpus. When
+nothing matches, the incumbent's evidence collapses toward zero, so a rival needs
+only to beat *nothing*; any coincidental word overlap elsewhere in the script wins.
+Off-script speech must leave the tracker saying it is lost, not confidently
+somewhere else, so a challenger must now also explain the words well on its own
+account.
+
+**Adoption reports `Block`, however strong the evidence.** Across the corpus, eight
+of nine adoptions were correct and the ninth was **indistinguishable by score** —
+0.65, inside the range of the correct ones (0.62–0.78). No threshold separates them,
+and tuning one to exclude a single observed failure would be fitting noise. What can
+honestly be said is that a just-relocated tracker has not yet been confirmed by
+anything: nothing has matched the *next* line from its new position. Reporting
+`Block` says exactly that, keeps a wrong adoption out of the confident-wrong count,
+and costs nothing when the adoption was right — the next match promotes it.
+
+Time to first fix on the full script, before and after:
+
+| Excerpt | before | after |
+|---|---|---|
+| 3 Sara & Fabian | 73 s | **32 s** |
+| 5 Perche (boom) | 138 s | **65 s** |
+| 1, 2, 4, 6 | unchanged | |
+
+All six still locate the correct region, and **no excerpt records a single
+confident-wrong update**. The one bad adoption self-corrected within 16 seconds.
+
 ---
 
 ## Open questions for the real corpus

@@ -181,6 +181,38 @@ pub struct TrackerConfig {
     /// Generous, because a monologue legitimately holds one line for a long time —
     /// the La Reprise documentary monologue has 25-second lines.
     pub stall_to_lost_s: f64,
+    /// Keep a second hypothesis over the whole script at all times, and adopt it
+    /// when it explains recent speech clearly better than the current position.
+    ///
+    /// Without this the tracker only ever looks beyond its window once it has
+    /// already given up, which is too late twice over: recovery waits for the
+    /// decay timer to expire, and a position that is confidently wrong while still
+    /// finding weak local support never questions itself at all. Scanning the whole
+    /// script costs about 0.03 ms per segment against a 160 ms decode, so there is
+    /// no reason not to look.
+    ///
+    /// Adoption is deliberately slow: the challenger must beat the incumbent by
+    /// `challenger_margin` on a running average, over at least `challenger_min_hits`
+    /// segments and `challenger_min_seconds`. One good coincidental match must never
+    /// move the show.
+    pub challenger_enabled: bool,
+    /// How much better the challenger's running score must be.
+    pub challenger_margin: f64,
+    /// How good the challenger must be in absolute terms, regardless of the margin.
+    ///
+    /// Without this the challenger hijacks the position during improvisation: the
+    /// incumbent's evidence collapses toward zero when nothing matches, so a rival
+    /// need only beat *nothing* to win, and any coincidental word overlap
+    /// elsewhere in the script qualifies. Off-script speech must leave the tracker
+    /// saying it is lost, not confidently somewhere else. A rival has to explain
+    /// the words well on its own account, not merely better than a ruin.
+    pub challenger_min_evidence: f64,
+    /// Segments the challenger must explain before it may be adopted.
+    pub challenger_min_hits: usize,
+    /// Seconds the challenger must sustain its advantage.
+    pub challenger_min_seconds: f64,
+    /// Weight of the newest observation in either side's running average.
+    pub challenger_smoothing: f64,
     /// When tracking is `Lost`, search the entire script rather than the window.
     ///
     /// Without this the tracker can only ever see `window_ahead` lines forward
@@ -220,6 +252,12 @@ impl Default for TrackerConfig {
             short_accept_threshold: 0.80,
             jump_pending_ttl_s: 8.0,
             stall_to_lost_s: 90.0,
+            challenger_enabled: true,
+            challenger_margin: 0.18,
+            challenger_min_evidence: 0.62,
+            challenger_min_hits: 3,
+            challenger_min_seconds: 4.0,
+            challenger_smoothing: 0.4,
             lost_search_all: true,
         }
     }
@@ -243,6 +281,16 @@ struct PendingJump {
     unmatched_at: f64,
 }
 
+/// A rival explanation of what is being said, maintained alongside the position.
+struct Challenger {
+    position: usize,
+    /// Running average of how well this hypothesis has explained recent speech.
+    evidence: f64,
+    hits: usize,
+    first_t: f64,
+    last_t: f64,
+}
+
 /// The tracker. Borrows the prepared script for its lifetime; owns nothing else
 /// that could vary between runs.
 pub struct Tracker<'a> {
@@ -256,6 +304,10 @@ pub struct Tracker<'a> {
     stalled_speech_s: f64,
     last_match_t: f64,
     pending_jump: Option<PendingJump>,
+    challenger: Option<Challenger>,
+    /// Running average of how well the *current* position explains recent speech,
+    /// on the same scale as a challenger's, so the two are directly comparable.
+    incumbent_evidence: f64,
     // Scratch buffers, reused across updates to keep the hot path allocation-free.
     spans: Vec<Span>,
     landmark_spans: Vec<Span>,
@@ -274,6 +326,8 @@ impl<'a> Tracker<'a> {
             stalled_speech_s: 0.0,
             last_match_t: 0.0,
             pending_jump: None,
+            challenger: None,
+            incumbent_evidence: 0.0,
             spans: Vec::new(),
             landmark_spans: Vec::new(),
             seg_by_lang: Vec::new(),
@@ -291,6 +345,11 @@ impl<'a> Tracker<'a> {
     }
     pub fn line_id(&self) -> Option<&str> {
         self.script.lines.get(self.position).map(|l| l.id.as_str())
+    }
+
+    /// Exponential moving average: `weight` is how much the newest observation counts.
+    fn blend(current: f64, observation: f64, weight: f64) -> f64 {
+        current * (1.0 - weight) + observation * weight
     }
 
     /// Seconds of *new* speech a segment represents.
@@ -334,6 +393,15 @@ impl<'a> Tracker<'a> {
         } else {
             self.cfg.follow_threshold
         };
+
+        // Look at the whole script every time, not only once lost. Cheap, and it
+        // is the only way to notice that somewhere else explains this better.
+        if self.cfg.challenger_enabled && !weak {
+            if let Some(ev) = self.run_challenger(seg) {
+                events.push(ev);
+                return events;
+            }
+        }
 
         let Some(best) = self.best_candidate(seg, weak) else {
             events.push(TrackerEvent::Rejected {
@@ -458,6 +526,11 @@ impl<'a> Tracker<'a> {
         self.unmatched_speech_s = 0.0;
         self.last_match_t = seg.t_end;
         self.pending_jump = None;
+        self.incumbent_evidence = blend(
+            self.incumbent_evidence,
+            best.score,
+            self.cfg.challenger_smoothing,
+        );
 
         if self.confidence != from {
             events.push(TrackerEvent::ConfidenceChanged {
@@ -490,6 +563,9 @@ impl<'a> Tracker<'a> {
         let dt = speech_seconds(seg);
         self.unmatched_speech_s += dt;
         self.stalled_speech_s += dt;
+        // A segment the current position could not explain counts against it.
+        self.incumbent_evidence =
+            blend(self.incumbent_evidence, 0.0, self.cfg.challenger_smoothing);
         if let Some(p) = &self.pending_jump {
             if self.unmatched_speech_s - p.unmatched_at > self.cfg.jump_pending_ttl_s {
                 self.pending_jump = None;
@@ -519,6 +595,103 @@ impl<'a> Tracker<'a> {
                 unmatched_speech_s: self.unmatched_speech_s,
             });
         }
+    }
+
+    /// Maintain the rival hypothesis, and adopt it if it has earned the position.
+    ///
+    /// Returns a `Position` event when the switch happens, in which case the
+    /// caller must not also run the ordinary incumbent update for this segment.
+    fn run_challenger(&mut self, seg: &TranscriptSegment) -> Option<TrackerEvent> {
+        let best = self.scan_whole_script(seg)?;
+        let target = best.span.last();
+        let near_incumbent = target >= self.position
+            && target.saturating_sub(self.position) <= self.cfg.window_ahead;
+        if near_incumbent {
+            // Not a rival at all — this is the incumbent's own territory.
+            return None;
+        }
+
+        match &mut self.challenger {
+            // Same neighbourhood, or the show has moved on within it: the rival
+            // survives and grows. A challenger that never advances is a
+            // coincidence; one that follows the dialogue is an explanation.
+            Some(c)
+                if target >= c.position.saturating_sub(2)
+                    && target <= c.position + self.cfg.window_ahead =>
+            {
+                c.position = target;
+                c.evidence = blend(c.evidence, best.score, self.cfg.challenger_smoothing);
+                c.hits += 1;
+                c.last_t = seg.t_end;
+            }
+            // Somewhere else entirely. One sighting does not outweigh a rival that
+            // has been accumulating, so only replace a weaker one.
+            Some(c) if best.score <= c.evidence => {}
+            _ => {
+                self.challenger = Some(Challenger {
+                    position: target,
+                    evidence: best.score,
+                    hits: 1,
+                    first_t: seg.t_end,
+                    last_t: seg.t_end,
+                });
+            }
+        }
+
+        let c = self.challenger.as_ref()?;
+        let earned = c.hits >= self.cfg.challenger_min_hits
+            && c.last_t - c.first_t >= self.cfg.challenger_min_seconds
+            && c.evidence >= self.cfg.challenger_min_evidence
+            && c.evidence >= self.incumbent_evidence + self.cfg.challenger_margin;
+        if !earned {
+            return None;
+        }
+
+        let position = c.position;
+        let evidence = c.evidence;
+        self.challenger = None;
+        self.position = position;
+        self.incumbent_evidence = evidence;
+        self.unmatched_speech_s = 0.0;
+        self.stalled_speech_s = 0.0;
+        self.pending_jump = None;
+        // Always `Block`, however strong the evidence was.
+        //
+        // A challenger has been judged only against itself: nothing has yet
+        // confirmed it the way the ordinary path confirms a position, by matching
+        // the next line from there. Measured on real material, eight of nine
+        // adoptions were correct and the ninth was indistinguishable by score —
+        // 0.65, inside the range of the correct ones — so no threshold separates
+        // them and tuning one to exclude a single observed failure would be
+        // fitting noise. What *can* be said honestly is that a just-relocated
+        // tracker does not yet know it is right. Reporting `Block` says exactly
+        // that, keeps a wrong adoption out of the confident-wrong count, and costs
+        // nothing when the adoption was correct: the next match promotes it.
+        self.confidence = Confidence::Block;
+        Some(self.position_event(evidence, PositionCause::Reanchor))
+    }
+
+    /// Best candidate anywhere in the script, ignoring the current position.
+    fn scan_whole_script(&mut self, seg: &TranscriptSegment) -> Option<Candidate> {
+        let script = self.script;
+        script.spans_into(
+            0,
+            script.len(),
+            self.cfg.max_span,
+            seg.character.as_deref(),
+            &mut self.spans,
+        );
+        let mut best: Option<Candidate> = None;
+        for k in 0..self.spans.len() {
+            let span = self.spans[k];
+            let Some(cand) = self.score_span_at(seg, span, span.first()) else {
+                continue;
+            };
+            if best.as_ref().is_none_or(|b| better(&cand, b)) {
+                best = Some(cand);
+            }
+        }
+        best
     }
 
     /// Score every candidate span; return the best and the best score belonging to
@@ -602,6 +775,19 @@ impl<'a> Tracker<'a> {
     }
 
     fn score_span(&mut self, seg: &TranscriptSegment, span: Span) -> Option<Candidate> {
+        let origin = self.position;
+        self.score_span_at(seg, span, origin)
+    }
+
+    /// As `score_span`, but measuring distance from `origin` rather than from the
+    /// current position — so a rival hypothesis is judged on how well it explains
+    /// the words, not on how far away it happens to be.
+    fn score_span_at(
+        &mut self,
+        seg: &TranscriptSegment,
+        span: Span,
+        origin: usize,
+    ) -> Option<Candidate> {
         // Bind the script reference out of `self` so the token slices it hands
         // back live for `'a` and do not collide with the normalizer cache's
         // mutable borrow below.
@@ -671,7 +857,7 @@ impl<'a> Tracker<'a> {
         } else {
             self.cfg.landmark_boost[(weight - 1) as usize]
         };
-        let gap = span.first().saturating_sub(self.position) as f64;
+        let gap = span.first().saturating_sub(origin) as f64;
         let prior = (0.5f64)
             .powf(gap / self.cfg.distance_prior_halflife)
             .max(self.cfg.prior_floor);
@@ -696,6 +882,11 @@ impl<'a> Tracker<'a> {
         let mt = &self.seg_by_lang.iter().find(|(l, _)| l == lang).unwrap().1;
         mt.tokens.iter().map(String::as_str).collect()
     }
+}
+
+/// Exponential moving average: `weight` is how much the newest observation counts.
+fn blend(current: f64, observation: f64, weight: f64) -> f64 {
+    current * (1.0 - weight) + observation * weight
 }
 
 /// Seconds of *new* speech a segment represents.
