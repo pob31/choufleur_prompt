@@ -77,6 +77,22 @@ pub fn resolve_model(explicit: Option<&Path>, filename: &str) -> Result<PathBuf>
 /// and forcing Dutch on the English made Whisper *translate* it — "I am thy
 /// father's spirit" came back as "Ik ben jouw vader Spirit", fluent and wrong,
 /// with no error anywhere to notice.
+/// A language must account for at least this share of a character's lines before it
+/// is offered as a decode candidate for their whole channel.
+///
+/// Offering a language is not free. On marginal audio Whisper is *more* confident
+/// producing familiar English filler — "Thank you.", "Uh..." — than producing correct
+/// French, so a candidate set containing English wins the confidence comparison and
+/// the transcript fills with hallucinations. Measured: two lines of a 44-line French
+/// scene were mis-tagged English by the script converter, which was enough to put 23
+/// invented English segments into one transcript.
+///
+/// The genuinely rare foreign line is not lost by this. `track --from-audio` decodes
+/// against the language of the line it *expects*, so a single English line inside a
+/// French scene is still decoded as English when the tracker reaches it — the share
+/// rule only governs what is offered blindly, with no idea where the show is.
+const MIN_LANGUAGE_SHARE: f64 = 0.15;
+
 pub fn character_languages(script: &PreparedScript) -> HashMap<String, Vec<LangCode>> {
     let mut counts: HashMap<String, Vec<(LangCode, usize)>> = HashMap::new();
     for line in &script.lines {
@@ -94,7 +110,17 @@ pub fn character_languages(script: &PreparedScript) -> HashMap<String, Vec<LangC
             // Most-used first, so a single-language caller taking `.first()` gets
             // the character's usual language rather than an accident of ordering.
             v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-            (ch, v.into_iter().map(|(l, _)| l).collect())
+            let total: usize = v.iter().map(|(_, n)| n).sum();
+            let langs: Vec<LangCode> = v
+                .iter()
+                .enumerate()
+                .filter(|(i, (_, n))| {
+                    // Always keep the most common one, whatever its share.
+                    *i == 0 || *n as f64 / total.max(1) as f64 >= MIN_LANGUAGE_SHARE
+                })
+                .map(|(_, (l, _))| l.clone())
+                .collect();
+            (ch, langs)
         })
         .collect()
 }

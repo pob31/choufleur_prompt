@@ -712,6 +712,78 @@ Incidentally this makes the corpus a better test than a tidy one would have been
 Starting mid-scene with no run-up is exactly what happens when an operator switches
 the system on late, and the tracker handled it.
 
+### L. Levels: theatre mics are gained for the shouting, and both models mind
+
+From the operator: gain is set so the loudest moment of the night does not clip —
+an actor stripped and beaten in a car boot in act three — which leaves ordinary
+dialogue far down. Measured across the corpus, that is exactly right, and worse
+than expected:
+
+| Channel | peak | speech level |
+|---|---|---|
+| car boot (the fight) | −2.6 dBFS | −44.7 dBFS |
+| Johan | −27.3 | −43.8 |
+| boom mic | −34.2 | −54.6 |
+| Sara | −38.2 | **−66.8** |
+
+Sara's speech averages eleven bits below full scale. Whisper and Silero are trained
+near −20 dBFS, so this is far outside the distribution they learned — not a
+signal-to-noise problem, since gain changes no SNR, but a range problem. And the
+level predicts the tracking: Johan at −43.8 dB tracked 22 of 24 lines, the boom at
+−54.6 managed 9 of 19, Sara at −66.8 managed 9 of 44.
+
+`choufleur-asr::agc` adds a causal per-channel automatic gain between resampling and
+detection. Two things it must not do, both learned the hard way.
+
+**It must not measure the future.** Normalising a whole file offline, as the first
+experiment did, is not available live.
+
+**It must not amplify the room.** The offline experiment produced **forty confident
+hallucinations** — "Thank you very much.", "We care of home." — because amplified
+room tone is something a recogniser will find words in. So the floor and the voice
+are tracked separately and gain is withheld unless they are far enough apart to mean
+someone is speaking. The floor is learned only from moments quiet *relative to the
+voice*: letting it rise during speech made a gapless monologue pull the floor up to
+meet the voice until the gain faded out mid-line.
+
+**A second bug surfaced through it.** With AGC on, hallucinations rose to 23 — all
+English, in an all-French scene. The cause was not the gain. The script converter had
+mis-detected two French lines as English (*"Tu peux aller à ta table."*, *"Un
+sampler."*), which put English into those characters' candidate set for **every**
+segment; and on marginal audio Whisper is *more* confident producing familiar English
+filler than correct French, so the most-confident-decode rule picked the
+hallucination every time. Requiring a language to account for at least 15 % of a
+character's lines before it is offered blindly fixes it — and it is the right rule
+independent of the bug, since the operator confirms the genuine switching in this
+production is Johan's and Tom's parts only. Johan keeps `[nl, en]` at 13/11; Sara
+loses English at 1 of 22.
+
+Sara & Fabian, same recording:
+
+| | segments | ceiling | hallucinations | lines |
+|---|---|---|---|---|
+| as recorded | 70 | 48 % | 7 | 13 |
+| AGC only | 121 | 57 % | 23 | 8 |
+| AGC + language share | 118 | **61 %** | **0** | 10 |
+
+The audio side is unambiguous: half again as much speech recovered, the best ceiling
+of any configuration, no hallucinations, and twice as fast for want of a second
+decode per segment.
+
+**But the recovered speech does not reach the tracker**, and this is now the third
+independent sighting of the same obstacle. Quiet speech surfaces as *fragments*, and
+the symmetric overlap term penalises a fragment exactly as it penalises over-reach.
+Disabling it takes this scene from 10 lines to **25 of 44** — and breaks five scenario
+tests, because the term is genuinely holding up guarantees about spans and jumps.
+Exempting single-line spans, on the theory that over-reach needs two lines by
+definition, breaks the same five. The two cases are entangled somewhere not yet
+understood.
+
+Left as it is, deliberately. Three measurements agree the term costs real accuracy on
+quiet and far-field audio; the scenario tests are equally clear that removing it
+costs correctness elsewhere. That is a design problem to solve against ground truth
+in M0.4, not a threshold to flip on a proxy metric.
+
 ---
 
 ## Open questions for the real corpus

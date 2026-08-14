@@ -136,9 +136,28 @@ pub struct TrackerConfig {
     /// **[sweep]** Exponent on the token-overlap (Dice) term.
     ///
     /// Token-set similarity alone scores a subset almost perfectly, so without an
-    /// overlap term a three-line span would always beat the single line the
-    /// segment actually covered, and the position would run ahead of the show.
-    /// 0 disables the correction; 1 weights overlap as heavily as similarity.
+    /// overlap term a three-line span would always beat the single line the segment
+    /// actually covered, and the position would run ahead of the show.
+    ///
+    /// But the term is symmetric, and the two ways a side can carry extra material
+    /// are not the same thing at all:
+    ///
+    /// - a *span* holding lines the segment never covered is over-reach, and must
+    ///   be penalised — that is what the term is for;
+    /// - a *segment* holding only part of one line is an ordinary partial hearing,
+    ///   and penalising it is simply wrong.
+    ///
+    /// The second case is the common one wherever audio is quiet or far-field: a
+    /// boom mic returns fragments, and automatic gain recovers quiet speech as more
+    /// fragments still. Applying the penalty there suppressed exactly the material
+    /// that had just been recovered — on one real scene, removing it took tracking
+    /// from 10 lines to 25 of 44.
+    ///
+    /// Span length looked like a clean separator — over-reach needs more than one
+    /// line by definition — but exempting single-line spans broke five scenario
+    /// tests just as removing the term entirely did, so the two cases are entangled
+    /// somewhere else. Resolving it properly is M0.4 work, against ground truth;
+    /// the evidence and the failed attempts are in the Phase 0 notes.
     pub overlap_exp: f64,
     /// **[sweep]** Fraction of a line's own tokens that must appear in the segment
     /// before a multi-line span may claim that line was heard.
@@ -813,6 +832,7 @@ impl<'a> Tracker<'a> {
 
             // Best over the written line and every way it has actually been
             // performed. The written form still wins ties, being first.
+            //
             for line_tokens in &variants {
                 let s = token_set_ratio(&seg_tokens, line_tokens)
                     * token_dice(&seg_tokens, line_tokens).powf(overlap_exp);

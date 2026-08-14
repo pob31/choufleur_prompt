@@ -21,6 +21,7 @@
 //! constant resampler group delay ([`channel`]), and the interim emission policy
 //! that keeps detection lag inside budget ([`segmenter`]).
 
+pub mod agc;
 pub mod channel;
 pub mod filter;
 pub mod resample;
@@ -28,6 +29,7 @@ pub mod segmenter;
 pub mod vad;
 pub mod whisper;
 
+pub use agc::{AgcConfig, AutoGain};
 pub use channel::ChannelFrontend;
 pub use filter::{DecodeOutput, DropReason, FilterConfig, HallucinationFilter, Verdict};
 pub use resample::Resampler48to16;

@@ -11,6 +11,7 @@
 //! late — which looks exactly like the tracker being slow, and would be tuned
 //! against for a long time before anyone found it.
 
+use crate::agc::{AgcConfig, AutoGain};
 use crate::resample::Resampler48to16;
 use crate::segmenter::{AudioSegment, Segmenter, VadConfig, WINDOW};
 use crate::vad::{SileroChannelState, SileroSession};
@@ -19,6 +20,11 @@ use crate::AsrError;
 pub struct ChannelFrontend {
     pub channel: u16,
     resampler: Resampler48to16,
+    /// Runs between resampling and detection, so both the voice detector and the
+    /// recogniser see audio in the range they were trained on. Theatre mics are
+    /// gained for the loudest moment of the night, which leaves ordinary dialogue
+    /// forty decibels down; see `agc`.
+    agc: AutoGain,
     vad_state: SileroChannelState,
     segmenter: Segmenter,
     /// 16 kHz samples not yet consumed as a whole VAD window.
@@ -29,11 +35,16 @@ pub struct ChannelFrontend {
 
 impl ChannelFrontend {
     pub fn new(channel: u16, cfg: VadConfig) -> Result<Self, AsrError> {
+        Self::with_agc(channel, cfg, AgcConfig::default())
+    }
+
+    pub fn with_agc(channel: u16, cfg: VadConfig, agc: AgcConfig) -> Result<Self, AsrError> {
         let resampler = Resampler48to16::new()?;
         let delay_s = resampler.output_delay_seconds();
         Ok(ChannelFrontend {
             channel,
             resampler,
+            agc: AutoGain::new(crate::segmenter::SAMPLE_RATE, agc),
             vad_state: SileroChannelState::new(),
             segmenter: Segmenter::new(channel, cfg),
             pending: Vec::with_capacity(WINDOW * 4),
@@ -43,6 +54,12 @@ impl ChannelFrontend {
 
     pub fn resampler_delay_seconds(&self) -> f64 {
         self.delay_s
+    }
+
+    /// Gain currently applied to this channel, in dB. A channel pinned at the
+    /// ceiling is reporting a problem with the desk, not with the actor.
+    pub fn gain_db(&self) -> f32 {
+        self.agc.gain_db()
     }
 
     /// Feed one block of 48 kHz mono audio; return the segments it completed.
@@ -92,6 +109,9 @@ impl ChannelFrontend {
             let mut window = [0.0f32; WINDOW];
             window.copy_from_slice(&self.pending[consumed..consumed + WINDOW]);
             consumed += WINDOW;
+            // Before detection, so the voice detector sees a usable level too: at
+            // -60 dBFS it missed nearly half the speech in a real recording.
+            self.agc.process(&mut window);
             let prob = vad.process_window(&mut self.vad_state, &window)?;
             if let Some(seg) = self.segmenter.push(&window, prob) {
                 out.push(self.shift(seg));
