@@ -347,19 +347,6 @@ impl<'a> Tracker<'a> {
         self.script.lines.get(self.position).map(|l| l.id.as_str())
     }
 
-    /// Exponential moving average: `weight` is how much the newest observation counts.
-    fn blend(current: f64, observation: f64, weight: f64) -> f64 {
-        current * (1.0 - weight) + observation * weight
-    }
-
-    /// Seconds of *new* speech a segment represents.
-    ///
-    /// Interim hypotheses are prefixes of the segment that follows them, so their
-    /// durations overlap heavily — a 25-second line emitting a partial every 1.5 s
-    /// sums to several times its own length. Counting them would run every decay
-    /// timer at some multiple of real time and declare tracking lost, and raise a
-    /// help request, in the middle of a passage that was tracking perfectly well.
-    /// Final segments tile the speech exactly once, so only they are counted.
     /// Move the position from outside the matcher — an operator correction, a run
     /// control jump, or a journal restore. Confidence is not invented: the caller
     /// says what it knows.
