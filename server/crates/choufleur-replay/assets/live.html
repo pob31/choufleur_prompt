@@ -39,6 +39,59 @@
      the transcript below it however the boxes were sized — document order does not
      decide painting when one sibling is positioned and the other is not. Clipping the
      box and giving the panels a higher z-index settles it from both directions. */
+  /* Two matchers, one script, a pointer each — the operator's suggestion and a much
+     better instrument than two columns. Side by side you compare two scrolls by eye
+     and the gap is guesswork; on one text the disagreement is the distance between
+     two marks, which is the only quantity anyone cares about. */
+  .lane { display: none; }
+  #lines { position: relative; }
+  /* Inside the text column, not to the left of it. At a negative offset the marks
+     sat outside the scroll origin, where `overflow-x: hidden` clips absolutely —
+     drawn correctly, every frame, somewhere nobody can see. The script indents to
+     make room instead, and only while a race is on. */
+  body[data-race="on"] #lines { padding-left: 3.4em; }
+  /* Each mark gets its own column. Stacked at the same offset they occupied exactly
+     the same pixels whenever the two matchers agreed — which is most of the time —
+     so the one appended second simply hid the other, and the race looked like it had
+     one runner. */
+  .ptr {
+    position: absolute; width: 1.25em; height: 1.5em;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 3px; font: 700 .6em/1 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .06em; transition: top .28s ease; pointer-events: none;
+  }
+  .ptr::after {
+    content: ''; position: absolute; right: -.55em;
+    border: .35em solid transparent; border-left-color: currentColor;
+  }
+  #ptrA { left: 0; background: var(--now); color: #1a0d0b; }
+  #ptrA::after { color: var(--now); }
+  #ptrB { left: 1.45em; background: var(--speaker); color: #08131c; }
+  #ptrB::after { color: var(--speaker); }
+  .ptr.stale { opacity: .35; }
+  body:not([data-race="on"]) .ptr { display: none; }
+  #gap { color: var(--speaker); }
+  body:not([data-race="on"]) #gap { display: none; }
+  .lane .scroll {
+    position: absolute; inset: 0; overflow-y: auto; scrollbar-width: none;
+    padding: 50vh 3vw;
+  }
+  .lane .scroll::-webkit-scrollbar { display: none; }
+  body[data-race="on"] #scroller { padding-left: 3vw; padding-right: 3vw; }
+  body[data-race="on"] #band { display: none; }
+  body[data-race="on"] #view > .tag {
+    position: absolute; z-index: 2; top: .4em; left: 25%; transform: translateX(-50%);
+    padding: .2em .8em; border-radius: 999px; background: var(--edge); color: var(--dim);
+    font: 600 .6em/1.4 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .09em; text-transform: uppercase; white-space: nowrap;
+  }
+  .lane .tag {
+    position: absolute; z-index: 2; top: .4em; left: 50%; transform: translateX(-50%);
+    padding: .2em .8em; border-radius: 999px; background: var(--edge); color: var(--dim);
+    font: 600 .6em/1.4 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .09em; text-transform: uppercase; white-space: nowrap;
+  }
+  .lane.ahead .tag { background: var(--now); color: #1a0d0b; }
   #view { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; z-index: 0; }
   /* Centred on the script box, not on the window: the reading line has to sit in the
      middle of what is actually visible. */
@@ -227,6 +280,7 @@
     <div id="band"></div>
     <div id="hint">tap the line being spoken to put it back on track</div>
     <div id="scroller"><div id="lines"></div></div>
+
   </div>
   <div id="heard"><div class="head">heard<button id="copy">copy</button></div><div id="heardlog"></div></div>
   <div id="editing">editing — click a line to correct it</div>
@@ -235,6 +289,7 @@
     <span id="where">—</span>
     <span id="conf">—</span>
     <span id="clock">0:00</span>
+    <span id="gap">—</span>
     <button id="edit">edit</button>
     <button id="ear">heard</button>
     <button id="follow" hidden>follow</button>
@@ -322,7 +377,16 @@
     // Ease a step, cut a relocation. Gliding across three hundred lines would both
     // look absurd and disguise the fact that something significant just happened.
     const el = els[index];
-    const target = el.offsetTop + el.offsetHeight / 2 - $scroller.clientHeight / 2;
+    // Measured from the boxes themselves rather than from offsetTop. offsetTop is
+    // relative to the nearest *positioned* ancestor, and #lines became positioned when
+    // the race pointers were added — which silently made every scroll target short by
+    // the scroller's 50vh padding, and the script stopped following.
+    const target =
+      $scroller.scrollTop +
+      el.getBoundingClientRect().top -
+      $scroller.getBoundingClientRect().top -
+      $scroller.clientHeight / 2 +
+      el.offsetHeight / 2;
     const jump = Math.abs(target - $scroller.scrollTop) > $scroller.clientHeight * 1.2;
     selfScrolling++;
     $scroller.scrollTo({ top: target, behavior: jump ? 'auto' : 'smooth' });
@@ -407,6 +471,9 @@
       }
       box.replaceWith(el);
       render(i);
+      // The editor was taller than the line it replaced, so every offset below it
+      // moved; the marks have to be put back where they now belong.
+      replace();
     };
     openEditor = done;
     txt.onkeydown = who.onkeydown = (e) => {
@@ -504,6 +571,55 @@
     document.body.dataset.heard = document.body.dataset.heard === 'off' ? 'on' : 'off';
   });
 
+  // ---- the race: two matchers, one script, a pointer each --------------------
+  const $gap = document.getElementById('gap');
+  let raceOn = false, posA = -1, posB = -1;
+  const ptr = {};
+
+  function makePointer(id, label) {
+    const d = document.createElement('div');
+    d.className = 'ptr';
+    d.id = id;
+    d.textContent = label;
+    $lines.appendChild(d);
+    return d;
+  }
+
+  function movePointer(which, index) {
+    const el = els[index];
+    if (!el || !ptr[which]) return;
+    ptr[which].style.top = (el.offsetTop + el.offsetHeight / 2 - 11) + 'px';
+  }
+
+  function race(lane, index) {
+    if (!raceOn) {
+      raceOn = true;
+      document.body.dataset.race = 'on';
+      ptr.a = makePointer('ptrA', 'A');
+      ptr.b = makePointer('ptrB', 'B');
+    }
+    if (lane === 'a') posA = index; else posB = index;
+    movePointer(lane, index);
+    if (posA >= 0 && posB >= 0) {
+      // Signed, from A's point of view, because A is the matcher steering
+      // recognition and therefore the one on trial.
+      const d = posA - posB;
+      $gap.textContent =
+        d === 0 ? 'level' : d > 0 ? 'B ' + d + ' behind' : 'B ' + (-d) + ' ahead';
+      // Whichever is further back dims, so a glance says who is trailing without
+      // reading the number.
+      ptr.a.classList.toggle('stale', d < 0);
+      ptr.b.classList.toggle('stale', d > 0);
+    }
+  }
+
+  // Editing or cutting a line changes every offset below it, so the marks are
+  // re-placed rather than left where the old layout put them.
+  const replace = () => {
+    if (raceOn) { movePointer('a', posA); movePointer('b', posB); }
+  };
+  window.addEventListener('resize', replace);
+
   function connect() {
     ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
     ws.onmessage = (ev) => {
@@ -512,8 +628,13 @@
         if (m.title) document.title = m.title + ' — live';
         if (m.position) { show(m.position.lineIndex, m.position.confidence); $clock.textContent = fmt(m.position.tAudio); }
       } else if (m.type === 'position_update') {
-        show(m.lineIndex, m.confidence);
-        $clock.textContent = fmt(m.tAudio);
+        if (m.lane === 'b') {
+          race('b', m.lineIndex);
+        } else {
+          show(m.lineIndex, m.confidence);
+          $clock.textContent = fmt(m.tAudio);
+          race('a', m.lineIndex);
+        }
       } else if (m.type === 'line_edited') {
         lines[m.lineIndex].text = m.text;
         if (m.character) lines[m.lineIndex].character = m.character;

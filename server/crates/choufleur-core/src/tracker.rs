@@ -123,6 +123,15 @@ pub struct TrackerConfig {
     pub word_threshold: f64,
     /// **[sweep]** How far the best candidate must beat the runner-up.
     pub margin: f64,
+    /// Score lines on **sound** as well, taking the best of the three.
+    ///
+    /// The deepest of the three measures and the one that matches what actually went
+    /// wrong: every mishearing collected from real performances is a homophone. See
+    /// `LangNormalizer::phonetic`.
+    pub phonetic_similarity: bool,
+    /// How far to trust a sound-only match. Below the character figure because the
+    /// folding is coarse and boundary-free, which is permissive by construction.
+    pub phonetic_similarity_trust: f64,
     /// Score lines on character trigrams as well as on words, taking the better.
     pub char_similarity: bool,
     /// How far to trust a character-only match, relative to a word match.
@@ -286,6 +295,8 @@ impl Default for TrackerConfig {
             accept_threshold: 0.62,
             word_threshold: 0.88,
             margin: 0.06,
+            phonetic_similarity: true,
+            phonetic_similarity_trust: 0.78,
             char_similarity: true,
             char_similarity_trust: 0.85,
             lost_margin: 0.06,
@@ -881,6 +892,8 @@ impl<'a> Tracker<'a> {
         // Copied out before the scratch buffers are borrowed, as above.
         let char_similarity = self.cfg.char_similarity;
         let char_trust = self.cfg.char_similarity_trust;
+        let phonetic_similarity = self.cfg.phonetic_similarity;
+        let phonetic_trust = self.cfg.phonetic_similarity_trust;
         let span_langs = script.span_langs(span);
         // Match in the language the script says this line is in. Where the decode
         // was forced to one of them, restrict to that; a mismatch means the
@@ -895,7 +908,8 @@ impl<'a> Tracker<'a> {
             if variants.is_empty() {
                 continue;
             }
-            let seg_tokens = self.prepared_segment(seg, lang);
+            let span_sound = script.span_sound(span, lang);
+            let (seg_tokens, seg_sound) = self.prepared_segment(seg, lang);
 
             // Every line a multi-line span claims must be independently audible in
             // the segment. A span is a statement that all of this was just spoken;
@@ -922,15 +936,18 @@ impl<'a> Tracker<'a> {
                 // from characters; a line the recogniser mis-split scores near zero on
                 // words and should not be dragged down by that. The failure being
                 // fixed is one-sided, so the remedy is too.
-                let s = if char_similarity {
-                    let chars = char_trigram_dice(
-                        &seg_tokens.join(" "),
-                        &line_tokens.join(" "),
-                    );
-                    words.max(chars * char_trust)
-                } else {
-                    words
-                };
+                let mut s = words;
+                if char_similarity {
+                    let chars =
+                        char_trigram_dice(&seg_tokens.join(" "), &line_tokens.join(" "));
+                    s = s.max(chars * char_trust);
+                }
+                if phonetic_similarity && !seg_sound.is_empty() && !span_sound.is_empty() {
+                    // Sound is the last resort and the strongest evidence when the
+                    // spelling has failed entirely: "Polyme Store" shares no token and
+                    // few letters with "Polymestor", and is the same utterance.
+                    s = s.max(char_trigram_dice(seg_sound, &span_sound) * phonetic_trust);
+                }
                 if s > fuzzy {
                     fuzzy = s;
                 }
@@ -976,13 +993,16 @@ impl<'a> Tracker<'a> {
 
     /// The segment's text prepared under one language's normalizer, memoized for
     /// the duration of this update (a segment is compared against dozens of spans).
-    fn prepared_segment(&mut self, seg: &TranscriptSegment, lang: &LangCode) -> Vec<&str> {
+    fn prepared_segment(&mut self, seg: &TranscriptSegment, lang: &LangCode) -> (Vec<&str>, &str) {
         if !self.seg_by_lang.iter().any(|(l, _)| l == lang) {
             let mt = self.reg.prepare(&seg.text, lang);
             self.seg_by_lang.push((lang.clone(), mt));
         }
         let mt = &self.seg_by_lang.iter().find(|(l, _)| l == lang).unwrap().1;
-        mt.tokens.iter().map(String::as_str).collect()
+        (
+            mt.tokens.iter().map(String::as_str).collect(),
+            mt.sound.as_str(),
+        )
     }
 }
 

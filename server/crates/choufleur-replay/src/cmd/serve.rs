@@ -93,6 +93,7 @@ fn play_file(
 pub fn run(
     corpus_path: &Path,
     tracker_config: Option<&Path>,
+    compare: Option<&Path>,
     whisper_model: Option<&Path>,
     vad_model: Option<&Path>,
     bias: BiasMode,
@@ -155,6 +156,11 @@ pub fn run(
     }
 
     let tcfg = super::track::load_tracker_config(tracker_config)?;
+    // A second matcher, raced against the first on the same recognition.
+    let rival_cfg = match compare {
+        Some(p) => Some(super::track::load_tracker_config(Some(p))?),
+        None => None,
+    };
     let names: Vec<String> = script.characters.iter().map(|c| c.name.clone()).collect();
     let default_lang = script
         .default_lang
@@ -221,8 +227,8 @@ pub fn run(
                     })
                     .context("spawning the monitor thread")?;
             }
-            run_engine(&mut eng, &corpus, &prepared, tcfg, bias, lang_of, default_lang,
-                       static_text, &engine_state, trace_out)?;
+            run_engine(&mut eng, &corpus, &prepared, tcfg, rival_cfg, bias, lang_of,
+                       default_lang, static_text, &engine_state, trace_out)?;
             *engine_state.running.lock().unwrap() = false;
             let _ = engine_state.tx.send(Update::RunState {
                 t_audio: *engine_state.t_audio.lock().unwrap(),
@@ -252,6 +258,7 @@ fn run_engine(
     corpus: &Corpus,
     prepared: &choufleur_core::script::PreparedScript,
     tcfg: choufleur_core::tracker::TrackerConfig,
+    rival_cfg: Option<choufleur_core::tracker::TrackerConfig>,
     bias: BiasMode,
     lang_of: std::collections::HashMap<String, Vec<LangCode>>,
     default_lang: LangCode,
@@ -270,8 +277,22 @@ fn run_engine(
         static_prompt: static_text,
         timings: false,
     };
+    let mut rival = rival_cfg.map(|cfg| super::track::TrackingConsumer {
+        tracker: Tracker::new(prepared, cfg),
+        script: prepared,
+        trace: Vec::new(),
+        bias: BiasMode::None,
+        prompt_cfg: PromptConfig::default(),
+        lang_of: Default::default(),
+        default_lang: choufleur_core::lang::LangCode::new("fr"),
+        static_prompt: String::new(),
+        timings: false,
+    });
     let mut consumer = Broadcast {
         inner: &mut inner,
+        rival: rival
+            .as_mut()
+            .map(|r| r as &mut dyn crate::live::PositionSource),
         state: Arc::clone(state),
         seq: 0,
     };
@@ -363,7 +384,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                             // Split so a correction arriving from the operator is not
                             // stuck behind a position update waiting on playback.
                             use futures_util::{SinkExt, StreamExt};
-                            let (mut sink, mut stream) = socket.split();
+                            let (sink, mut stream) = socket.split();
                             let inbound = Arc::clone(&s);
                             tokio::spawn(async move {
                                 while let Some(Ok(msg)) = stream.next().await {

@@ -427,6 +427,22 @@ impl PreparedScript {
     /// *line* was reworded, and enumerating every combination across a span would
     /// be combinatorial for no benefit — a segment covering several lines is
     /// already matching loosely enough that one reworded member is absorbed.
+    /// The span's text as sound, boundary-free and concatenated.
+    ///
+    /// Concatenated with nothing between the lines on purpose: the segment side has no
+    /// boundaries either, and a recogniser that runs the end of one line into the
+    /// start of the next — which is most of what a multi-line span exists to catch —
+    /// produces exactly this.
+    pub fn span_sound(&self, span: Span, lang: &LangCode) -> String {
+        let mut out = String::new();
+        for i in span.iter() {
+            if let Some(mt) = self.lines[i].match_text(lang) {
+                out.push_str(&mt.sound);
+            }
+        }
+        out
+    }
+
     pub fn span_token_variants<'a>(&'a self, span: Span, lang: &LangCode) -> Vec<Vec<&'a str>> {
         if span.len() == 1 {
             if let Some(forms) = self.lines[span.first()].forms(lang) {

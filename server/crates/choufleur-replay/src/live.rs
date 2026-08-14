@@ -45,6 +45,14 @@ pub struct Position {
     pub line_index: usize,
     pub confidence: Conf,
     pub t_audio: f64,
+    /// Which tracker said so. `"a"` is the one steering recognition.
+    ///
+    /// Two matchers on one recognition stream cost almost nothing — matching is
+    /// microseconds, the audio is the expensive part and is shared — and a table of
+    /// totals cannot show what an operator wants to know: not which config wins over
+    /// two hours, but which one is *ahead at this moment*, and whether the other is
+    /// merely slower or actually elsewhere.
+    pub lane: &'static str,
 }
 
 /// The tracker's ladder, on the wire. Lower-case so the client can use it as a class
@@ -191,6 +199,12 @@ pub trait PositionSource: Consumer {
 /// depends on it showing the tracker's real behaviour rather than a variant of it.
 pub struct Broadcast<'a> {
     pub inner: &'a mut dyn PositionSource,
+    /// An optional second matcher, fed the same segments and reported alongside.
+    ///
+    /// It never answers `decode_hint`: recognition can only be steered by one of
+    /// them, and letting the rival influence the audio it is being judged on would
+    /// make the comparison meaningless.
+    pub rival: Option<&'a mut dyn PositionSource>,
     pub state: Arc<LiveState>,
     pub seq: u64,
 }
@@ -212,8 +226,17 @@ impl Consumer for Broadcast<'_> {
         let pending: Vec<usize> = std::mem::take(&mut *self.state.steer.lock().unwrap());
         for line in pending {
             self.inner.steer_to(line);
+            if let Some(r) = self.rival.as_mut() {
+                // An operator correction is about the show, not about a matcher, so
+                // both are told. Racing them from different positions would compare
+                // recovery from a handicap rather than the thing under test.
+                r.steer_to(line);
+            }
         }
         self.inner.on_segment(record);
+        if let Some(r) = self.rival.as_mut() {
+            r.on_segment(record);
+        }
 
         *self.state.t_audio.lock().unwrap() = record.t_end;
         let (line_index, confidence) = self.inner.position();
@@ -222,9 +245,20 @@ impl Consumer for Broadcast<'_> {
             line_index,
             confidence: confidence.into(),
             t_audio: record.t_end,
+            lane: "a",
         };
         self.seq += 1;
         *self.state.latest.lock().unwrap() = Some(pos);
+        if let Some(r) = self.rival.as_ref() {
+            let (ri, rc) = r.position();
+            let _ = self.state.tx.send(Update::PositionUpdate(Position {
+                seq: self.seq,
+                line_index: ri,
+                confidence: rc.into(),
+                t_audio: record.t_end,
+                lane: "b",
+            }));
+        }
         if !record.text.trim().is_empty() {
             let _ = self.state.tx.send(Update::Heard {
                 text: record.text.clone(),
@@ -251,8 +285,10 @@ mod tests {
             line_index: 42,
             confidence: Conf::Line,
             t_audio: 12.5,
+            lane: "a",
         });
         let s = serde_json::to_string(&u).unwrap();
+        assert!(s.contains(r#""lane":"a""#), "{s}");
         assert!(s.contains(r#""type":"position_update""#), "{s}");
         assert!(s.contains(r#""lineIndex":42"#), "{s}");
         assert!(s.contains(r#""confidence":"line""#), "{s}");

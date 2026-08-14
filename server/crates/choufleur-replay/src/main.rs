@@ -126,6 +126,14 @@ enum Command {
         audio_root: Option<PathBuf>,
         #[arg(long)]
         tracker_config: Option<PathBuf>,
+        /// Race a second tracker config against the first, side by side.
+        ///
+        /// Both see the same recognition — only the first steers it — so the screen
+        /// shows which matcher is ahead at each moment rather than which won overall.
+        /// A table of totals cannot tell a config that is slower from one that is
+        /// somewhere else entirely.
+        #[arg(long)]
+        compare: Option<PathBuf>,
         #[arg(long, default_value_t = 8080)]
         port: u16,
         /// Do not play the audio. Pacing then falls back to the wall clock.
@@ -253,6 +261,7 @@ fn main() -> Result<()> {
             audio,
             audio_root,
             tracker_config,
+            compare,
             port,
             no_monitor,
             output_device,
@@ -261,6 +270,7 @@ fn main() -> Result<()> {
         } => cmd::serve::run(
             &corpus,
             tracker_config.as_deref(),
+            compare.as_deref(),
             audio.model.as_deref(),
             audio.vad_model.as_deref(),
             audio.bias.into(),
