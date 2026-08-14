@@ -377,6 +377,65 @@ Consequences worth stating before the gate is run:
   is correct behaviour, not failure — and on this excerpt it produced no
   confident-wrong events at all.
 
+### F. Steadiness beats precision, and freezing is not the safe option
+
+Six excerpts of *La Reprise* (~53 min, 1 to 6 channels). The script is the
+premiere Regiefassung; the recordings are from well into the tour, so the text has
+drifted and was never updated. That is an ordinary situation, not a spoiled corpus.
+
+The first run tracked almost nothing: 1 of 44 lines on one excerpt, 2 of 34 on
+another, overwhelmingly `below_threshold`. Two causes, both mine.
+
+**A converted script has no landmarks.** One act, one scene, no explicit tags — so
+the only landmark anywhere is the implicit one at line 0. With `window_ahead: 8`
+and re-anchoring that only considers landmarks, a run that missed the opening lines
+could never reach line 9, however plainly the actors were speaking line 30. Being
+lost was a permanent condition. Now `lost_search_all` widens the candidate set to
+the whole script once confidence reaches `Lost`, and a sufficiently strong,
+unambiguous match re-anchors without needing a landmark. Being lost is precisely
+the situation in which looking everywhere is correct.
+
+**Refusing to move is not the conservative choice.** The engine was built so that
+the position only advanced on a match good enough to call `Line`. The operator's
+actual requirement, from the person who runs these shows: *"the text once it's
+going is going to be more or less sequential. We don't need pinpoint accuracy, but
+steadiness. The operator will read the whole page as it advances."* A page that
+keeps pace a few lines behind is useful; a page frozen two minutes ago is worse
+than useless, because nothing marks it as stale.
+
+So movement and confidence were separated. `follow_threshold` (0.45) is what it
+takes to move the position, reported at `Block` — the PRD's own "somewhere in this
+exchange" level, which existed in the taxonomy but was never used for matching.
+`accept_threshold` (0.62) is what it takes to call it `Line`. Honesty is preserved
+by *saying* how sure it is rather than by standing still, and the eval's
+confident-wrong rule is unaffected: `Block` is below `Line`, so a coarse position
+can never register as confidently wrong.
+
+Same audio, same transcripts, before and after:
+
+| Excerpt | before | after | ends on |
+|---|---|---|---|
+| 1 Johan, nl/en, 1 ch | 15/24 | **22/24** | last line ✓ |
+| 2 Sébastien, fr monologue, 1 ch | 4/8 | **8/8** | last line ✓ |
+| 3 Sara & Fabian, fr, heavy accents, 2 ch | 1/44 | 9/44 | line 19/44 |
+| 4 Sébastien & Tom, fr + gibberish, 2 ch | 2/34 | **17/34** | last line ✓ |
+| 5 Perche, boom mic (zone), fr, 1 ch | 1/19 | **9/19** | last line ✓ |
+| 6 Tutti, car scene, 6 ch | — | 4/40 | line 4/40 |
+
+Four of six now finish on the correct final line, including the boom-mic zone
+channel with no speaker identity at all.
+
+Two things this exposed that are not yet fixed:
+
+- **`script_vs_audio.py`'s ceiling is pessimistic.** It uses symmetric Dice, which
+  scores a short fragment against a long line badly even when the fragment is
+  correct — and far-field capture is mostly fragments. Johan_1 tracked 92 % against
+  a "67 % ceiling". The ceiling tool needs the asymmetric measure the tracker uses.
+- **Excerpt 6 stalls without ever declaring itself lost.** Cross-talk keeps
+  producing weak matches near the current position, which reset the decay timer, so
+  confidence never falls to `Lost` and the global search never engages. Decay needs
+  to consider *progress*, not only whether something matched.
+
 ---
 
 ## Open questions for the real corpus

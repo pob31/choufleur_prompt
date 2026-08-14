@@ -103,7 +103,21 @@ pub struct TrackerConfig {
     pub window_ahead: usize,
     /// Maximum script lines one segment may cover.
     pub max_span: usize,
-    /// **[sweep]** Minimum score to move the position at all.
+    /// **[sweep]** Minimum score to move the position at all, at `Block`
+    /// confidence — "somewhere in this exchange".
+    ///
+    /// Deliberately lower than `accept_threshold`. What an operator needs is a
+    /// page that keeps pace with the show, not a line number that is either
+    /// perfect or frozen: they read the page, and a position drifting a few lines
+    /// behind is far more useful than one that stopped two minutes ago. Freezing
+    /// is not the safe option it looks like — a stale position is silently wrong,
+    /// which is the failure the PRD actually warns about.
+    ///
+    /// Honesty is preserved by reporting `Block` rather than by refusing to move:
+    /// the confidence says how much to trust the line number, and the position
+    /// still says roughly where the show is.
+    pub follow_threshold: f64,
+    /// **[sweep]** Score at or above which the match is good enough to call `Line`.
     pub accept_threshold: f64,
     /// **[sweep]** Score at or above which confidence is `Word` rather than `Line`.
     pub word_threshold: f64,
@@ -154,6 +168,15 @@ pub struct TrackerConfig {
     pub short_accept_threshold: f64,
     /// Seconds of unmatched speech after which an unconfirmed jump is forgotten.
     pub jump_pending_ttl_s: f64,
+    /// When tracking is `Lost`, search the entire script rather than the window.
+    ///
+    /// Without this the tracker can only ever see `window_ahead` lines forward
+    /// plus whatever landmarks exist — and a script converted from a rehearsal
+    /// document has no landmarks at all, only the implicit one at line 0. A run
+    /// that failed to catch the opening lines could then never reach line 9,
+    /// however plainly the actors were speaking line 30. Being lost is exactly the
+    /// situation in which looking everywhere is the right thing to do.
+    pub lost_search_all: bool,
 }
 
 impl Default for TrackerConfig {
@@ -161,6 +184,7 @@ impl Default for TrackerConfig {
         TrackerConfig {
             window_ahead: 8,
             max_span: 3,
+            follow_threshold: 0.45,
             accept_threshold: 0.62,
             word_threshold: 0.88,
             margin: 0.06,
@@ -182,6 +206,7 @@ impl Default for TrackerConfig {
             min_segment_tokens: 3,
             short_accept_threshold: 0.80,
             jump_pending_ttl_s: 8.0,
+            lost_search_all: true,
         }
     }
 }
@@ -277,10 +302,12 @@ impl<'a> Tracker<'a> {
             return events;
         }
         let weak = token_count < self.cfg.min_segment_tokens;
-        let accept_threshold = if weak {
+        // Weak evidence keeps its higher bar; everything else may move the
+        // position on `follow_threshold` and report the lower confidence honestly.
+        let move_threshold = if weak {
             self.cfg.short_accept_threshold
         } else {
-            self.cfg.accept_threshold
+            self.cfg.follow_threshold
         };
 
         let Some(best) = self.best_candidate(seg, weak) else {
@@ -300,7 +327,7 @@ impl<'a> Tracker<'a> {
         };
         let (best, runner_up) = best;
 
-        if best.score < accept_threshold {
+        if best.score < move_threshold {
             events.push(TrackerEvent::Rejected {
                 reason: if weak {
                     RejectReason::WeakEvidence
@@ -337,7 +364,12 @@ impl<'a> Tracker<'a> {
             PositionCause::Follow
         } else if gap <= self.cfg.skip_max {
             PositionCause::Skip
-        } else if best.is_landmark && best.score >= self.cfg.reanchor_threshold {
+        } else if best.score >= self.cfg.reanchor_threshold
+            && (best.is_landmark || self.confidence == Confidence::Lost)
+        {
+            // A landmark anchors at any time. When already lost, any sufficiently
+            // strong and unambiguous match anchors too — there is nothing left to
+            // protect, and refusing to move is how a run stays lost for an act.
             PositionCause::Reanchor
         } else {
             // A big unanchored jump. Believe it only on the second sighting.
@@ -379,7 +411,11 @@ impl<'a> Tracker<'a> {
     ) {
         let from = self.confidence;
         self.position = best.span.last();
-        self.confidence = if best.fuzzy >= self.cfg.word_threshold && !weak && !seg.interim {
+        self.confidence = if best.score < self.cfg.accept_threshold {
+            // Moved on thin evidence: the page keeps pace, the operator is told
+            // this is "somewhere around here" rather than a line number to trust.
+            Confidence::Block
+        } else if best.fuzzy >= self.cfg.word_threshold && !weak && !seg.interim {
             Confidence::Word
         } else {
             // Two ways to be placed without a word-level match in the PRD's sense:

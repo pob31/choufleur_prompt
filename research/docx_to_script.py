@@ -364,6 +364,14 @@ def main() -> None:
         help="fold a speaker name into another (repeatable), for names too short to guess",
     )
     ap.add_argument(
+        "--not-speaker",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="a label that introduces text but is not spoken aloud, e.g. a projected "
+        "caption tagged `Image:` (repeatable)",
+    )
+    ap.add_argument(
         "--no-detect-lang",
         action="store_true",
         help="tag every line with the show default instead of detecting nl/fr/en",
@@ -377,6 +385,11 @@ def main() -> None:
 
     keep = {c.upper().lstrip("#") for c in args.keep_colour}
     speakers = find_speakers(paras, keep)
+    for n in args.not_speaker:
+        speakers.pop(n, None)
+        for k, v in list(speakers.items()):
+            if v == n:
+                speakers.pop(k)
     for a in args.alias:
         frm, _, to = a.partition("=")
         if not to:
