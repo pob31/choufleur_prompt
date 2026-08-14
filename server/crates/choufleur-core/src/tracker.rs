@@ -14,7 +14,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::lang::{LangCode, MatchText, NormalizerRegistry};
-use crate::matcher::{token_coverage, token_dice, token_set_ratio};
+use crate::matcher::{char_trigram_dice, token_coverage, token_dice, token_set_ratio};
 use crate::normalize::{normalize_base, tokens};
 use crate::script::{PreparedScript, Span};
 use crate::types::TranscriptSegment;
@@ -123,6 +123,16 @@ pub struct TrackerConfig {
     pub word_threshold: f64,
     /// **[sweep]** How far the best candidate must beat the runner-up.
     pub margin: f64,
+    /// Score lines on character trigrams as well as on words, taking the better.
+    pub char_similarity: bool,
+    /// How far to trust a character-only match, relative to a word match.
+    ///
+    /// Below 1.0 because characters are the more permissive measure: two unrelated
+    /// French sentences share more trigrams than they share words, so an unscaled
+    /// character score would raise the floor under every candidate and eat the
+    /// ambiguity margin. This is the dial that decides whether the remedy costs more
+    /// than the disease, and it is meant to be swept.
+    pub char_similarity_trust: f64,
     /// Ambiguity margin required while **lost**.
     ///
     /// Reasoning said this should be lower than `margin`: a lost tracker searches the
@@ -276,6 +286,8 @@ impl Default for TrackerConfig {
             accept_threshold: 0.62,
             word_threshold: 0.88,
             margin: 0.06,
+            char_similarity: true,
+            char_similarity_trust: 0.85,
             lost_margin: 0.06,
             equivalent_text_competes: false,
             char_mismatch_penalty: 0.35,
@@ -866,6 +878,9 @@ impl<'a> Tracker<'a> {
         let script = self.script;
         let overlap_exp = self.cfg.overlap_exp;
         let member_coverage_min = self.cfg.member_coverage_min;
+        // Copied out before the scratch buffers are borrowed, as above.
+        let char_similarity = self.cfg.char_similarity;
+        let char_trust = self.cfg.char_similarity_trust;
         let span_langs = script.span_langs(span);
         // Match in the language the script says this line is in. Where the decode
         // was forced to one of them, restrict to that; a mismatch means the
@@ -900,8 +915,22 @@ impl<'a> Tracker<'a> {
             // performed. The written form still wins ties, being first.
             //
             for line_tokens in &variants {
-                let s = token_set_ratio(&seg_tokens, line_tokens)
+                let words = token_set_ratio(&seg_tokens, line_tokens)
                     * token_dice(&seg_tokens, line_tokens).powf(overlap_exp);
+                // Take the better of words and characters rather than blending them.
+                // A line whose words match is already scored well and gains nothing
+                // from characters; a line the recogniser mis-split scores near zero on
+                // words and should not be dragged down by that. The failure being
+                // fixed is one-sided, so the remedy is too.
+                let s = if char_similarity {
+                    let chars = char_trigram_dice(
+                        &seg_tokens.join(" "),
+                        &line_tokens.join(" "),
+                    );
+                    words.max(chars * char_trust)
+                } else {
+                    words
+                };
                 if s > fuzzy {
                     fuzzy = s;
                 }

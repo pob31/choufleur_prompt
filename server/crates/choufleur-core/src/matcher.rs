@@ -235,3 +235,77 @@ mod overlap_tests {
         assert_eq!(token_coverage(&[], &seg), 1.0);
     }
 }
+
+
+/// Similarity on character trigrams, which survives a recogniser that heard the right
+/// sounds and cut them in the wrong places.
+///
+/// The tracker scores a line as `token_set_ratio × token_dice^k`, and the second
+/// factor assumes the word boundaries are right. Real theatre transcripts break that
+/// assumption constantly without being *wrong* about the sound: "Polyme Store" shares
+/// no whole token with "Polymestor", so the dice factor is zero and the product is
+/// zero, however well the strings otherwise agree. Measured on Hécube, against the
+/// script line each was trying to be (word column = set dice on tokens):
+///
+/// ```text
+/// heard                 script             words  trigrams
+/// "Polyme Store"        "Polymestor"        0.00    0.64
+/// "en Tassé-le-Bitain"  "entassé le butin"  0.29    0.59
+/// "Athéna III-Yenne"    "Athéna Troyenne"   0.40    0.65
+/// "le fils des cubes"   "le fils d'Hécube"  0.50    0.62
+/// ```
+///
+/// Every one of those is a line the operator could read correctly off the screen while
+/// the matcher scored it near zero. `accept_threshold` is 0.62, so the difference is
+/// not academic: on characters these match, on words they do not.
+///
+/// Trigrams and not a phonetic algorithm because the corpus is French, Dutch and
+/// English, and a soundex is a per-language commitment; trigrams are none.
+pub fn char_trigram_dice(a: &str, b: &str) -> f64 {
+    fn grams(t: &str) -> std::collections::HashSet<[char; 3]> {
+        let mut v: Vec<char> = Vec::with_capacity(t.chars().count() + 2);
+        v.push(' ');
+        v.extend(t.chars());
+        v.push(' ');
+        v.windows(3).map(|w| [w[0], w[1], w[2]]).collect()
+    }
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let (ga, gb) = (grams(a), grams(b));
+    if ga.is_empty() || gb.is_empty() {
+        return 0.0;
+    }
+    2.0 * ga.intersection(&gb).count() as f64 / (ga.len() + gb.len()) as f64
+}
+
+#[cfg(test)]
+mod trigram_tests {
+    use super::*;
+
+    #[test]
+    fn character_similarity_survives_wrong_word_boundaries() {
+        // Worth being precise about which half fails, because it is not the obvious
+        // one: `token_set_ratio` handles this well (~0.91, it compares joined
+        // strings), and the `token_dice` factor the tracker multiplies it by is what
+        // collapses to zero — the two share no whole token. Their product is what
+        // scores the line, so the line scores nothing.
+        let a = ["polyme", "store"];
+        let b = ["polymestor"];
+        assert!(token_set_ratio(&a, &b) > 0.85);
+        assert_eq!(token_dice(&a, &b), 0.0);
+        assert_eq!(token_set_ratio(&a, &b) * token_dice(&a, &b), 0.0);
+        assert!(char_trigram_dice("polyme store", "polymestor") > 0.55);
+    }
+
+    #[test]
+    fn it_still_separates_unrelated_lines() {
+        // The point is not to make everything match everything.
+        assert!(char_trigram_dice("bonjour madame", "le train part demain") < 0.3);
+    }
+
+    #[test]
+    fn identical_text_scores_one() {
+        assert!((char_trigram_dice("hecube", "hecube") - 1.0).abs() < 1e-9);
+    }
+}

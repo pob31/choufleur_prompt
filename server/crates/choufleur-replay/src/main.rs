@@ -59,6 +59,14 @@ struct AudioArgs {
     /// lag can then be no better than the length of the line being spoken.
     #[arg(long)]
     interim_ms: Option<u32>,
+    /// Do not put the show's proper nouns in the decoder's prompt.
+    ///
+    /// The lexicon fixes the words that matter most — the title character of Hécube
+    /// was never once recognised without it — but priming a recogniser with names is
+    /// also how it is invited to hear them where they were not said. Which effect
+    /// wins is a measurement per production, so it is a switch.
+    #[arg(long)]
+    no_lexicon: bool,
     /// Turn off the per-channel adaptive gain.
     ///
     /// It earns its keep on a close mic gained for a shout. On an ambient capture
@@ -238,6 +246,7 @@ fn main() -> Result<()> {
             audio.interim_ms,
             audio_root,
             audio.no_agc,
+            audio.no_lexicon,
         ),
         Command::Serve {
             corpus,
@@ -260,6 +269,7 @@ fn main() -> Result<()> {
             audio.interim_ms,
             audio_root,
             audio.no_agc,
+            audio.no_lexicon,
             audio.realtime,
             port,
             !no_monitor,

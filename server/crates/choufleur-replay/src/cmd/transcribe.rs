@@ -79,6 +79,7 @@ pub fn run(
     interim_ms: Option<u32>,
     audio_root: Option<PathBuf>,
     no_agc: bool,
+    no_lexicon: bool,
 ) -> Result<()> {
     let corpus = Corpus::load(corpus_path, audio_root)?;
     let (script, prepared) = super::load_script(&corpus.script_path())?;
@@ -101,7 +102,11 @@ pub fn run(
     println!("mode:    {}", if realtime { "realtime" } else { "batch" });
 
     let names: Vec<String> = script.characters.iter().map(|c| c.name.clone()).collect();
-    let proper = proper_nouns(&prepared.lines, 40);
+    let proper = if no_lexicon {
+        Vec::new()
+    } else {
+        proper_nouns(&prepared.lines, 40)
+    };
     if !proper.is_empty() {
         println!("lexicon: {}", proper.join(", "));
     }

@@ -101,6 +101,7 @@ pub fn run(
     interim_ms: Option<u32>,
     audio_root: Option<PathBuf>,
     no_agc: bool,
+    no_lexicon: bool,
     realtime: bool,
     port: u16,
     monitor: bool,
@@ -160,7 +161,11 @@ pub fn run(
         .first()
         .cloned()
         .unwrap_or(LangCode::new("en"));
-    let proper = proper_nouns(&prepared.lines, 40);
+    let proper = if no_lexicon {
+        Vec::new()
+    } else {
+        proper_nouns(&prepared.lines, 40)
+    };
     println!("lexicon: {}", proper.join(", "));
     let static_text = static_prompt_with(script.title.as_deref(), &names, &proper);
     let lang_of = super::character_languages(&prepared);
