@@ -516,6 +516,46 @@ is for: require a variant to recur across runs before proposing it. It is
 implemented and **untested**, for want of a second night — and it is the specific
 reason learning *night after night* is worth more than learning once.
 
+### I. It can find the page in a whole show, without being told where to look
+
+Every measurement so far used a script cut to the excerpt — which quietly hands the
+tracker the answer. The real case is a whole show loaded at once, with the engine
+expected to work out where in it the performance is. Tested by tracking the same six
+transcripts against the **full 377-line Regiefassung** instead of their excerpts.
+
+The first attempt failed completely: five of six never moved a single line. That is
+what exposed `lost_search_all` as dead config (see the correction in finding F).
+With the search actually wired up, and with the initial `Scene` state treated as
+searchable too — it means "we know the scene but not the line", which is nearer to
+lost than to tracking — **all six locate themselves, with 100 % of position updates
+falling inside the correct region**:
+
+| Excerpt | should be | found | time to first fix |
+|---|---|---|---|
+| 1 Johan | L001–L024 | L001–L024 | 2.5 s |
+| 2 Sébastien | L026–L033 | L029–L033 | 110 s |
+| 3 Sara & Fabian | L091–L134 | L100–L134 | 73 s |
+| 4 Sébastien & Tom | L136–L169 | L141–L169 | 70 s |
+| 5 Perche (boom) | L191–L208 | L196–L208 | 138 s |
+| 6 Tutti (car scene) | L245–L283 | L245–L280 | 57 s |
+
+Not one false location — no excerpt settled in the wrong part of the show, which is
+the failure that would matter. What costs time is the cold start: the tracker enters
+each excerpt one to two minutes in, because it must accumulate enough evidence to
+outweigh the distance prior before it will believe a jump of two hundred lines.
+
+That number is less alarming than it looks, and worth being precise about. A show
+run starts at the top, where the tracker already is — that is the 2.5 s row, and it
+is the normal case. The minutes apply to **starting cold in the middle**: recovery
+after a long loss, or beginning a rehearsal at an arbitrary point. The PRD already
+answers the second with quick-jump, which sets the position directly and costs
+nothing. So the honest reading is that unaided global location works and is worth
+having as a backstop, while remaining slower than telling it where to start.
+
+Widening the search to include the initial `Scene` state cut two of the cold starts
+by more than half (excerpt 4: 220 s → 70 s; excerpt 5: 231 s → 138 s) and moved
+excerpt 6 onto its exact first line.
+
 ---
 
 ## Open questions for the real corpus

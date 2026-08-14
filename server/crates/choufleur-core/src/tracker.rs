@@ -531,8 +531,22 @@ impl<'a> Tracker<'a> {
         // Weak evidence gets a narrow view of the world: the next line only, no
         // multi-line spans, no landmark re-anchoring. "Yes" is not allowed to
         // relocate the show.
+        // Being lost is exactly the situation in which looking everywhere is
+        // correct. A script converted from a rehearsal document has no landmarks
+        // at all beyond the implicit one at line 0, so without this a run that
+        // missed the opening lines can never reach line 9 — however plainly the
+        // actors are speaking line 30.
+        // `Scene` is the state the tracker starts in and means "we know the scene
+        // but not the line" — which is nearer to lost than to tracking, and is
+        // exactly the situation at the top of a run or after a jump. Searching
+        // widely from there too is what takes time-to-first-fix from minutes to
+        // seconds; the distance prior still makes a near match beat a far one, so
+        // a run that genuinely starts at line 1 is unaffected.
+        let lost = matches!(self.confidence, Confidence::Lost | Confidence::Scene);
         let (window, max_span) = if weak {
             (1, 1)
+        } else if lost && self.cfg.lost_search_all {
+            (self.script.len(), self.cfg.max_span)
         } else {
             (self.cfg.window_ahead, self.cfg.max_span)
         };
