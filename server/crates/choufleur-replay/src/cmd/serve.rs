@@ -35,6 +35,11 @@ use crate::live::{Broadcast, LineView, LiveState, Update};
 use crate::manifest::Corpus;
 use crate::monitor::Monitor;
 
+/// Where the page is read from while iterating, if it is present.
+///
+/// Compiled-in remains the fallback so a built binary is still self-contained.
+const ASSET_PATH: &str = "server/crates/choufleur-replay/assets/live.html";
+
 /// Play a file to the monitor, on a thread that does nothing else.
 ///
 /// The first version of this pushed audio from inside the engine loop, which meant
@@ -361,12 +366,20 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
             // No-store, because this page is being iterated on during a live run and
             // a browser holding yesterday's copy looks exactly like a change that did
             // not work — which cost one round of "it still overlaps".
+            //
+            // Read from disk when the file is there, falling back to the copy compiled
+            // in. `include_str!` bakes the page at build time, so anyone editing it —
+            // including the operator — saw nothing change until the next cargo build,
+            // which is indistinguishable from an edit that did not take.
             .route(
                 "/",
                 get(|| async {
+                    let live = std::path::Path::new(ASSET_PATH);
+                    let body = std::fs::read_to_string(live)
+                        .unwrap_or_else(|_| include_str!("../../assets/live.html").to_string());
                     (
                         [(axum::http::header::CACHE_CONTROL, "no-store, must-revalidate")],
-                        Html(include_str!("../../assets/live.html")),
+                        Html(body),
                     )
                 }),
             )
