@@ -355,7 +355,9 @@
   // creeps while the show creeps and travels while it travels, and an update landing
   // mid-move simply changes where it is going without interrupting it.
   const MAX_SPEED = 240;      // px per second: a pace text stays readable through
+  const SLOW_SPEED = 55;      // while the tracker says it is unsure
   const MIN_SPEED = 26;       // so the last few pixels do not crawl indefinitely
+  let speedCap = MAX_SPEED;
   let scrollTarget = null;
   let lastProgrammatic = 0;
   let lastFrame = 0;
@@ -374,7 +376,7 @@
     }
     // Constant speed far out, easing only over the last stretch, so arrivals settle
     // instead of stopping dead.
-    const speed = Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.abs(remaining) * 1.6));
+    const speed = Math.min(speedCap, Math.max(MIN_SPEED, Math.abs(remaining) * 1.6));
     const step = Math.sign(remaining) * Math.min(Math.abs(remaining), speed * dt);
     $scroller.scrollTop += step;
     lastProgrammatic = now;
@@ -463,11 +465,14 @@
     // segment, worst at the opening where segments are densest.
     if (index === scrolledTo) return;
 
-    // Do not chase a position the tracker itself calls uncertain. Before the first
-    // real fix it searches the whole script, so the reported line can be anywhere; the
-    // banner and the dimming already say so, and following it as well turns an honest
-    // "I do not know" into a page that cannot sit still.
-    if (conf === 'lost' || conf === 'scene') return;
+    // An uncertain position is followed *slowly*, not ignored.
+    //
+    // Suppressing the scroll entirely was worse than the jitter it fixed: the
+    // highlight kept walking wherever the tracker wandered while the window stayed
+    // put, so the moment confidence recovered the page paid the whole accumulated
+    // debt at once — scene 1 to scene 6 in a single leap, reported from a live run.
+    // Creeping toward it instead keeps the debt at zero and still refuses to twitch.
+    speedCap = conf === 'lost' || conf === 'scene' ? SLOW_SPEED : MAX_SPEED;
 
     const target = anchorFor(index);
     if (target === null) return;
@@ -481,7 +486,9 @@
     // while the reader was still reading them. Holding roughly constant speed instead
     // keeps a three-line advance legible — the text stays readable *through* the move,
     // which is what a page being read has to do and a page being animated does not.
-    scrollTo(target, offScreen);
+    // Only cut when the tracker is confident. Cutting on an uncertain relocation is
+    // how a guess becomes a jump-scare.
+    scrollTo(target, offScreen && speedCap === MAX_SPEED);
     lean(index);
   }
 
