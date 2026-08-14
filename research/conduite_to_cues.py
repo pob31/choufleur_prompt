@@ -86,15 +86,30 @@ def dice(a: set[str], b: set[str]) -> float:
     return 2 * len(a & b) / (len(a) + len(b)) if a and b else 0.0
 
 
-# A cue whose text names a visual event rather than a spoken one. These fire on what
-# the operator sees, not on what is said, and Choufleur can only ever show them
-# early — it cannot know that the cloth has fallen. Marked so the client can present
-# them differently rather than implying a precision it does not have.
-VISUAL = re.compile(
-    r"^(.{0,40}?)\s*>\s*(.+)$|entre\b|sortie|assis|se retourne|enjambe|pose son|"
-    r"tombe|approche|retour sur|hors plateau|en place",
-    re.I,
-)
+# A note's own grammar, which beats guessing at its vocabulary. Notes are written
+# "<what I wait for> > <what I then do>", and the arrow also chains steps *within* an
+# action — "2 Mute micros / lumière 11 / Musique > Ouverture micros" is one numbered
+# cue in sequence, not a cue waiting on something called "Musique".
+#
+# The cue number separates the two senses. A note that opens with one is already the
+# action, so every arrow in it is sequencing; a note whose leading clause carries no
+# number is waiting on something, and that something is a thing the operator watches
+# for — an entrance, a prop set down — because if the trigger were the text there
+# would be nothing to write.
+#
+# This matters beyond bookkeeping: on a visual trigger Choufleur can only ever warn
+# early, since it cannot see the cloth fall. Detecting them from the punctuation
+# rather than from a list of French stage words also survives the next show, and the
+# next language.
+NUMBERED = re.compile(r"^\s*\d+(\.\d+)*\s")
+
+
+def split_note(text: str) -> tuple[str | None, str]:
+    """`(what is waited for, what is then done)` — the first is None on a text cue."""
+    head, sep, tail = text.partition(">")
+    if not sep or NUMBERED.match(text) or not head.strip() or not tail.strip():
+        return None, text.strip()
+    return head.strip(), tail.strip()
 
 
 def colour_name(colour) -> str:
@@ -483,8 +498,10 @@ def main() -> None:
         else:
             rec_page_only = False
 
+        watch, action = split_note(cue["text"])
         rec = {
             "cue": cue["text"],
+            "action": action,
             "page": cue["page"],
             "evidence": evidence[:120],
             "evidenceFrom": source,
@@ -493,9 +510,12 @@ def main() -> None:
             "markColour": mark_colour,
             "markMeans": means.get(mark_colour or ""),
             "score": round(best, 3),
+            "trigger": "visual" if watch else "text",
         }
-        if VISUAL.search(cue["text"]):
-            rec["trigger"] = "visual"
+        if watch:
+            # The line it is anchored to is where the operator starts watching, not
+            # where the cue goes. Choufleur can bring it up in good time and no more.
+            rec["waitsFor"] = watch
         if best_i is not None:
             rec["lineId"] = lines[best_i]["id"]
             rec["lineText"] = lines[best_i]["text"][:90]

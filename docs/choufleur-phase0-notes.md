@@ -850,10 +850,24 @@ located by how much of each line is printed on it, and only then is a cue placed
 that page's lines. 111 of 115 pages locate, and the ambiguity a mark cannot resolve,
 its page can.
 
-Note also what the conduite does **not** contain: no strikeouts, and all eight of its
-"cut" notes mean *cut the music*. The performed cuts exist only on the operator's paper
-copy, which makes the audio-derived cut proposals the only machine-readable source for
-them.
+**115 of the 133 cues fire on text.** The notes have a grammar — *"what I wait for >
+what I then do"* — and the cue number tells that arrow apart from the one that merely
+chains steps inside an action. Parsed that way, 115 cues are triggered by the spoken
+text and 16 by something the operator watches for (*"Tissus qui tombe > 9.1 Lumière
+47"*, *"Elsa pose son sac > 5.2 cut musique"*). Reading the grammar rather than
+guessing at French stage vocabulary also cut the false visual count from 31 to 16, and
+survives the next show in another language.
+
+That ratio is the product case, measured on a real show: seven cues in eight are
+exactly what script following is for, and the eighth can only ever be shown early —
+which the client must present differently rather than implying a precision it cannot
+have. Colour splits them again by who acts: 62 QLab and 53 desk moves on text.
+
+Note finally what the conduite does **not** contain: no strikeouts, and every "cut"
+note in the margin means *cut the music*. The performed cuts are marked another way
+entirely — grey shading, mostly in the flattened layer — and a conduite that had been
+flattened differently might not carry them at all, which keeps the audio-derived
+proposals worth having as an independent source.
 
 ---
 
