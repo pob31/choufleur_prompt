@@ -168,6 +168,19 @@ pub struct TrackerConfig {
     pub short_accept_threshold: f64,
     /// Seconds of unmatched speech after which an unconfirmed jump is forgotten.
     pub jump_pending_ttl_s: f64,
+    /// **[sweep]** Seconds of speech during which the position never advanced
+    /// before tracking is declared `Lost`, however much of it appeared to match.
+    ///
+    /// Matching something is not the same as making progress. In a scene of cross
+    /// talk the tracker keeps finding weak support for lines near where it already
+    /// is, which resets the unmatched-speech timer forever — so it can sit on line
+    /// four for seventeen minutes at line confidence and never once admit it is
+    /// lost. That is the worst available outcome: a frozen page with no warning,
+    /// and no help request, in a scene where the operator most needs one.
+    ///
+    /// Generous, because a monologue legitimately holds one line for a long time —
+    /// the La Reprise documentary monologue has 25-second lines.
+    pub stall_to_lost_s: f64,
     /// When tracking is `Lost`, search the entire script rather than the window.
     ///
     /// Without this the tracker can only ever see `window_ahead` lines forward
@@ -206,6 +219,7 @@ impl Default for TrackerConfig {
             min_segment_tokens: 3,
             short_accept_threshold: 0.80,
             jump_pending_ttl_s: 8.0,
+            stall_to_lost_s: 90.0,
             lost_search_all: true,
         }
     }
@@ -238,6 +252,8 @@ pub struct Tracker<'a> {
     position: usize,
     confidence: Confidence,
     unmatched_speech_s: f64,
+    /// Speech seen since the position last actually moved forward.
+    stalled_speech_s: f64,
     last_match_t: f64,
     pending_jump: Option<PendingJump>,
     // Scratch buffers, reused across updates to keep the hot path allocation-free.
@@ -255,6 +271,7 @@ impl<'a> Tracker<'a> {
             position: 0,
             confidence: Confidence::Scene,
             unmatched_speech_s: 0.0,
+            stalled_speech_s: 0.0,
             last_match_t: 0.0,
             pending_jump: None,
             spans: Vec::new(),
@@ -276,6 +293,14 @@ impl<'a> Tracker<'a> {
         self.script.lines.get(self.position).map(|l| l.id.as_str())
     }
 
+    /// Seconds of *new* speech a segment represents.
+    ///
+    /// Interim hypotheses are prefixes of the segment that follows them, so their
+    /// durations overlap heavily — a 25-second line emitting a partial every 1.5 s
+    /// sums to several times its own length. Counting them would run every decay
+    /// timer at some multiple of real time and declare tracking lost, and raise a
+    /// help request, in the middle of a passage that was tracking perfectly well.
+    /// Final segments tile the speech exactly once, so only they are counted.
     /// Move the position from outside the matcher — an operator correction, a run
     /// control jump, or a journal restore. Confidence is not invented: the caller
     /// says what it knows.
@@ -410,7 +435,13 @@ impl<'a> Tracker<'a> {
         events: &mut Vec<TrackerEvent>,
     ) {
         let from = self.confidence;
+        let advanced = best.span.last() > self.position;
         self.position = best.span.last();
+        if advanced {
+            self.stalled_speech_s = 0.0;
+        } else {
+            self.stalled_speech_s += speech_seconds(seg);
+        }
         self.confidence = if best.score < self.cfg.accept_threshold {
             // Moved on thin evidence: the page keeps pace, the operator is told
             // this is "somewhere around here" rather than a line number to trust.
@@ -456,13 +487,17 @@ impl<'a> Tracker<'a> {
     /// Confidence decays on *speech* the tracker could not place. A long pause is
     /// not evidence of anything, so silence never demotes.
     fn on_unmatched(&mut self, seg: &TranscriptSegment, events: &mut Vec<TrackerEvent>) {
-        self.unmatched_speech_s += seg.duration();
+        let dt = speech_seconds(seg);
+        self.unmatched_speech_s += dt;
+        self.stalled_speech_s += dt;
         if let Some(p) = &self.pending_jump {
             if self.unmatched_speech_s - p.unmatched_at > self.cfg.jump_pending_ttl_s {
                 self.pending_jump = None;
             }
         }
-        let target = if self.unmatched_speech_s >= self.cfg.decay_to_lost_s {
+        let target = if self.unmatched_speech_s >= self.cfg.decay_to_lost_s
+            || self.stalled_speech_s >= self.cfg.stall_to_lost_s
+        {
             Confidence::Lost
         } else if self.unmatched_speech_s >= self.cfg.decay_to_block_s {
             Confidence::Block
@@ -641,6 +676,22 @@ impl<'a> Tracker<'a> {
         }
         let mt = &self.seg_by_lang.iter().find(|(l, _)| l == lang).unwrap().1;
         mt.tokens.iter().map(String::as_str).collect()
+    }
+}
+
+/// Seconds of *new* speech a segment represents.
+///
+/// Interim hypotheses are prefixes of the segment that follows them, so their
+/// durations overlap heavily — a 25-second line emitting a partial every 1.5 s sums
+/// to several times its own length. Counting them would run every decay timer at a
+/// multiple of real time, declaring tracking lost and raising a help request in the
+/// middle of a passage that was tracking perfectly well. Final segments tile the
+/// speech exactly once, so only they count.
+fn speech_seconds(seg: &TranscriptSegment) -> f64 {
+    if seg.interim {
+        0.0
+    } else {
+        seg.duration()
     }
 }
 

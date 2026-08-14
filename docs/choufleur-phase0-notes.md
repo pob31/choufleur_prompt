@@ -431,10 +431,42 @@ Two things this exposed that are not yet fixed:
   scores a short fragment against a long line badly even when the fragment is
   correct — and far-field capture is mostly fragments. Johan_1 tracked 92 % against
   a "67 % ceiling". The ceiling tool needs the asymmetric measure the tracker uses.
-- **Excerpt 6 stalls without ever declaring itself lost.** Cross-talk keeps
-  producing weak matches near the current position, which reset the decay timer, so
-  confidence never falls to `Lost` and the global search never engages. Decay needs
-  to consider *progress*, not only whether something matched.
+- **`script_vs_audio.py`'s ceiling is still pessimistic** and should use the
+  asymmetric measure the tracker uses.
+
+### G. Matching something is not the same as making progress
+
+Excerpt 6 is the car scene: cross talk, fighting, grunting, six channels. It
+tracked 4 of 40 lines — and the score was not the worrying part. It sat on line
+four for seventeen minutes at `Line` confidence and **never once declared itself
+lost**, so it would never have raised the help request the PRD promises. A frozen
+page with no warning, in the scene where an operator most needs one, is a worse
+outcome than tracking badly and saying so.
+
+Two defects behind it, and the first affects every run, not this excerpt.
+
+**Interim hypotheses were double-counted as speech.** They are *prefixes* of the
+segment that follows, so their durations overlap: on this excerpt 386 s of real
+speech summed to 825 s. Every decay timer therefore ran at roughly twice real time,
+which would declare tracking lost — and raise a help request — in the middle of a
+passage that was tracking perfectly well. Only final segments tile the speech
+exactly once, so only they are counted now.
+
+**Decay reset on any match rather than on progress.** In cross talk the tracker
+keeps finding weak support for lines near where it already is, which reset the
+unmatched-speech timer indefinitely. A second timer now measures speech since the
+position last actually moved forward, with a deliberately generous threshold
+(`stall_to_lost_s`, 90 s) because a monologue legitimately holds one line for a
+long time — excerpt 2 has 25-second lines.
+
+The two together took excerpt 6 from **4 of 40 lines to 20 of 40**, with no change
+anywhere else, because declaring `Lost` is what engages the whole-script search
+added in finding F. The mechanism matters more than the number: on genuinely
+impossible audio the correct behaviour is not good tracking, it is prompt honest
+failure — and prompt honest failure is also what lets it find its way back.
+
+Lost-events per excerpt are now plausible where before they were not: 0 on the
+clean French monologue, 1 on the bilingual one, 2 on the fight.
 
 ---
 
