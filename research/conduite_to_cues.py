@@ -116,7 +116,7 @@ def colour_name(colour) -> str:
     base = (
         "red" if deg < 15 else "orange" if deg < 40 else "gold" if deg < 52
         else "yellow" if deg < 70 else "green" if deg < 170 else "cyan" if deg < 200
-        else "blue" if deg < 250 else "purple" if deg < 290 else "pink" if deg < 340
+        else "blue" if deg < 250 else "purple" if deg < 330 else "pink" if deg < 345
         else "red"
     )
     return f"pale {base}" if s < 0.6 else base
@@ -125,7 +125,7 @@ def colour_name(colour) -> str:
 def extract(pdf: Path):
     """Every cue note and every highlight, with the page text around it."""
     doc = fitz.open(pdf)
-    cues, marks = [], []
+    cues, marks, tinted = [], [], []
     for pno in range(len(doc)):
         page = doc[pno]
         words = page.get_text("words")  # (x0, y0, x1, y1, word, block, line, wno)
@@ -135,7 +135,8 @@ def extract(pdf: Path):
             if kind == "FreeText":
                 content = " ".join((a.info.get("content") or "").split())
                 if content:
-                    cues.append({"page": pno + 1, "y": r.y0, "x": r.x0, "text": content})
+                    cues.append({"page": pno + 1, "y": r.y0, "x": r.x0,
+                                 "text": content, "colour": None, "rgb": None})
             elif kind in ("Highlight", "Underline", "Squiggly", "StrikeOut"):
                 covered = " ".join(
                     w[4] for w in words if fitz.Rect(w[:4]).intersects(r)
@@ -147,6 +148,83 @@ def extract(pdf: Path):
                          "kind": kind, "colour": colour_name(c),
                          "rgb": tuple(round(x, 2) for x in c) if c else None}
                     )
+    # Cue notes written as coloured text rather than as annotations, for the same
+    # flattening reason. Their colour is the operator's coding for which system acts
+    # — on this conduite blue for a QLab go and purple for a move on the desk — which
+    # the annotation layer does not carry at all.
+    for pno in range(len(doc)):
+        # Merged by colour and baseline, because a run of coloured text arrives as
+        # several spans — a bold word, a changed font — and each one is a fragment of
+        # one note, not a note of its own.
+        runs: dict[tuple, list] = {}
+        for block in doc[pno].get_text("dict")["blocks"]:
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    rgb = span.get("color", 0)
+                    if rgb in (0, 0xFFFFFF):
+                        continue
+                    text = span.get("text", "")
+                    if not text.strip():
+                        continue
+                    c = ((rgb >> 16 & 255) / 255, (rgb >> 8 & 255) / 255, (rgb & 255) / 255)
+                    key = (colour_name(c), round(span["bbox"][1] / 4))
+                    runs.setdefault(key, []).append((span["bbox"][0], text, c))
+        for (name, row), parts in sorted(runs.items(), key=lambda kv: kv[0][1]):
+            parts.sort()
+            text = " ".join("".join(t for _, t, _ in parts).split())
+            if len(text) < 2:
+                continue
+            tinted.append({"page": pno + 1, "y": row * 4.0,
+                           "x": parts[0][0], "text": text, "colour": name,
+                           "rgb": tuple(round(x, 2) for x in parts[0][2])})
+
+    # The two layers describe the same markup, not two sets of notes. A conduite
+    # edited on a tablet keeps its live annotations *and* a flattened rendering of
+    # them, so every note appears twice — 83 of 131 byte-identical here. Only the
+    # flattened copy carries the text colour, which is where the operator's coding for
+    # which system acts (QLab, or the desk) actually lives. So the annotation supplies
+    # the note, its overlapping tinted twin supplies the colour, and only tinted text
+    # with no annotation over it counts as a note in its own right.
+    for t in tinted:
+        twin = None
+        for c in cues:
+            if c["page"] == t["page"] and abs(c["y"] - t["y"]) <= 14 and c["colour"] is None:
+                if normalize(t["text"]) in normalize(c["text"]) or abs(c["y"] - t["y"]) <= 6:
+                    twin = c
+                    break
+        if twin:
+            twin["colour"] = twin["colour"] or t["colour"]
+            twin["rgb"] = twin["rgb"] or t["rgb"]
+        else:
+            cues.append(t)
+
+    # Marks that are not annotations. A conduite gets flattened — re-exported, or
+    # edited on a tablet — and its highlighting then lives in the page content as
+    # filled rectangles that no annotation API will return. On the Hécube file the
+    # live annotations held 17 grey marks and the page content held 82, so reading
+    # only the annotation layer missed most of the cuts.
+    for pno in range(len(doc)):
+        page = doc[pno]
+        words = page.get_text("words")
+        known = [a.rect for a in (page.annots() or [])]
+        for drawing in page.get_drawings():
+            fill, rect = drawing.get("fill"), drawing.get("rect")
+            if not fill or rect is None or rect.height > 40 or rect.height < 2:
+                continue
+            if rect.width < 4:
+                continue
+            name = colour_name(fill)
+            if name in ("black", "white"):
+                continue
+            if any(abs(k.y0 - rect.y0) < 3 and abs(k.x0 - rect.x0) < 3 for k in known):
+                continue  # the same mark, already taken from the annotation layer
+            covered = " ".join(w[4] for w in words if fitz.Rect(w[:4]).intersects(rect))
+            if covered.strip():
+                marks.append(
+                    {"page": pno + 1, "y": rect.y0, "text": " ".join(covered.split()),
+                     "kind": "Shading", "colour": name,
+                     "rgb": tuple(round(x, 2) for x in fill[:3])}
+                )
     return doc, cues, marks
 
 
@@ -410,6 +488,8 @@ def main() -> None:
             "page": cue["page"],
             "evidence": evidence[:120],
             "evidenceFrom": source,
+            "noteColour": cue.get("colour"),
+            "noteMeans": means.get(cue.get("colour") or ""),
             "markColour": mark_colour,
             "markMeans": means.get(mark_colour or ""),
             "score": round(best, 3),
