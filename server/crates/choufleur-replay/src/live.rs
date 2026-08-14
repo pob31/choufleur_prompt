@@ -106,6 +106,13 @@ pub enum Update {
         t_audio: f64,
         matched: bool,
         interim: bool,
+        /// Why the hallucination filter threw this away, if it did.
+        ///
+        /// Distinct from "the tracker did not match it", and conflating the two makes
+        /// the panel unreadable at the moment it matters most: a recogniser reciting
+        /// the prompt in a loop and a recogniser being ignored look identical unless
+        /// the display says which happened.
+        filtered: Option<String>,
     },
     /// Heartbeat for the footer, and the only way the page can tell that a run which
     /// has gone quiet is still running rather than wedged.
@@ -224,6 +231,7 @@ impl Consumer for Broadcast<'_> {
                 t_audio: record.t_end,
                 matched: line_index != before,
                 interim: record.interim,
+                filtered: record.filtered.clone(),
             });
         }
         // Lossy on purpose, and a send with no subscribers is not an error: the run

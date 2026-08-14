@@ -132,6 +132,7 @@
   }
   #heard p { margin: .12em 0; color: var(--dimmer); transition: color .3s; }
   #heard p.hit { color: var(--speaker); }
+  #heard p.junk { color: var(--lost); opacity: .75; }
   #heard p.tail { color: var(--dim); }
   #heard p.interim { font-style: italic; opacity: .7; }
   body[data-heard="off"] #heard { display: none; }
@@ -471,10 +472,14 @@
     $heard.innerHTML = '';
     heardLog.forEach((h, i) => {
       const p = document.createElement('p');
-      p.className = (h.matched ? 'hit ' : '') + (i === heardLog.length - 1 ? 'tail' : '');
+      p.className =
+        (h.filtered ? 'junk ' : h.matched ? 'hit ' : '') +
+        (i === heardLog.length - 1 ? 'tail' : '');
       const t = Math.round(h.tAudio);
       const clock = Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
-      p.textContent = clock + (h.matched ? '  \u2713  ' : '  \u00b7  ') + h.text;
+      const mark = h.filtered ? '  \u2717  ' : h.matched ? '  \u2713  ' : '  \u00b7  ';
+      p.textContent = clock + mark + h.text;
+      if (h.filtered) p.title = 'discarded by the hallucination filter: ' + h.filtered;
       $heard.appendChild(p);
     });
     if (heardStuck) heardBox.scrollTop = heardBox.scrollHeight;
@@ -484,8 +489,9 @@
     const text = heardLog
       .map((h) => {
         const t = Math.round(h.tAudio);
+        const state = h.filtered ? h.filtered : h.matched ? 'matched' : '';
         return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0') +
-          (h.matched ? '\tmatched\t' : '\t\t') + h.text;
+          '\t' + state + '\t' + h.text;
       })
       .join('\n');
     try {
