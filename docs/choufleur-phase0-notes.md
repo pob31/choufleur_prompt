@@ -948,6 +948,57 @@ And confidence and accuracy are not the same failure — a filter can be sure an
 which for an operator is worse than being unsure, so the prodding behaviour must key
 off the *distribution's* shape rather than off the peak alone.
 
+### Q. How good does the map have to be? Measured, and the errors are asymmetric
+
+The GPS framing, made precise by the operator: the map is known, the route is decided,
+position is the only live parameter. So what does map quality actually buy? Hécube can
+answer, because its cuts exist in three forms: still in the script (as imported), the
+operator's grey marks (ground truth), and the audio-derived proposals.
+
+Same two nights, three maps:
+
+| map | 16 Nov reached | 17 Nov reached | med err |
+| --- | --- | --- | --- |
+| as imported, cuts still in (984)   | 60 % | 58 % | 4–5 % |
+| operator's grey cuts removed (958) | 63 % | 63 % | 5–6 % |
+| grey + audio proposals (947)       | 64 % | 64 % | 5–6 % |
+
+And one more row, run by accident and kept deliberately: applying the audio proposals
+**by stale line-ID** — the IDs predated an importer fix that renumbered the script, so
+18 removals landed on the wrong lines, several of them performed. Night 17 collapsed
+to **16 % reached, p90 error 49 %**.
+
+Three conclusions, one per row-gap.
+
+**A stale-but-superset map already works.** Cuts still in cost four points of reach
+and nothing in error. The tracker walks past text nobody says the way a driver ignores
+a closed road on the map: it is dead weight, not a wrong turn.
+
+**Right cuts are worth having, not worth much.** Four to six points, ~10 % fewer
+wandering moves. This is the ceiling on what cut-editing in prep can buy.
+
+**Wrong removals are catastrophic.** Take out a line that is performed and the show
+arrives at text with no home; the matcher snaps it to the nearest thing that fits —
+confidently, elsewhere. The GPS equivalent is exact: a road missing from the map does
+not read as "unknown road", it reads as *you are on that other road over there*.
+
+So the asymmetry is the design rule, now measured rather than principled: **extra text
+is cheap, missing text is ruinous** — which is why cuts are marked and never deleted
+(notation §2, principle 5), and why prep proposals must pass a human. It also fixes
+what "how good must the script be" means: it must *contain* the performance. It need
+not contain only the performance.
+
+Two corollaries. The repeats are the play — *"Tranquille… On est large"* is pacing,
+not noise — and they stay in the map and stay matchable; the twin annotation demands
+more evidence for them, it never removes them. And the two cut sources are
+complementary with almost no overlap (3 lines of 37): a repeated line that is cut can
+never be certified by audio, because its twin is still heard elsewhere, while the
+operator's marks catch exactly those. Neither source suffices alone.
+
+Last, the stale-ID accident is the Phase 1 lesson: annotations keyed to positional
+IDs do not survive a re-import. Line identity must be content-derived — which is what
+M1.4's hash-based IDs are for, now with a measured failure to justify them.
+
 ---
 
 ## Open questions for the real corpus
