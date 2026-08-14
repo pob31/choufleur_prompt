@@ -663,6 +663,37 @@ on three consecutive nights, and 578, 565, 626 for the other — a 10 % spread i
 duration. Any pace or ETA model calibrated on one night carries that much error into
 the next.
 
+### Checked: the excerpt boundaries are not the explanation
+
+The La Reprise excerpts were cut from longer recordings without matching the audio
+to the script excerpt — deliberately, and worth verifying rather than assuming,
+since sloppy edges would inflate every "line never appeared" count and make drift
+look worse than it is.
+
+Asking of each script line whether *anything* resembling it exists anywhere in that
+excerpt's audio:
+
+| Excerpt | lost to the edges | genuinely absent mid-scene |
+|---|---|---|
+| 1 Johan | 0 | 2 |
+| 2 Sébastien | 0 | 0 |
+| 3 Sara & Fabian | 0 | 9 |
+| 4 Sébastien & Tom | 2 at the start | 4 |
+| 5 Perche | 0 | 4 |
+| 6 Tutti | 2 at the end | 6 |
+
+Four lines in the whole corpus are attributable to the cut. Everything else absent
+is absent from the *middle* of a scene, where trimming cannot explain it, so the
+drift diagnosis stands on its own.
+
+One consequence for finding I: excerpt 4 entering at L141 against an expected L136
+is two lines of missing audio and three of cold start, not five of cold start. The
+other excerpts' late entries are cold start as reported.
+
+Incidentally this makes the corpus a better test than a tidy one would have been.
+Starting mid-scene with no run-up is exactly what happens when an operator switches
+the system on late, and the tracker handled it.
+
 ---
 
 ## Open questions for the real corpus
