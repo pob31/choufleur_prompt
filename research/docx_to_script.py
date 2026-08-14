@@ -49,8 +49,71 @@ def norm_name(s: str) -> str:
     return s.casefold()
 
 
+# Structural headings. These are not speakers and not dialogue: they are the
+# skeleton of the show, and worth far more than either. Act and scene boundaries
+# are implicit weight-3 landmarks (notation §7), and a script imported without them
+# has no anchors at all — which is exactly why relocating in an unstructured script
+# took over a minute.
+SECTION = re.compile(
+    r"^\s*(prologue|epilogue|épilogue|acte|scene|scène|tableau|partie)\b[\s.:—–-]*(.*)$",
+    re.IGNORECASE,
+)
+
+
+def section_heading(text: str) -> str | None:
+    """The heading's label if this paragraph starts a new act, scene or part."""
+    t = text.strip()
+    if len(t) > 48:
+        return None
+    m = SECTION.match(t)
+    if not m:
+        return None
+    letters = [c for c in t if c.isalpha()]
+    # Headings are set in capitals in every script convention worth supporting;
+    # requiring it keeps "Scène de ménage" in a line of dialogue from splitting the
+    # show in two.
+    if not letters or not all(c.isupper() for c in letters):
+        return None
+    return " ".join(t.split())
+
+
+def is_standalone_speaker(text: str) -> bool:
+    """A paragraph that is nothing but a name, in capitals, on its own line.
+
+    The other common script convention, and the one Comédie-Française scripts use:
+
+        ÉRIC
+        Silence, mes amies...
+
+    No colon, so the `Name:` pattern never fires. Recognising it matters more than
+    it sounds — without it every line of such a script is attributed to nobody and
+    the whole document imports as unspoken preamble.
+
+    Kept deliberately strict. Capitals also mark act and scene headings, so a
+    "name" carrying sentence punctuation or running long is something else.
+    """
+    t = text.strip().rstrip(":").strip()
+    if not t or len(t) > 40:
+        return False
+    letters = [c for c in t if c.isalpha()]
+    if len(letters) < 2 or not all(c.isupper() for c in letters):
+        return False
+    # A heading, not a speaker.
+    if any(c in t for c in ".!?…"):
+        return False
+    if len(t.split()) > 6:
+        return False
+    return True
+
+
 def attribution(p: "Paragraph"):
-    """`(name, parenthetical, rest)` if this paragraph opens with `Name:`."""
+    """`(name, parenthetical, rest)` if this paragraph names a speaker.
+
+    Two conventions are supported: `NAME: dialogue` on one line, and `NAME` alone on
+    its own line with the dialogue following.
+    """
+    if is_standalone_speaker(p.text):
+        return p.text.strip().rstrip(":").strip(), None, ""
     m = SPEAKER.match(p.text)
     if not m:
         return None
@@ -274,8 +337,20 @@ def convert(
     decisions: list[tuple[str, Paragraph]] = []
     speaker = None
     seq = 1
+    scene = "sc-1"
+    scene_titles: dict[str, str] = {}
 
     for p in paras:
+        # Checked before the speaker test, not after: a heading is set in capitals
+        # too, so the speaker rule matches it and would swallow every one.
+        heading = section_heading(p.text)
+        if heading:
+            scene = f"sc-{len(scene_titles) + 1}"
+            scene_titles[scene] = heading
+            speaker = None
+            decisions.append((f"section={heading}", p))
+            continue
+
         spoken = p.spoken_colour or bool(p.colours & keep_colours)
 
         m = attribution(p)
@@ -308,7 +383,7 @@ def convert(
         entry = {
             "id": f"L-{seq:04d}",
             "act": "act-1",
-            "scene": "sc-1",
+            "scene": scene,
             "character": f"char-{norm_name(speaker).replace(' ', '-')}",
             "text": text,
         }
@@ -332,6 +407,9 @@ def convert(
         "formatVersion": "0.1",
         "title": title,
         "defaultLang": [default_lang],
+        "scenes": [
+            {"id": sid, "title": title} for sid, title in scene_titles.items()
+        ],
         "characters": [
             {"id": cid, "name": nm.upper(), "lang": None, "channels": []}
             for cid, nm in sorted(names.items())
@@ -419,6 +497,8 @@ def main() -> None:
     print("  " + ", ".join(f"{k}: {v}" for k, v in kinds.most_common()))
     langs = Counter(tuple(l.get("lang", [args.default_lang])) for l in script["lines"])
     print("languages: " + ", ".join(f"{l[0]}: {n}" for l, n in langs.most_common()))
+    scenes = script.get("scenes", [])
+    print(f"structure: {len(scenes)} scene(s)" + (f" — {scenes[0]['title']} … {scenes[-1]['title']}" if scenes else " — none found"))
     print(f"characters: {', '.join(c['name'] for c in script['characters'])}")
     if not script["lines"]:
         sys.exit("no spoken lines found — check --colour-map and the speaker pattern")
