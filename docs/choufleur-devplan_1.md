@@ -87,6 +87,7 @@ On real recordings, full act, `small` model (`medium` acceptable for non-English
 | Lag | Median line-detection lag (audio onset → tracker update) **≤ 2.0 s**, p95 **≤ 4.0 s** |
 | Honesty | **No confident-wrong event lasting longer than one segment** (tracker at word/line confidence while > ±5 lines off), and total confidently-wrong time **< 2 %** of speech-active time |
 | Recovery | After any tracking loss, re-anchor within **≤ 30 s** of subsequent speech, or at the next landmark |
+| First fix | From a cold start mid-scene, report a position in the right region within **≤ 30 s of speech**, and never settle in the wrong region |
 | Compute | Sustained faster-than-real-time with 3–4 **concurrent** active channels |
 
 Three of these were revised after Phase 0 measured real material; the reasoning is
@@ -108,6 +109,15 @@ noticed until the next material is heard, so a brief stale window after a cut is
 physics, not a defect. What must not happen is a *sustained* confident-wrong
 stretch. Note that a position advancing at cue-block confidence is by definition
 not confidently wrong, which is what makes steady coarse tracking safe.
+
+**First fix is a criterion, not a footnote.** Rehearsal is where the tool is
+actually used, and rehearsals restart from the middle of a scene constantly — often
+with nobody touching the console. So locating the show from a standing start is an
+everyday requirement, not recovery from a rare failure. Measured on real material it
+is currently a median of about 60 s of speech, which is too slow; the threshold
+above is what would make it useful, and the leading candidate for closing the gap is
+the fragment penalty (`overlap_exp`), which costs roughly 30 % of first-fix time for
+about 1 % of positional accuracy.
 
 **Concurrent, and it means it.** Ordinary dialogue takes turns, so a corpus of
 scene work measures one active channel however many the manifest lists. The

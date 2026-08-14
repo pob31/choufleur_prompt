@@ -544,13 +544,31 @@ the failure that would matter. What costs time is the cold start: the tracker en
 each excerpt one to two minutes in, because it must accumulate enough evidence to
 outweigh the distance prior before it will believe a jump of two hundred lines.
 
-That number is less alarming than it looks, and worth being precise about. A show
-run starts at the top, where the tracker already is — that is the 2.5 s row, and it
-is the normal case. The minutes apply to **starting cold in the middle**: recovery
-after a long loss, or beginning a rehearsal at an arbitrary point. The PRD already
-answers the second with quick-jump, which sets the position directly and costs
-nothing. So the honest reading is that unaided global location works and is worth
-having as a backstop, while remaining slower than telling it where to start.
+That number is worse than it first looked, and the correction came from the
+operator: **starting mid-scene is what rehearsals are**, and it is far more common
+than a late start. A performance runs once from the top — the 2.5 s row — but the
+tool spends most of its life in rehearsals that stop and restart from the middle of
+a scene dozens of times an evening, often with nobody touching the console. Quick
+jump answers the announced restarts; the unannounced ones are the ordinary case.
+
+So time to first fix is a first-class property, not a backstop, and the PRD and the
+gate have been amended to say so. A median around 60 s of speech is too slow for
+that use.
+
+Where the time goes is not one thing. Excerpt 5 took 65 s but contained only **five
+segments** of speech in that window — a boom mic capturing almost nothing, and no
+tracker can locate a show from silence. Excerpt 2 took 109 s over **66 segments**,
+which is a real deficiency: its 25-second paragraphs against 2.7-second segments
+mean every segment is a *fragment* of its line, and the symmetric overlap term
+penalises fragments by construction.
+
+A sweep on that term is the leading candidate for closing the gap: `overlap_exp` 0
+takes the median first fix from 61 s to 43 s with no confident-wrong events and
+about 1 % less positional accuracy. It is **not** applied as a default here — one
+night of one production, scored on lines-reached rather than against ground truth,
+is not enough to move a core scoring parameter, and doing so would be the same
+overfitting rejected for the challenger threshold in finding J. It belongs in M0.4's
+sweep, against ground truth, on more than one show.
 
 Widening the search to include the initial `Scene` state cut two of the cold starts
 by more than half (excerpt 4: 220 s → 70 s; excerpt 5: 231 s → 138 s) and moved

@@ -100,6 +100,17 @@ Load-management strategies, in order of importance:
 
 ### Rehearsal / Prep Mode
 
+**This is where Choufleur spends most of its life**, and the mode its behaviour
+should be judged by. A performance runs once through from the top; a rehearsal
+starts, stops, and restarts from the middle of a scene dozens of times an evening —
+"from Sara's entrance", "again from the top of page 12", "back a bit". Quick jump
+answers the announced restarts. The unannounced ones, where nobody touches the
+console, are the ordinary case, and the system has to find its own way back.
+
+That makes **how quickly the tracker locates itself from a standing start** a
+first-class property rather than an edge case, on a par with how well it follows
+once it has. It is measured as *time to first fix* — see the devplan's gate.
+
 A browser page served by the server — usable from the server machine or any client device.
 
 - Import Word script (.docx) — inline cue shorthand parsed and stripped on import (see Script Format and Prep Workflow)
