@@ -14,17 +14,20 @@ annotations, both carrying a position on the page. Anchoring is therefore geomet
 first — a cue belongs to whatever it was written next to — and textual second: the
 words near it are matched against the script to find the line.
 
-**The colours mean something, and it is not for this tool to say what.** *Some* marks
+**There is no standard colour scheme, and this tool ships no default.** *Some* marks
 are trigger points — on a word or a phrase, or standing in for a visual cue. Some flag
-a passage that must be ridden because it is about to get loud. On this conduite a
-neutral grey lies over the cuts. The colour carries the rest of the coding: which
-system acts, a QLab go or a move on the desk. All of that is one person's scheme for
-one show, and the same person may mark the next one differently.
+a passage that must be ridden because it is about to get loud. Some warn that
+something is coming without being a hard go. Some mark cuts. Which colour carries
+which meaning is one operator's habit on one show, and the same person may mark the
+next one differently.
 
-So each cue is emitted with the colour of the mark it was anchored to, and the
-palette is printed with a count of what each colour covers. Mapping colour to meaning
-is a single decision made once in prep, by somebody who knows. Guessing it here would
-be wrong roughly as often as conventions differ.
+So the palette is surveyed and printed with what each colour covers, and the meanings
+come from `--colour-means` — as pairs, or as a path to a small JSON the show keeps,
+so the convention travels with the production instead of living in somebody's memory.
+The map is written into the output for the next run to inherit. One conduite's scheme
+is recorded below as an illustration of the shape, never as a fallback:
+
+    gold = trigger, pale yellow = warning, orange = loud, grey = cut
 
 **Pages are aligned before cues are.** Anchoring each note by its own marked words
 fails, and fails in a way worth recording: the marks are short — *"polymestor"*,
@@ -48,6 +51,7 @@ Review before a run.
 from __future__ import annotations
 
 import argparse
+import colorsys
 import json
 import re
 import sys
@@ -94,22 +98,28 @@ VISUAL = re.compile(
 
 
 def colour_name(colour) -> str:
-    """A stable, human label for a highlight colour, so it can be named on the
-    command line without anybody typing RGB triples."""
+    """A stable, human label for a mark's colour, so it can be named on the command
+    line without anybody typing RGB triples.
+
+    Saturation matters as much as hue, and getting that wrong loses distinctions the
+    operator is relying on. On the Hécube conduite gold (h=49, s=1.00) means a hard
+    trigger and pale yellow (h=56, s=0.47) means a warning of something coming — two
+    different instructions, sixteen degrees apart. Naming by hue alone called both
+    "yellow" and merged 42 marks with 41 into one meaningless heap of 83.
+    """
     if not colour or len(colour) < 3:
         return "none"
-    r, g, b = colour[:3]
-    if max(r, g, b) - min(r, g, b) < 0.08:
-        light = (r + g + b) / 3
-        return "white" if light > 0.95 else "black" if light < 0.2 else "grey"
-    h = max(r, g, b)
-    if r == h and g >= 0.75 * r:
-        return "yellow" if b < 0.6 and g > 0.7 else "orange"
-    if r == h:
-        return "red" if b < 0.5 else "pink"
-    if g == h:
-        return "green"
-    return "blue" if b > r else "purple"
+    h, s, v = colorsys.rgb_to_hsv(*colour[:3])
+    if s < 0.12:
+        return "white" if v > 0.95 else "black" if v < 0.2 else "grey"
+    deg = h * 360
+    base = (
+        "red" if deg < 15 else "orange" if deg < 40 else "gold" if deg < 52
+        else "yellow" if deg < 70 else "green" if deg < 170 else "cyan" if deg < 200
+        else "blue" if deg < 250 else "purple" if deg < 290 else "pink" if deg < 340
+        else "red"
+    )
+    return f"pale {base}" if s < 0.6 else base
 
 
 def extract(pdf: Path):
@@ -174,6 +184,12 @@ def main() -> None:
     ap.add_argument("--segments", type=Path, nargs="*", default=[],
                     help="one segments.jsonl per run; lets the recording say which "
                          "highlight colour marks cuts rather than assuming a convention")
+    ap.add_argument("--colour-means", nargs="*", default=[], metavar="NAME=MEANING",
+                    help="what THIS operator's colours mean on THIS show — there is no "
+                         "default and no standard. Either a path to a .json holding a "
+                         "colourMeans object, or pairs: gold=trigger 'pale yellow=warning' "
+                         "orange=loud grey=cut. A colour meaning 'cut' is treated as one, "
+                         "and the map is written into the output to be reused")
     ap.add_argument("--cut-colour", nargs="*",
                     help="name the colour(s) that mark cuts, e.g. --cut-colour grey. "
                          "Overrides whatever the recording suggests")
@@ -304,7 +320,28 @@ def main() -> None:
     if not args.segments:
         print("  (pass --segments to have the recording say which colour means cut)")
 
-    chosen = set(args.cut_colour or [])
+    # The convention belongs to the show, not to this tool and not to a command line
+    # somebody has to remember. Given a .json path it is read from there; given
+    # name=meaning pairs it is taken from those, and either way it is written into the
+    # output so the next run of this show inherits it.
+    means: dict[str, str] = {}
+    for spec in args.colour_means:
+        if spec.endswith(".json"):
+            f = Path(spec)
+            if f.exists():
+                loaded = json.loads(f.read_text())
+                means.update(loaded.get("colourMeans", loaded))
+            else:
+                print(f"  (no colour map at {spec} — carrying on without one)")
+            continue
+        name, _, meaning = spec.partition("=")
+        if meaning:
+            means[name.strip()] = meaning.strip()
+    unknown = [n for n in means if n not in palette]
+    if unknown:
+        print(f'  (no marks are {", ".join(unknown)} — check the names against the palette above)')
+
+    chosen = {n for n, m in means.items() if m.lower() == "cut"} | set(args.cut_colour or [])
     if not chosen and args.segments:
         chosen = {
             name for name, p in palette.items()
@@ -374,6 +411,7 @@ def main() -> None:
             "evidence": evidence[:120],
             "evidenceFrom": source,
             "markColour": mark_colour,
+            "markMeans": means.get(mark_colour or ""),
             "score": round(best, 3),
         }
         if VISUAL.search(cue["text"]):
@@ -416,7 +454,8 @@ def main() -> None:
     if args.out:
         args.out.write_text(
             json.dumps({"format": "choufleur-cues", "formatVersion": "0.1",
-                        "source": args.pdf.name, "cues": out, "cutLineIds": cut_ids},
+                        "source": args.pdf.name, "colourMeans": means,
+                        "cues": out, "cutLineIds": cut_ids},
                        ensure_ascii=False, indent=1) + "\n"
         )
         print(f"\nwrote {args.out}")
