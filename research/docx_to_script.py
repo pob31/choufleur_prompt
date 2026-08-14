@@ -82,7 +82,15 @@ def section_heading(text: str) -> str | None:
     return " ".join(t.split())
 
 
-def is_standalone_speaker(text: str) -> bool:
+# Set by importers whose source marks speakers typographically rather than by case.
+# A PDF laid out in Optima names its characters in bold Title Case — "Philippe",
+# "Vincent" — which no rule about capitals can tell from a one-word line of dialogue
+# ("Sublime.", "Ouais."). The bold does tell them apart, so when the reader can see
+# weight it is allowed to say so, and the capitals rule stands down.
+TYPOGRAPHIC_SPEAKERS = False
+
+
+def is_standalone_speaker(text: str, bold: bool = False) -> bool:
     """A paragraph that is nothing but a name, in capitals, on its own line.
 
     The other common script convention, and the one Comédie-Française scripts use:
@@ -106,7 +114,11 @@ def is_standalone_speaker(text: str) -> bool:
     # spoken by whoever came before — a chorus turning into a stray line of text.
     words = [w.strip(",;&") for w in t.split()]
     letters = [c for w in words if w.lower() not in JOINS for c in w if c.isalpha()]
-    if len(letters) < 2 or not all(c.isupper() for c in letters):
+    if len(letters) < 2:
+        return False
+    # Bold, in a source that distinguishes it, is evidence enough on its own: the
+    # name still has to be short and unpunctuated, but it need not shout.
+    if not (TYPOGRAPHIC_SPEAKERS and bold) and not all(c.isupper() for c in letters):
         return False
     # A heading, not a speaker.
     if any(c in t for c in ".!?…"):
@@ -156,11 +168,11 @@ def attribution(p: "Paragraph", known: dict[str, str] | None = None):
     exact shape of `SÉPHORA, lit les didascalies.` and only the cast list tells them
     apart.
     """
-    if is_standalone_speaker(p.text):
+    if is_standalone_speaker(p.text, p.bold):
         return p.text.strip().rstrip(":").strip(), None, ""
     if known:
         bare = strip_stage_direction(p.text)
-        if bare and is_standalone_speaker(bare):
+        if bare and is_standalone_speaker(bare, p.bold):
             # Return the cast list's spelling, not this paragraph's, so the caller's
             # lookup into `speakers` succeeds however the name was capitalised here.
             hit = known.get(norm_name(bare))
@@ -176,13 +188,18 @@ def attribution(p: "Paragraph", known: dict[str, str] | None = None):
 
 
 class Paragraph:
-    __slots__ = ("index", "text", "colours", "bold")
+    # `page` is the page this came off, where the source has pages. Operators write
+    # their cue sheets against page numbers — "Q2, p.29" — so carrying the number
+    # through to the script line is what lets a cue list be anchored without any
+    # text matching at all.
+    __slots__ = ("index", "text", "colours", "bold", "page")
 
-    def __init__(self, index: int, text: str, colours: set, bold: bool):
+    def __init__(self, index: int, text: str, colours: set, bold: bool, page: int | None = None):
         self.index = index
         self.text = text
         self.colours = colours
         self.bold = bold
+        self.page = page
 
     @property
     def spoken_colour(self) -> bool:
@@ -442,6 +459,8 @@ def convert(
             "character": f"char-{norm_name(speaker).replace(' ', '-')}",
             "text": text,
         }
+        if p.page is not None:
+            entry["page"] = p.page
         if detect:
             entry["_detected"] = detect_lang(text)
         lines.append(entry)
