@@ -51,17 +51,20 @@ fn prerequisites() -> Option<(PathBuf, PathBuf, PathBuf)> {
 /// Decodes in each character's own language and collects what comes back.
 struct Collector {
     records: Vec<SegmentRecord>,
-    lang_of: HashMap<String, LangCode>,
+    lang_of: HashMap<String, Vec<LangCode>>,
     default_lang: LangCode,
 }
 
 impl Consumer for Collector {
     fn decode_hint(&mut self, _channel: u16, character: Option<&str>) -> DecodeHint {
-        let lang = character
+        let langs = character
             .and_then(|c| self.lang_of.get(c))
             .cloned()
-            .unwrap_or_else(|| self.default_lang.clone());
-        DecodeHint { lang, prompt: None }
+            .unwrap_or_else(|| vec![self.default_lang.clone()]);
+        DecodeHint {
+            langs,
+            prompt: None,
+        }
     }
     fn on_segment(&mut self, record: &SegmentRecord) {
         self.records.push(record.clone());

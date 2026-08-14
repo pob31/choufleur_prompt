@@ -148,7 +148,7 @@ struct TrackingConsumer<'a> {
     trace: Vec<TraceRecord>,
     bias: BiasMode,
     prompt_cfg: PromptConfig,
-    lang_of: HashMap<String, LangCode>,
+    lang_of: HashMap<String, Vec<LangCode>>,
     default_lang: LangCode,
     static_prompt: String,
     timings: bool,
@@ -166,8 +166,19 @@ impl Consumer for TrackingConsumer<'_> {
             .get(position)
             .filter(|l| character.is_none_or(|c| l.character == c))
             .and_then(|l| l.langs().next().cloned());
-        let lang = expected
-            .or_else(|| character.and_then(|c| self.lang_of.get(c).cloned()))
+        // The expected line's language is the best evidence there is. Failing
+        // that, offer every language this character speaks and let the decoder's
+        // confidence choose — never just their first one, which silently
+        // mistranslates every language switch.
+        let langs = match expected {
+            Some(l) => vec![l],
+            None => character
+                .and_then(|c| self.lang_of.get(c).cloned())
+                .unwrap_or_else(|| vec![self.default_lang.clone()]),
+        };
+        let lang = langs
+            .first()
+            .cloned()
             .unwrap_or_else(|| self.default_lang.clone());
 
         let prompt = match self.bias {
@@ -178,7 +189,7 @@ impl Consumer for TrackingConsumer<'_> {
                 (!p.is_empty()).then_some(p)
             }
         };
-        DecodeHint { lang, prompt }
+        DecodeHint { langs, prompt }
     }
 
     fn on_segment(&mut self, record: &SegmentRecord) {

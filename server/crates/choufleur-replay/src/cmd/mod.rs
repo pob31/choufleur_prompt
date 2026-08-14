@@ -68,21 +68,35 @@ pub fn resolve_model(explicit: Option<&Path>, filename: &str) -> Result<PathBuf>
     )
 }
 
-/// The language each character speaks, taken from their first line.
+/// Every language each character speaks, most-used first.
 ///
-/// The script is the authority on language, never audio detection (PRD,
-/// *Language comes from the script, not detection*). A per-actor channel therefore
-/// decodes in its character's language rather than the show default, which for a
-/// bilingual production is the difference between a usable transcript and noise.
-pub fn character_languages(script: &PreparedScript) -> HashMap<String, LangCode> {
-    let mut out: HashMap<String, LangCode> = HashMap::new();
+/// The script is the authority on language, never audio detection (PRD, *Language
+/// comes from the script, not detection*). Taking only a character's *first*
+/// language was a real bug caught by real material: an actor who opens a monologue
+/// in Dutch and then quotes Hamlet in English is one channel with two languages,
+/// and forcing Dutch on the English made Whisper *translate* it — "I am thy
+/// father's spirit" came back as "Ik ben jouw vader Spirit", fluent and wrong,
+/// with no error anywhere to notice.
+pub fn character_languages(script: &PreparedScript) -> HashMap<String, Vec<LangCode>> {
+    let mut counts: HashMap<String, Vec<(LangCode, usize)>> = HashMap::new();
     for line in &script.lines {
-        if let Some(lang) = line.langs().next() {
-            out.entry(line.character.clone())
-                .or_insert_with(|| lang.clone());
+        for lang in line.langs() {
+            let entry = counts.entry(line.character.clone()).or_default();
+            match entry.iter_mut().find(|(l, _)| l == lang) {
+                Some((_, n)) => *n += 1,
+                None => entry.push((lang.clone(), 1)),
+            }
         }
     }
-    out
+    counts
+        .into_iter()
+        .map(|(ch, mut v)| {
+            // Most-used first, so a single-language caller taking `.first()` gets
+            // the character's usual language rather than an accident of ordering.
+            v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            (ch, v.into_iter().map(|(l, _)| l).collect())
+        })
+        .collect()
 }
 
 /// Every language appearing anywhere in the script, in first-seen order.

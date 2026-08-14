@@ -22,8 +22,8 @@ use crate::manifest::Corpus;
 struct Collector {
     records: Vec<SegmentRecord>,
     bias: BiasMode,
-    /// Language per character, resolved from the script.
-    lang_of: std::collections::HashMap<String, LangCode>,
+    /// Every language a character speaks, resolved from the script.
+    lang_of: std::collections::HashMap<String, Vec<LangCode>>,
     default_lang: LangCode,
     static_prompts: std::collections::HashMap<String, String>,
     progress_every: usize,
@@ -31,8 +31,16 @@ struct Collector {
 
 impl Consumer for Collector {
     fn decode_hint(&mut self, _channel: u16, character: Option<&str>) -> DecodeHint {
-        let lang = character
+        // Without a position there is no way to know *which* of a character's
+        // languages this segment is in, so offer them all and let the decoder's
+        // own confidence choose. `track --from-audio` does better: it knows where
+        // the show is and can name the language of the line it expects.
+        let langs = character
             .and_then(|c| self.lang_of.get(c))
+            .cloned()
+            .unwrap_or_else(|| vec![self.default_lang.clone()]);
+        let lang = langs
+            .first()
             .cloned()
             .unwrap_or_else(|| self.default_lang.clone());
         let prompt = match self.bias {
@@ -42,7 +50,7 @@ impl Consumer for Collector {
             // is the mode that can.
             BiasMode::Static | BiasMode::Tracker => self.static_prompts.get(lang.as_str()).cloned(),
         };
-        DecodeHint { lang, prompt }
+        DecodeHint { langs, prompt }
     }
 
     fn on_segment(&mut self, record: &SegmentRecord) {

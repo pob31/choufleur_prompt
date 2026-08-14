@@ -323,6 +323,62 @@ one `--model` flag from being measured, and it matters because the PRD recommend
 
 ---
 
+### E. First contact with real theatre audio: the recogniser is not the problem
+
+*La Reprise* (Milo Rau), rehearsal multitrack, six excerpts, ~53 minutes. Excerpt 1
+is a Johan monologue in Dutch and English, one close mic, 322 s. The script is the
+production's own *Regiefassung* — the script plus every lighting, camera and stage
+note written over it, typed by an assistant fluent in neither French nor Dutch.
+That is what a real prep document looks like, and it is the right thing to test on.
+
+Three things came out of the first run.
+
+**Recognition is better than expected.** Dutch came back fluent and often verbatim:
+*"Wat heb ik net gedaan? Ik ben het toneel opgelopen."* is the script line exactly.
+The Hamlet verse came back as near-perfect Shakespeare. Whatever eventually limits
+this system on real audio, it is not `small`'s ability to hear a stage.
+
+**A real bug, found only by real material.** `transcribe` took each character's
+*first* language and applied it to their whole channel. Johan opens in Dutch and
+then quotes Hamlet, so the English was forced to Dutch — and Whisper did not
+mis-hear it, it **translated** it: *"I am thy father's spirit"* came back as
+*"Ik ben jouw vader Spirit"*, fluent, confident, and wrong, with nothing anywhere
+to flag it. `DecodeHint` now carries a candidate *set* of languages and the most
+confident decode wins, which is what notation §8.2 asks for bilingual lines and
+what a language switch mid-channel needs. The same segment now returns *"I am thy
+Father Spirit."* The cost is a decode per extra candidate on that channel — 9.3×
+real time falls to 4.8× — which is another reason `track --from-audio` is the
+primary mode: knowing the position means knowing the language, and paying once.
+
+**The ceiling is set by the material, not the engine.** `research/script_vs_audio.py`
+asks, for every script line, whether anything resembling it appears *anywhere* in
+the transcript — the best any tracker could do. On this excerpt: **16 of 24 lines,
+67 %** (English 73 %, Dutch 62 %). The tracker reached 15 distinct lines and ended
+on the correct final line, so it is running at roughly the available ceiling.
+
+The gap is not ASR and not matching. The actor paraphrases: the script's *"Volgens
+mij het allermoeilijkste: opkomen"* was performed as *"Opkomen. Dat is eigenlijk
+het allerlastigste"*, and several passages were reworked wholesale or spoken in an
+order the script does not have. Meanwhile the Hamlet verse — memorised, fixed —
+tracked line by line without a stumble. That contrast is the finding: **verse and
+scripted dialogue track well; devised prose that is still being found in rehearsal
+does not, and cannot.**
+
+Consequences worth stating before the gate is run:
+
+- A ≥ 90 % coverage gate is unreachable on rehearsal material where the text is
+  still moving, however good the engine is. The gate needs a *performance* run, or
+  it needs to be scored against the ceiling rather than against the script.
+- `script_vs_audio.py` should be run on every corpus before any tuning. Tuning a
+  matcher against lines that were never spoken is how thresholds get quietly
+  wrecked.
+- This is precisely the case the PRD's Family A divergence warnings exist for. The
+  tracker holding position and reporting uncertainty through a paraphrased passage
+  is correct behaviour, not failure — and on this excerpt it produced no
+  confident-wrong events at all.
+
+---
+
 ## Open questions for the real corpus
 
 - Is `member_coverage_min: 0.5` too strict for far-field zone channels, where ASR

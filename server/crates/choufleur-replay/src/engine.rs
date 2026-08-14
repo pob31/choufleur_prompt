@@ -39,9 +39,29 @@ use crate::wav_stream::WavBlockReader;
 pub const BLOCK_SECONDS: f64 = 0.25;
 
 /// What to force the decoder to, and what to bias it with, for one segment.
+///
+/// `langs` is a *candidate set*, not a single choice. Notation §8.2 requires a
+/// bilingual line to be matched against both its languages, keeping the better
+/// score, and real material forces the issue harder than that: an actor who opens
+/// a monologue in Dutch and quotes Hamlet in English is one channel with two
+/// languages, and forcing the wrong one does not merely mis-hear — Whisper
+/// *translates*, returning fluent Dutch for English speech with no error anywhere.
+///
+/// When more than one candidate is offered the segment is decoded against each and
+/// the most confident decode wins. That costs a decode per extra language, so it
+/// is paid only where the script actually says two languages are possible.
 pub struct DecodeHint {
-    pub lang: LangCode,
+    pub langs: Vec<LangCode>,
     pub prompt: Option<String>,
+}
+
+impl DecodeHint {
+    pub fn one(lang: LangCode, prompt: Option<String>) -> Self {
+        DecodeHint {
+            langs: vec![lang],
+            prompt,
+        }
+    }
 }
 
 /// Supplies decode hints and receives results.
@@ -208,11 +228,31 @@ impl Engine {
                 .expect("segment came from a source we opened");
 
             let hint = consumer.decode_hint(channel, src.character.as_deref());
-            let lang = src.lang.clone().unwrap_or(hint.lang);
+            // A language pinned on the channel in the manifest overrides the script:
+            // the escape hatch for a mic known to carry one language whatever the
+            // script says.
+            let candidates: Vec<LangCode> = match &src.lang {
+                Some(l) => vec![l.clone()],
+                None if hint.langs.is_empty() => vec![LangCode::new("en")],
+                None => hint.langs.clone(),
+            };
 
-            let decoded = self
-                .whisper
-                .transcribe(&seg.samples, &lang, hint.prompt.as_deref())?;
+            let mut best: Option<(LangCode, choufleur_asr::DecodeOutput)> = None;
+            for cand in &candidates {
+                let out = self
+                    .whisper
+                    .transcribe(&seg.samples, cand, hint.prompt.as_deref())?;
+                // Whisper's own confidence is the arbiter. A decode forced to the
+                // wrong language scores markedly worse — exactly the signal needed,
+                // and free to read.
+                let better = best
+                    .as_ref()
+                    .is_none_or(|(_, b)| out.avg_logprob > b.avg_logprob);
+                if better {
+                    best = Some((cand.clone(), out));
+                }
+            }
+            let (lang, decoded) = best.expect("at least one candidate language");
             let verdict = self.filter.check(&decoded, seg.duration());
 
             let record = SegmentRecord {
