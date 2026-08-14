@@ -92,6 +92,7 @@ pub enum Update {
         line_index: usize,
         text: String,
         character: Option<String>,
+        cut: bool,
     },
     /// What the recogniser actually heard, and what became of it.
     ///

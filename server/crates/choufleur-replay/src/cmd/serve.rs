@@ -303,6 +303,7 @@ fn write_line_edit(
     index: usize,
     text: &str,
     character: Option<&str>,
+    cut: bool,
 ) -> Result<()> {
     let raw = std::fs::read_to_string(path)?;
     let mut doc: serde_json::Value = serde_json::from_str(&raw)?;
@@ -315,6 +316,9 @@ fn write_line_edit(
     if let Some(c) = character {
         line["character"] = serde_json::Value::String(c.to_string());
     }
+    // Written even when false, so restoring a line is as durable as cutting one. A
+    // cut that cannot be undone is a deletion wearing a different name.
+    line["cut"] = serde_json::Value::Bool(cut);
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
     std::fs::rename(&tmp, path)?;
@@ -333,7 +337,18 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
         use axum::routing::get;
 
         let app = axum::Router::new()
-            .route("/", get(|| async { Html(include_str!("../../assets/live.html")) }))
+            // No-store, because this page is being iterated on during a live run and
+            // a browser holding yesterday's copy looks exactly like a change that did
+            // not work — which cost one round of "it still overlaps".
+            .route(
+                "/",
+                get(|| async {
+                    (
+                        [(axum::http::header::CACHE_CONTROL, "no-store, must-revalidate")],
+                        Html(include_str!("../../assets/live.html")),
+                    )
+                }),
+            )
             .route(
                 "/script.json",
                 get(|State(s): State<Arc<LiveState>>| async move {
@@ -390,18 +405,27 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                 .and_then(|c| c.as_str())
                                                 .map(|c| c.trim().to_string())
                                                 .filter(|c| !c.is_empty());
-                                            {
+                                            // Absent means "leave it as it was", so
+                                            // an edit that only fixes a typo does not
+                                            // silently un-cut a struck line.
+                                            let cut = v.get("cut").and_then(|c| c.as_bool());
+                                            let cut = {
                                                 let mut lines = inbound.lines.lock().unwrap();
                                                 lines[i].text = text.clone();
                                                 if let Some(c) = &character {
                                                     lines[i].character = c.clone();
                                                 }
-                                            }
+                                                if let Some(c) = cut {
+                                                    lines[i].cut = c;
+                                                }
+                                                lines[i].cut
+                                            };
                                             if let Err(e) = write_line_edit(
                                                 &inbound.script_path,
                                                 i,
                                                 &text,
                                                 character.as_deref(),
+                                                cut,
                                             ) {
                                                 eprintln!("could not save the edit: {e:#}");
                                             } else {
@@ -411,6 +435,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                 line_index: i,
                                                 text,
                                                 character,
+                                                cut,
                                             });
                                         }
                                         _ => {}

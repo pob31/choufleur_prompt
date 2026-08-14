@@ -29,7 +29,19 @@
 
   /* The window the eye lives in. The centre band is where the current line sits —
      the operator's own rule: the last spoken line in the middle of what is visible. */
-  #stage { position: relative; height: 100%; }
+  /* A column, so the transcript takes its own space instead of lying on top of the
+     script. Overlapping cost twice: the words underneath were unreadable, and a panel
+     with pointer-events disabled cannot be selected, so nothing in it could be
+     copied out. */
+  #stage { display: flex; flex-direction: column; height: 100%; position: relative; }
+  /* `overflow: hidden` and a stacking context, both load-bearing. #scroller is
+     absolutely positioned, so it paints in the positioned layer and drew straight over
+     the transcript below it however the boxes were sized — document order does not
+     decide painting when one sibling is positioned and the other is not. Clipping the
+     box and giving the panels a higher z-index settles it from both directions. */
+  #view { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; z-index: 0; }
+  /* Centred on the script box, not on the window: the reading line has to sit in the
+     middle of what is actually visible. */
   #band {
     position: absolute; left: 0; right: 0; top: 50%; height: 2.6em;
     transform: translateY(-50%);
@@ -97,17 +109,33 @@
   /* What the recogniser heard. Small, out of the way, and readable when you look —
      on a bad channel the transcript is visibly nonsense, which is the fastest way to
      tell "the tracker is broken" apart from "the microphone is". */
+  /* A fixed band, not a panel that grows: if it sizes to its contents it is a
+     sliver at the start of a run and a different layout ten minutes later, and the
+     script box resizes under the reader every time a line arrives. */
   #heard {
-    position: absolute; z-index: 2; left: 0; right: 0; bottom: 2.4em;
-    padding: .5em 1.1em; pointer-events: none;
-    font: 400 .66em/1.5 ui-sans-serif, system-ui, sans-serif;
-    background: linear-gradient(to top, rgba(14,15,18,.96), rgba(14,15,18,0));
+    position: relative; z-index: 4;
+    flex: 0 0 9em; height: 9em; overflow-y: auto;
+    padding: .5em 1.1em .6em; background: #000;
+    border-top: 1px solid var(--edge);
+    font: 400 .66em/1.5 ui-mono, ui-monospace, SFMono-Regular, Menlo, monospace;
+    user-select: text; -webkit-user-select: text; cursor: text;
+  }
+  #heard .head {
+    display: flex; align-items: center; gap: .8em; position: sticky; top: -.5em;
+    background: #000; padding: .1em 0 .3em; color: var(--dimmer);
+    letter-spacing: .09em; text-transform: uppercase; font-size: .84em;
+  }
+  #heard .head button {
+    margin-left: auto; border: 1px solid var(--dimmer); background: none;
+    color: var(--dim); border-radius: 999px; padding: .15em .7em; font: inherit;
+    cursor: pointer; text-transform: none; letter-spacing: .03em;
   }
   #heard p { margin: .12em 0; color: var(--dimmer); transition: color .3s; }
   #heard p.hit { color: var(--speaker); }
   #heard p.tail { color: var(--dim); }
   #heard p.interim { font-style: italic; opacity: .7; }
   body[data-heard="off"] #heard { display: none; }
+  #heard p:last-child { margin-bottom: .4em; }
 
   #lost {
     position: absolute; z-index: 3; left: 0; right: 0; top: 0;
@@ -120,7 +148,7 @@
   body[data-conf="lost"] #lost { transform: none; }
 
   footer {
-    position: absolute; z-index: 3; left: 0; right: 0; bottom: 0;
+    position: relative; flex: 0 0 auto; z-index: 5;
     display: flex; gap: 1.4em; align-items: center;
     padding: .55em 1.1em; background: rgba(14,15,18,.92);
     border-top: 1px solid var(--edge);
@@ -155,6 +183,14 @@
     margin-bottom: .3em; border-color: var(--edge);
   }
   .editor input:focus { outline: none; border-color: var(--now); }
+  .editor .row { display: flex; gap: .5em; align-items: center; margin-top: .35em; }
+  .editor button {
+    border: 1px solid var(--dimmer); background: none; color: var(--dim);
+    border-radius: 999px; padding: .25em .8em; cursor: pointer;
+    font: 400 .62em/1.4 ui-sans-serif, system-ui, sans-serif; letter-spacing: .05em;
+  }
+  .editor button.struck { border-color: var(--lost); color: var(--lost); }
+  .editor input.gone { text-decoration: line-through; opacity: .45; }
   .editor .keys {
     font: 400 .6em/1.5 ui-sans-serif, system-ui, sans-serif;
     color: var(--dimmer); margin-top: .25em; letter-spacing: .05em;
@@ -185,11 +221,13 @@
 </head>
 <body data-conf="scene" data-running="true">
 <div id="stage">
-  <div id="band"></div>
   <div id="lost">position lost — waiting to recognise the text</div>
-  <div id="hint">tap the line being spoken to put it back on track</div>
-  <div id="scroller"><div id="lines"></div></div>
-  <div id="heard"></div>
+  <div id="view">
+    <div id="band"></div>
+    <div id="hint">tap the line being spoken to put it back on track</div>
+    <div id="scroller"><div id="lines"></div></div>
+  </div>
+  <div id="heard"><div class="head">heard<button id="copy">copy</button></div><div id="heardlog"></div></div>
   <div id="editing">editing — click a line to correct it</div>
   <footer>
     <span id="dot"></span>
@@ -327,10 +365,26 @@
     who.value = wasWho.replace(/^char-/, '').replace(/-/g, ' ');
     const txt = document.createElement('input');
     txt.value = wasText;
+    // Cut, not delete. The line stays in the script and stays on the page, struck
+    // through, because a cut is a decision about tonight and not about the play — and
+    // one that gets reversed often enough that losing the text would be worse than
+    // showing text nobody says.
+    let cut = !!lines[i].cut;
+    const strike = document.createElement('button');
+    const paint = () => {
+      strike.textContent = cut ? 'cut — click to restore' : 'cut this line';
+      strike.classList.toggle('struck', cut);
+      txt.classList.toggle('gone', cut);
+    };
+    strike.onclick = (e) => { e.preventDefault(); cut = !cut; paint(); txt.focus(); };
+    paint();
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.appendChild(strike);
     const keys = document.createElement('div');
     keys.className = 'keys';
     keys.textContent = 'enter to save · esc to cancel · tab between fields';
-    box.append(who, txt, keys);
+    box.append(who, txt, row, keys);
     el.replaceWith(box);
 
     const done = (commit) => {
@@ -341,12 +395,13 @@
         const character = newWho
           ? 'char-' + newWho.toLowerCase().replace(/\s+/g, '-')
           : wasWho;
-        if (newText !== wasText || character !== wasWho) {
+        if (newText !== wasText || character !== wasWho || cut !== !!lines[i].cut) {
           ws.send(JSON.stringify({
-            type: 'edit_line', lineIndex: i, text: newText, character,
+            type: 'edit_line', lineIndex: i, text: newText, character, cut,
           }));
           lines[i].text = newText;
           lines[i].character = character;
+          lines[i].cut = cut;
         }
       }
       box.replaceWith(el);
@@ -369,6 +424,7 @@
   function render(i) {
     const el = els[i], l = lines[i];
     if (!el) return;
+    el.classList.toggle('cut', !!l.cut);
     el.textContent = '';
     const who = document.createElement('span');
     who.className = 'who';
@@ -392,20 +448,52 @@
 
   // A short rolling window of what the recogniser produced. Long enough to see a
   // pattern, short enough not to become something to read instead of the script.
-  const $heard = document.getElementById('heard');
+  const $heard = document.getElementById('heardlog');
+  const heardBox = document.getElementById('heard');
   const heardLog = [];
+  // Follow the tail by default, and keep following unless the reader deliberately
+  // scrolls back. Measuring the distance at append time instead was wrong in the way
+  // that matters: once the backlog grew past the threshold once, the panel stopped
+  // following and never resumed, so a run left alone quietly froze near the top.
+  //
+  // The flag is recomputed on every scroll, including the programmatic one, so
+  // scrolling back to the bottom re-arms it without a separate control.
+  let heardStuck = true;
+  heardBox.addEventListener('scroll', () => {
+    heardStuck =
+      heardBox.scrollHeight - heardBox.scrollTop - heardBox.clientHeight < 24;
+  }, { passive: true });
   function heard(m) {
     if (m.interim) return;               // partials churn; show settled text only
     heardLog.push(m);
-    while (heardLog.length > 4) heardLog.shift();
+    // A longer tail now that it has its own space and can be scrolled and copied.
+    while (heardLog.length > 60) heardLog.shift();
     $heard.innerHTML = '';
     heardLog.forEach((h, i) => {
       const p = document.createElement('p');
       p.className = (h.matched ? 'hit ' : '') + (i === heardLog.length - 1 ? 'tail' : '');
-      p.textContent = (h.matched ? '\u2713 ' : '\u00b7 ') + h.text;
+      const t = Math.round(h.tAudio);
+      const clock = Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
+      p.textContent = clock + (h.matched ? '  \u2713  ' : '  \u00b7  ') + h.text;
       $heard.appendChild(p);
     });
+    if (heardStuck) heardBox.scrollTop = heardBox.scrollHeight;
   }
+  document.getElementById('copy').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const text = heardLog
+      .map((h) => {
+        const t = Math.round(h.tAudio);
+        return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0') +
+          (h.matched ? '\tmatched\t' : '\t\t') + h.text;
+      })
+      .join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      const b = e.target; const was = b.textContent;
+      b.textContent = 'copied'; setTimeout(() => { b.textContent = was; }, 1200);
+    } catch { /* selection still works; the button is the convenience */ }
+  });
   document.getElementById('ear').addEventListener('click', () => {
     document.body.dataset.heard = document.body.dataset.heard === 'off' ? 'on' : 'off';
   });
@@ -423,6 +511,7 @@
       } else if (m.type === 'line_edited') {
         lines[m.lineIndex].text = m.text;
         if (m.character) lines[m.lineIndex].character = m.character;
+        lines[m.lineIndex].cut = m.cut;
         render(m.lineIndex);
       } else if (m.type === 'heard') {
         heard(m);
