@@ -786,6 +786,77 @@ in M0.4, not a threshold to flip on a proxy metric.
 
 ---
 
+### M. A whole show on one mixed feed, and a failure that no threshold can fix
+
+*Hécube, pas Hécube* (Tiago Rodrigues, Comédie-Française), two full performances a
+night apart, after months of touring. One mono mixed feed each — no multitrack, no
+speaker identity, the case finding C called "reasonable for a monolingual production"
+on reasoning alone. Script imported from a rehearsal document: 984 lines, 16 scenes.
+
+|                            | 16 Nov | 17 Nov |
+| -------------------------- | ------ | ------ |
+| audio                      | 7521 s | 7449 s |
+| transcription              | 8.37× real time | 8.07× |
+| distinct lines reached     | 594/996 (60 %) | 578/996 (58 %) |
+| median \|script % − show %\| | 4.1 pts | 4.8 pts |
+| lost / re-anchor           | 29 / 20 | 22 / 29 |
+
+The second column is the point. Position in the script and position in the show agree
+to within about four percentage points, on a two-hour recording, from a single feed,
+starting at line 0 with no hint. Both nights, independently. That is the mixed-feed
+half of finding C, measured rather than assumed.
+
+**The failure worth studying.** At 350 s the actor says *"…de te regarder en face,
+Polymestor, dans la détresse où je suis à présent."* That is L-0046. The tracker sat
+at L-0192 — the right neighbourhood — but L-0046 is 146 lines *behind* it and the
+search is forward-only, so the line being spoken was invisible. What it could see
+ahead was L-0354, *the same Euripides speech*, which the company performs in scene 4
+after reading it in scene 2. It jumped 162 lines and scored 0.92 — word confidence —
+on a match that was genuinely correct, just not the current copy.
+
+    L-0045  « Ô mon très cher ami Priam !… »        =  L-0347
+    L-0046  « La honte m’empêche de te regarder… »  =  L-0354  =  L-0360
+
+Twelve such families, 32 lines. No threshold helps: the second copy is a *good* match.
+And this is not a quirk of one production — it is what a play about rehearsing a play
+means, and the same shape appears wherever a text is quoted, replayed or reprised.
+
+Two things follow. It recovered unaided in 20 s, re-anchoring backward across 300
+lines when the company broke off to argue about the text — the recovery path working
+exactly as designed. And the fix belongs in prep, not in the matcher: `prep_report.py`
+now finds distant twins and marks both copies, so a matcher can demand more of a line
+that occurs twice than of one that occurs once. Wiring the tracker to *use* that
+annotation is still to do, and is the first thing to try on this corpus.
+
+### N. The cues are already written down
+
+The devplan assumes an operator types their cues in. They usually should not have to.
+A sound operator who has run a show owns a *conduite* — the script as a PDF with cues
+in the margin and trigger words highlighted — and the real one for Hécube holds 104
+cue notes and 113 marks as live PDF annotations: numbered cues against the light plot,
+Dugan automixer states, per-actor mutes and trims, distance-compensating delay, and
+visual triggers (*"Tissus qui tombe >"*, *"Elsa enjambe >"*). `conduite_to_cues.py`
+reads it and anchors **103 of 104 cues** to script lines.
+
+Getting there taught the same lesson twice. Anchoring each note by its own highlighted
+words placed 11 %: the marks are short (*"polymestor"*, *"Ça va ?"*) and — finding M
+again — this script says the same thing in three places, so short text matches
+anywhere. Adding a forward-only rule made it worse, because one wrong early anchor
+drags the floor past most of the show and starves every later cue.
+
+What worked was aligning *pages* first. A page carries eight or ten lines of dialogue,
+far more evidence than any one highlight, and page order is show order; each page is
+located by how much of each line is printed on it, and only then is a cue placed among
+that page's lines. 111 of 115 pages locate, and the ambiguity a mark cannot resolve,
+its page can.
+
+Note also what the conduite does **not** contain: no strikeouts, and all eight of its
+"cut" notes mean *cut the music*. The performed cuts exist only on the operator's paper
+copy, which makes the audio-derived cut proposals the only machine-readable source for
+them.
+
+---
+
 ## Open questions for the real corpus
 
 - Is `member_coverage_min: 0.5` too strict for far-field zone channels, where ASR

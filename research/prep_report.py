@@ -12,12 +12,24 @@ the answers, and this asks it three questions:
   cuts        which lines does the audio never contain? Probably cut.
   languages   which lines were tagged in a language nobody spoke them in?
   landmarks   which lines are distinctive enough to relocate the show from?
+  repeats     which lines appear *twice* in the script, far apart?
 
 The third matters more than it looks. Re-anchoring after a loss depends on
 landmarks, and a script imported from a document has none at all — which is why
 locating a show unaided currently takes a minute or more. A handful of good ones,
 proposed here and confirmed by a human, does that job better than any amount of
 matcher tuning.
+
+The fourth was learned the hard way. On *Hécube, pas Hécube* the tracker jumped 162
+lines forward at 0.92 — word confidence — and was wrong. It had heard L0046 and the
+tracker searches forward only, so the line being spoken was invisible to it; what it
+could see was L0354, the *same Euripides speech*, which that play performs in scene 4
+after reading it in scene 2. The match was correct. The copy was not.
+
+No threshold fixes that, because the second copy is a genuinely good match — it is
+simply not the current one. What fixes it is knowing the pair exists. Distant twins
+are found here and marked on both lines, so a matcher can demand more of them than a
+line that occurs once.
 
     python prep_report.py script.json run1.jsonl [run2.jsonl ...] -o script.prepped.json
 
@@ -88,6 +100,8 @@ def main() -> None:
     ap.add_argument("--heard", type=float, default=0.35, help="score at which a line counts as heard")
     ap.add_argument("--landmark", type=float, default=0.75, help="score a landmark candidate must reach")
     ap.add_argument("--span", type=int, default=3)
+    ap.add_argument("--repeat", type=float, default=0.60, help="overlap at which two lines count as the same passage")
+    ap.add_argument("--repeat-gap", type=int, default=20, help="how far apart twins must be before they are worth flagging")
     args = ap.parse_args()
 
     script = json.loads(args.script.read_text())
@@ -144,6 +158,22 @@ def main() -> None:
             if rival < 0.45:
                 marks.append((i, line, min(scores), rival))
 
+    # Distant twins: the same words in two places, far enough apart that landing on
+    # the wrong one is a real loss rather than an off-by-one. Neighbouring repeats
+    # (a chorus, a stutter, a line quoted back) are left alone — they are how people
+    # talk, they cost a line or two, and flagging them would bury the dangerous ones.
+    line_tokens = [set(tokens(l["text"])) for l in lines]
+    twins: dict[int, set[int]] = {}
+    for i in range(len(lines)):
+        if len(line_tokens[i]) < 6:
+            continue
+        for j in range(i + args.repeat_gap, len(lines)):
+            if len(line_tokens[j]) < 6:
+                continue
+            if dice(line_tokens[i], line_tokens[j]) >= args.repeat:
+                twins.setdefault(i, set()).add(j)
+                twins.setdefault(j, set()).add(i)
+
     print(f"{len(lines)} lines, {n_runs} run(s)\n")
 
     print(f"PROBABLY CUT — no run contains them ({len(cuts)})")
@@ -160,6 +190,31 @@ def main() -> None:
     for i, l, sc, rival in sorted(marks, key=lambda m: -m[2])[:20]:
         print(f'    {l["id"]}  heard {sc:.2f}, nearest other line {rival:.2f}   {l["text"][:52]}')
 
+    # Connected components, not per-line neighbour sets: a passage said five times
+    # is one family to review, not five overlapping pairs to read through. Closure is
+    # deliberate — if A matches B and B matches C, all three are worth seeing together
+    # even when A and C fall just under the threshold.
+    groups, placed = [], set()
+    for start in sorted(twins):
+        if start in placed:
+            continue
+        comp, stack = set(), [start]
+        while stack:
+            x = stack.pop()
+            if x in comp:
+                continue
+            comp.add(x)
+            placed.add(x)
+            stack.extend(twins.get(x, ()))
+        groups.append(sorted(comp))
+    print(f"\nREPEATED PASSAGES — the same words in two distant places ({len(groups)} group(s), "
+          f"{len(twins)} line(s))")
+    for g in sorted(groups, key=lambda g: (-len(g), -(g[-1] - g[0])))[:15]:
+        print(f'    {" = ".join(lines[i]["id"] for i in g)}   (spanning {g[-1] - g[0]} lines)')
+        print(f'        {lines[g[0]]["text"][:74]}')
+    if len(groups) > 15:
+        print(f"    ... and {len(groups) - 15} more")
+
     if not args.out:
         print("\n(pass -o to write a script with these applied)")
         return
@@ -172,6 +227,10 @@ def main() -> None:
         lines[i]["lang"] = [now]
     for i, _, _, _ in marks:
         lines[i]["landmark"] = 3
+    for i, js in twins.items():
+        # Both copies carry the annotation: whichever one the tracker is looking at,
+        # it needs to know there is another that would match just as well.
+        lines[i]["repeats"] = sorted(lines[j]["id"] for j in js)
     args.out.write_text(json.dumps(script, ensure_ascii=False, indent=1) + "\n")
     print(f"\nwrote {args.out}")
     print("Review it before a run. These are proposals from one recording, not facts.")

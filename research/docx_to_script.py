@@ -60,6 +60,11 @@ SECTION = re.compile(
 )
 
 
+# Several actors can speak at once, and the word joining their names is written in
+# lower case: "ÉLISSA et ÉRIC", "ÉLISSA, ÉRIC, SÉPHORA et GAËL".
+JOINS = {"et", "and", "&", "en", "y", "e"}
+
+
 def section_heading(text: str) -> str | None:
     """The heading's label if this paragraph starts a new act, scene or part."""
     t = text.strip()
@@ -95,7 +100,12 @@ def is_standalone_speaker(text: str) -> bool:
     t = text.strip().rstrip(":").strip()
     if not t or len(t) > 40:
         return False
-    letters = [c for c in t if c.isalpha()]
+    # Several actors can speak at once, and the join is written in lower case:
+    # "ÉLISSA et ÉRIC", "ÉLISSA, ÉRIC, SÉPHORA et GAËL". Testing the whole line for
+    # capitals fails those, and the attribution then imports as a line of dialogue
+    # spoken by whoever came before — a chorus turning into a stray line of text.
+    words = [w.strip(",;&") for w in t.split()]
+    letters = [c for w in words if w.lower() not in JOINS for c in w if c.isalpha()]
     if len(letters) < 2 or not all(c.isupper() for c in letters):
         return False
     # A heading, not a speaker.
@@ -106,14 +116,56 @@ def is_standalone_speaker(text: str) -> bool:
     return True
 
 
-def attribution(p: "Paragraph"):
+def strip_stage_direction(text: str) -> str:
+    """A speaker line with a stage direction attached to it, minus the direction.
+
+    Scripts hang directions off the attribution itself, and set them in ordinary case
+    while the name stays in capitals:
+
+        GAËL (en même temps)
+        SÉPHORA, lit les didascalies.
+        LE CHŒUR, Séphora, Éric, Gaël et Élissa parlent presque en même temps
+
+    All three name a speaker, but the lowercase tail fails the capitals test, so each
+    imports as a line of dialogue that nobody ever says. They are conspicuous
+    afterwards: two full nights of Hécube proposed every one of them as a cut, since
+    a line never heard is either cut or was never a line.
+
+    A tail is a direction rather than a chorus when it holds a word that is neither
+    capitalised nor a join. `ÉLISSA, ÉRIC et GAËL` keeps all three names;
+    `LE CHŒUR, … parlent presque en même temps` keeps only `LE CHŒUR`.
+    """
+    t = re.sub(r"\([^)]*\)", " ", text)
+    head, sep, tail = t.partition(",")
+    if sep.strip() or sep:
+        words = [w.strip(".;:&!?…").strip() for w in tail.replace(",", " ").split()]
+        if any(w and w[0].islower() and w.lower() not in JOINS for w in words):
+            t = head
+    return " ".join(t.split()).strip(" ,;")
+
+
+def attribution(p: "Paragraph", known: dict[str, str] | None = None):
     """`(name, parenthetical, rest)` if this paragraph names a speaker.
 
     Two conventions are supported: `NAME: dialogue` on one line, and `NAME` alone on
     its own line with the dialogue following.
+
+    `known` enables the relaxed reading above. It is deliberately gated on names the
+    strict pass already confirmed, because stripping a lowercase tail from anything
+    that looks capitalised would swallow real dialogue — `OUI, je suis là.` has the
+    exact shape of `SÉPHORA, lit les didascalies.` and only the cast list tells them
+    apart.
     """
     if is_standalone_speaker(p.text):
         return p.text.strip().rstrip(":").strip(), None, ""
+    if known:
+        bare = strip_stage_direction(p.text)
+        if bare and is_standalone_speaker(bare):
+            # Return the cast list's spelling, not this paragraph's, so the caller's
+            # lookup into `speakers` succeeds however the name was capitalised here.
+            hit = known.get(norm_name(bare))
+            if hit:
+                return hit, None, ""
     m = SPEAKER.match(p.text)
     if not m:
         return None
@@ -335,6 +387,9 @@ def convert(
     """
     lines: list[dict] = []
     decisions: list[tuple[str, Paragraph]] = []
+    # The cast the strict pass found, by normalised name: the gate on reading
+    # `SÉPHORA, lit les didascalies.` as an attribution rather than as dialogue.
+    known = {norm_name(n): n for n in speakers}
     speaker = None
     seq = 1
     scene = "sc-1"
@@ -353,7 +408,7 @@ def convert(
 
         spoken = p.spoken_colour or bool(p.colours & keep_colours)
 
-        m = attribution(p)
+        m = attribution(p, known)
         if m and m[0] in speakers:
             speaker = speakers[m[0]]
             rest = m[2].strip()
