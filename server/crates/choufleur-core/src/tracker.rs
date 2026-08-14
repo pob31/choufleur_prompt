@@ -123,6 +123,23 @@ pub struct TrackerConfig {
     pub word_threshold: f64,
     /// **[sweep]** How far the best candidate must beat the runner-up.
     pub margin: f64,
+    /// Ambiguity margin required while **lost**.
+    ///
+    /// Reasoning said this should be lower than `margin`: a lost tracker searches the
+    /// whole script, which is exactly the condition that manufactures ties, and it
+    /// then refuses every one of them — so being somewhere plausible ought to beat
+    /// being nowhere.
+    ///
+    /// Measured, it is not true. At 0.0 on Hécube: night 16 unchanged (27 losses,
+    /// 758 s → 752 s lost in total), but night 17 went from 34 losses totalling
+    /// 1205 s to 22 losses totalling **1398 s** — fewer relocations, each of them
+    /// committing to a bad guess and sitting on it, worst case 160 s → 570 s. Fewer
+    /// losses is not the same as less lost time, and the second is what the operator
+    /// experiences.
+    ///
+    /// Left equal to `margin`, and left as a knob so the next attempt starts from a
+    /// measurement rather than from this paragraph.
+    pub lost_margin: f64,
     /// Whether two lines carrying identical text should silence each other.
     ///
     /// `false` — the default — means they do not: see `is_rival`. Left switchable
@@ -259,6 +276,7 @@ impl Default for TrackerConfig {
             accept_threshold: 0.62,
             word_threshold: 0.88,
             margin: 0.06,
+            lost_margin: 0.06,
             equivalent_text_competes: false,
             char_mismatch_penalty: 0.35,
             zone_factor: 1.0,
@@ -449,7 +467,21 @@ impl<'a> Tracker<'a> {
             }
             return events;
         }
-        if best.score - runner_up < self.cfg.margin {
+        // The margin rule protects a position we already trust from being stolen by a
+        // coincidence. When there is no position to protect it does the opposite: a
+        // lost tracker searches the whole script, which is precisely the condition
+        // that manufactures ties, and it then refuses every one of them. Reported
+        // from a live run — "it's really struggling to get back on track by itself".
+        //
+        // So while lost, being somewhere plausible beats being nowhere. The result is
+        // reported at Block, never Line, so the screen shows an uncertain position as
+        // uncertain and the operator can overrule it with one tap.
+        let margin = if matches!(self.confidence, Confidence::Lost) {
+            self.cfg.lost_margin
+        } else {
+            self.cfg.margin
+        };
+        if best.score - runner_up < margin {
             // Two places in the script fit equally well. Saying nothing is the
             // whole point of the margin rule — see "Yes." twelve times over.
             events.push(TrackerEvent::Rejected {

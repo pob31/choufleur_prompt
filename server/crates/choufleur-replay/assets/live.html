@@ -94,6 +94,21 @@
   }
   body[data-conf="lost"] #hint { opacity: 1; }
 
+  /* What the recogniser heard. Small, out of the way, and readable when you look —
+     on a bad channel the transcript is visibly nonsense, which is the fastest way to
+     tell "the tracker is broken" apart from "the microphone is". */
+  #heard {
+    position: absolute; z-index: 2; left: 0; right: 0; bottom: 2.4em;
+    padding: .5em 1.1em; pointer-events: none;
+    font: 400 .66em/1.5 ui-sans-serif, system-ui, sans-serif;
+    background: linear-gradient(to top, rgba(14,15,18,.96), rgba(14,15,18,0));
+  }
+  #heard p { margin: .12em 0; color: var(--dimmer); transition: color .3s; }
+  #heard p.hit { color: var(--speaker); }
+  #heard p.tail { color: var(--dim); }
+  #heard p.interim { font-style: italic; opacity: .7; }
+  body[data-heard="off"] #heard { display: none; }
+
   #lost {
     position: absolute; z-index: 3; left: 0; right: 0; top: 0;
     padding: .6em 1em; text-align: center;
@@ -119,6 +134,51 @@
     font: inherit; cursor: pointer;
   }
   #follow[hidden] { display: none; }
+  /* Edit mode. Deliberately a mode rather than always-on: a click means "we are
+     here", which is the control that matters during a run, and a stray click that
+     silently rewrote the script would be much worse than one that moved the position. */
+  body[data-edit="on"] .line { cursor: text; }
+  body[data-edit="on"] .line.now { outline: none; }
+  /* Two fields, because a line is two things. Editing them as one blob meant the
+     speaker chip was swallowed into the text and had to be retyped — and an
+     attribution wrongly imported as dialogue, which is the commonest importer
+     mistake, is precisely a case where the speaker is the part that needs fixing. */
+  .editor { display: block; margin: 0 0 .85em 0; max-width: 46em; }
+  .editor input {
+    display: block; width: 100%; background: #16181d; color: var(--fg);
+    border: 1px solid var(--dimmer); border-radius: 4px; padding: .35em .5em;
+    font: inherit;
+  }
+  .editor input.who-field {
+    font: 600 .68em/1.4 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .09em; text-transform: uppercase; color: var(--speaker);
+    margin-bottom: .3em; border-color: var(--edge);
+  }
+  .editor input:focus { outline: none; border-color: var(--now); }
+  .editor .keys {
+    font: 400 .6em/1.5 ui-sans-serif, system-ui, sans-serif;
+    color: var(--dimmer); margin-top: .25em; letter-spacing: .05em;
+  }
+  body[data-edit="on"] #editing { opacity: 1; }
+  #editing {
+    position: absolute; z-index: 3; left: 50%; top: .6em; transform: translateX(-50%);
+    padding: .3em .9em; border-radius: 999px; background: var(--now); color: #1a0d0b;
+    font: 600 .64em/1.4 ui-sans-serif, system-ui, sans-serif; letter-spacing: .05em;
+    text-transform: uppercase; opacity: 0; transition: opacity .2s; pointer-events: none;
+  }
+  #edit.on { border-color: var(--now); color: var(--now); }
+
+  #edit {
+    margin-left: auto; border: 1px solid var(--dimmer); background: none;
+    color: var(--dim); border-radius: 999px; padding: .3em .9em; font: inherit;
+    cursor: pointer;
+  }
+  #ear {
+    margin-left: .6em; border: 1px solid var(--dimmer); background: none;
+    color: var(--dim); border-radius: 999px; padding: .3em .9em; font: inherit;
+    cursor: pointer;
+  }
+  #follow { margin-left: .6em; }
   #dot { width: .5em; height: .5em; border-radius: 50%; background: var(--dimmer); }
   body[data-running="true"] #dot { background: #5fbf7f; }
 </style>
@@ -129,11 +189,15 @@
   <div id="lost">position lost — waiting to recognise the text</div>
   <div id="hint">tap the line being spoken to put it back on track</div>
   <div id="scroller"><div id="lines"></div></div>
+  <div id="heard"></div>
+  <div id="editing">editing — click a line to correct it</div>
   <footer>
     <span id="dot"></span>
     <span id="where">—</span>
     <span id="conf">—</span>
     <span id="clock">0:00</span>
+    <button id="edit">edit</button>
+    <button id="ear">heard</button>
     <button id="follow" hidden>follow</button>
   </footer>
 </div>
@@ -188,6 +252,13 @@
 
   function show(index, conf) {
     if (index < 0 || index >= els.length) return;
+    if (!els[index] || !els[index].isConnected) {
+      // The current line is the one being edited: it is out of the document, so
+      // measuring or scrolling to it would read zeros and throw the page to the top.
+      document.body.dataset.conf = conf;
+      $conf.textContent = conf;
+      return;
+    }
     document.body.dataset.conf = conf;
     $conf.textContent = conf;
     $where.innerHTML = '<b>' + (lines[index]?.id ?? '') + '</b> of ' + lines.length;
@@ -203,7 +274,11 @@
       els[index].classList.add('now');
       current = index;
     }
-    if (!following) return;
+    // An open editor freezes the scroll. The show carries on advancing underneath —
+    // the position is still live and the footer still moves — but yanking the page
+    // out from under somebody mid-correction loses the correction, which is exactly
+    // what happened the first time this was used during a run.
+    if (!following || openEditor) return;
 
     // Ease a step, cut a relocation. Gliding across three hundred lines would both
     // look absurd and disguise the fact that something significant just happened.
@@ -230,9 +305,82 @@
   // wrong, is usually wrong by a lot — so the fastest route back is the person who
   // can see the page. The GPS does not argue with the driver.
   let ws = null;
+  let editing = false;
+  const $edit = document.getElementById('edit');
+  $edit.addEventListener('click', () => {
+    editing = !editing;
+    document.body.dataset.edit = editing ? 'on' : 'off';
+    $edit.classList.toggle('on', editing);
+  });
+
+  let openEditor = null;
+  function beginEdit(el) {
+    if (openEditor) openEditor(false);
+    const i = Number(el.dataset.i);
+    const wasWho = lines[i].character || '';
+    const wasText = lines[i].text;
+
+    const box = document.createElement('div');
+    box.className = 'editor';
+    const who = document.createElement('input');
+    who.className = 'who-field';
+    who.value = wasWho.replace(/^char-/, '').replace(/-/g, ' ');
+    const txt = document.createElement('input');
+    txt.value = wasText;
+    const keys = document.createElement('div');
+    keys.className = 'keys';
+    keys.textContent = 'enter to save · esc to cancel · tab between fields';
+    box.append(who, txt, keys);
+    el.replaceWith(box);
+
+    const done = (commit) => {
+      openEditor = null;
+      const newText = txt.value.trim();
+      const newWho = who.value.trim();
+      if (commit && newText) {
+        const character = newWho
+          ? 'char-' + newWho.toLowerCase().replace(/\s+/g, '-')
+          : wasWho;
+        if (newText !== wasText || character !== wasWho) {
+          ws.send(JSON.stringify({
+            type: 'edit_line', lineIndex: i, text: newText, character,
+          }));
+          lines[i].text = newText;
+          lines[i].character = character;
+        }
+      }
+      box.replaceWith(el);
+      render(i);
+    };
+    openEditor = done;
+    txt.onkeydown = who.onkeydown = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); done(true); }
+      if (e.key === 'Escape') { e.preventDefault(); done(false); }
+    };
+    // Committing on blur would fire when tabbing between the two fields, so the
+    // editor closes only on an explicit key or a click elsewhere.
+    box.addEventListener('focusout', (e) => {
+      if (!box.contains(e.relatedTarget)) done(true);
+    });
+    txt.focus();
+    txt.setSelectionRange(txt.value.length, txt.value.length);
+  }
+
+  function render(i) {
+    const el = els[i], l = lines[i];
+    if (!el) return;
+    el.textContent = '';
+    const who = document.createElement('span');
+    who.className = 'who';
+    who.textContent = (l.character || '').replace(/^char-/, '').replace(/-/g, ' ');
+    el.appendChild(who);
+    el.appendChild(document.createTextNode(l.text));
+  }
+
   $lines.addEventListener('click', (ev) => {
     const el = ev.target.closest('.line');
     if (!el || !ws || ws.readyState !== 1) return;
+    if (editing) { beginEdit(el); return; }
     const i = Number(el.dataset.i);
     ws.send(JSON.stringify({ type: 'position_jump', lineIndex: i }));
     el.classList.remove('placed');
@@ -240,6 +388,26 @@
     el.classList.add('placed');
     following = true;
     $follow.hidden = true;
+  });
+
+  // A short rolling window of what the recogniser produced. Long enough to see a
+  // pattern, short enough not to become something to read instead of the script.
+  const $heard = document.getElementById('heard');
+  const heardLog = [];
+  function heard(m) {
+    if (m.interim) return;               // partials churn; show settled text only
+    heardLog.push(m);
+    while (heardLog.length > 4) heardLog.shift();
+    $heard.innerHTML = '';
+    heardLog.forEach((h, i) => {
+      const p = document.createElement('p');
+      p.className = (h.matched ? 'hit ' : '') + (i === heardLog.length - 1 ? 'tail' : '');
+      p.textContent = (h.matched ? '\u2713 ' : '\u00b7 ') + h.text;
+      $heard.appendChild(p);
+    });
+  }
+  document.getElementById('ear').addEventListener('click', () => {
+    document.body.dataset.heard = document.body.dataset.heard === 'off' ? 'on' : 'off';
   });
 
   function connect() {
@@ -252,6 +420,12 @@
       } else if (m.type === 'position_update') {
         show(m.lineIndex, m.confidence);
         $clock.textContent = fmt(m.tAudio);
+      } else if (m.type === 'line_edited') {
+        lines[m.lineIndex].text = m.text;
+        if (m.character) lines[m.lineIndex].character = m.character;
+        render(m.lineIndex);
+      } else if (m.type === 'heard') {
+        heard(m);
       } else if (m.type === 'run_state') {
         document.body.dataset.running = String(m.running);
         $clock.textContent = fmt(m.tAudio);

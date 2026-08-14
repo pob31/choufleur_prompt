@@ -50,9 +50,65 @@ impl Default for PromptConfig {
     }
 }
 
-/// Per-show constant prompt: the title and the character names, which are the
-/// proper nouns Whisper is most likely to mangle.
+/// The show's own proper nouns, most-used first.
+///
+/// These are simultaneously the best landmarks a matcher could ask for and the words
+/// the recogniser is worst at, because a language model asked to transcribe a name it
+/// has no expectation of will reach for a common word that sounds like it. Measured
+/// on one performance of *Hécube, pas Hécube*, where the title character is named 80
+/// times in the script:
+///
+/// ```text
+/// Hécube    -> heures x8, cubes x7, écube x3, écoute x2
+/// Polyxène  -> problème x14, violence x5
+/// Euripide  -> épisode x8, rapide x6, l'équipe x3, frigide
+/// Agamemnon -> gamemnon, ramèneront, menton
+/// ```
+///
+/// Not one correct instance of "Hécube" in two hours. The score therefore collapses
+/// on exactly the lines that ought to be unmistakable, so these words are worth more
+/// prompt budget than anything else available.
+///
+/// Capitalised mid-sentence is the test: it finds names without needing a dictionary
+/// of the language, which matters because the corpus is French, Dutch and English.
+pub fn proper_nouns(lines: &[crate::script::PreparedLine], max: usize) -> Vec<String> {
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for line in lines {
+        let mut at_start = true;
+        for word in line.text.split_whitespace() {
+            let bare: String = word
+                .trim_matches(|c: char| !c.is_alphanumeric() && c != '\'' && c != '\u{2019}')
+                .to_string();
+            let starts_upper = bare.chars().next().is_some_and(|c| c.is_uppercase());
+            // A word that opens a sentence is capitalised for grammar, not identity.
+            if !at_start && starts_upper && bare.chars().count() > 2 {
+                *seen.entry(bare.clone()).or_default() += 1;
+            }
+            at_start = word.ends_with(['.', '!', '?', '…', ':']) || word.ends_with("»");
+        }
+    }
+    let mut v: Vec<(String, usize)> = seen.into_iter().collect();
+    // Frequency first, then alphabetical, so the prompt is stable across runs.
+    v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    v.into_iter().take(max).map(|(w, _)| w).collect()
+}
+
+/// Per-show constant prompt: the title, the character names, and the show's own
+/// proper nouns — the words Whisper is most likely to mangle.
+///
+/// Kept short deliberately. whisper.cpp gives the prompt a few hundred tokens at
+/// most, and a prompt long enough to crowd that budget starts steering the decode
+/// toward whatever it contains, which on a quiet channel is how a recogniser is
+/// invited to recite rather than listen.
 pub fn static_prompt(title: Option<&str>, character_names: &[String]) -> String {
+    static_prompt_with(title, character_names, &[])
+}
+
+pub fn static_prompt_with(
+    title: Option<&str>,
+    character_names: &[String],
+    proper: &[String],
+) -> String {
     let mut s = String::new();
     if let Some(t) = title {
         s.push_str(t);
@@ -60,6 +116,11 @@ pub fn static_prompt(title: Option<&str>, character_names: &[String]) -> String 
     }
     if !character_names.is_empty() {
         s.push_str(&character_names.join(", "));
+        s.push('.');
+    }
+    if !proper.is_empty() {
+        s.push(' ');
+        s.push_str(&proper.join(", "));
         s.push('.');
     }
     s

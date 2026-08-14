@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use choufleur_core::lang::LangCode;
-use choufleur_core::prompt::{static_prompt, BiasMode, PromptConfig};
+use choufleur_core::prompt::{proper_nouns, static_prompt_with, BiasMode, PromptConfig};
 use choufleur_core::tracker::Tracker;
 
 use crate::engine::{Engine, EngineConfig};
@@ -126,7 +126,8 @@ pub fn run(
     let (tx, _rx) = tokio::sync::broadcast::channel(256);
     let state = Arc::new(LiveState {
         title: script.title.clone(),
-        lines,
+        script_path: corpus.script_path(),
+        lines: Mutex::new(lines),
         latest: Mutex::new(None),
         t_audio: Mutex::new(0.0),
         running: Mutex::new(true),
@@ -159,7 +160,9 @@ pub fn run(
         .first()
         .cloned()
         .unwrap_or(LangCode::new("en"));
-    let static_text = static_prompt(script.title.as_deref(), &names);
+    let proper = proper_nouns(&prepared.lines, 40);
+    println!("lexicon: {}", proper.join(", "));
+    let static_text = static_prompt_with(script.title.as_deref(), &names, &proper);
     let lang_of = super::character_languages(&prepared);
 
     println!("model:   {}", ecfg.whisper_model.display());
@@ -276,6 +279,43 @@ fn run_engine(
     Ok(())
 }
 
+/// Write one corrected line back into the script on disk.
+///
+/// Read-modify-write of the whole file, which is fine at this scale and has the
+/// property that matters: the correction survives the run. An edit that lives only in
+/// a browser tab is a note nobody will ever find again, and the mistakes being fixed —
+/// an attribution imported as dialogue, a stage direction that became a line — are
+/// exactly the ones that would otherwise be rediscovered at the next rehearsal.
+///
+/// Written via a temporary file and renamed, because this is running during a show and
+/// a half-written script is worse than a wrong one.
+///
+/// The running matcher keeps the text it was prepared with: `PreparedScript` is built
+/// once and borrowed by the tracker for the length of the run. So a correction reaches
+/// every screen immediately and reaches the *matching* from the next run.
+fn write_line_edit(
+    path: &Path,
+    index: usize,
+    text: &str,
+    character: Option<&str>,
+) -> Result<()> {
+    let raw = std::fs::read_to_string(path)?;
+    let mut doc: serde_json::Value = serde_json::from_str(&raw)?;
+    let line = doc
+        .get_mut("lines")
+        .and_then(|l| l.as_array_mut())
+        .and_then(|l| l.get_mut(index))
+        .context("no such line in the script")?;
+    line["text"] = serde_json::Value::String(text.to_string());
+    if let Some(c) = character {
+        line["character"] = serde_json::Value::String(c.to_string());
+    }
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
 /// The HTTP side: the page, the script, and the position stream.
 fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -292,7 +332,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
             .route(
                 "/script.json",
                 get(|State(s): State<Arc<LiveState>>| async move {
-                    axum::Json(s.lines.clone())
+                    axum::Json(s.lines.lock().unwrap().clone())
                 }),
             )
             .route(
@@ -313,15 +353,62 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                     else {
                                         continue;
                                     };
-                                    if v.get("type").and_then(|t| t.as_str()) != Some("position_jump")
-                                    {
+                                    let kind = v.get("type").and_then(|t| t.as_str());
+                                    let Some(i) = v
+                                        .get("lineIndex")
+                                        .and_then(|i| i.as_u64())
+                                        .map(|i| i as usize)
+                                        .filter(|i| *i < inbound.lines.lock().unwrap().len())
+                                    else {
                                         continue;
-                                    }
-                                    if let Some(i) = v.get("lineIndex").and_then(|i| i.as_u64()) {
-                                        let i = i as usize;
-                                        if i < inbound.lines.len() {
+                                    };
+                                    match kind {
+                                        Some("position_jump") => {
                                             inbound.steer.lock().unwrap().push(i);
                                         }
+                                        Some("edit_line") => {
+                                            let Some(text) = v
+                                                .get("text")
+                                                .and_then(|t| t.as_str())
+                                                .map(|t| t.trim().to_string())
+                                                .filter(|t| !t.is_empty())
+                                            else {
+                                                continue;
+                                            };
+                                            // The speaker is corrected as often as the
+                                            // words: an attribution imported as
+                                            // dialogue is the commonest importer fault,
+                                            // and fixing only the text would leave the
+                                            // line spoken by whoever came before.
+                                            let character = v
+                                                .get("character")
+                                                .and_then(|c| c.as_str())
+                                                .map(|c| c.trim().to_string())
+                                                .filter(|c| !c.is_empty());
+                                            {
+                                                let mut lines = inbound.lines.lock().unwrap();
+                                                lines[i].text = text.clone();
+                                                if let Some(c) = &character {
+                                                    lines[i].character = c.clone();
+                                                }
+                                            }
+                                            if let Err(e) = write_line_edit(
+                                                &inbound.script_path,
+                                                i,
+                                                &text,
+                                                character.as_deref(),
+                                            ) {
+                                                eprintln!("could not save the edit: {e:#}");
+                                            } else {
+                                                println!("edited line {}: {text}", i + 1);
+                                            }
+                                            let _ = inbound.tx.send(Update::LineEdited {
+                                                line_index: i,
+                                                text,
+                                                character,
+                                            });
+                                        }
+                                        _ => {}
                                     }
                                 }
                             });

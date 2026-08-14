@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use choufleur_core::lang::LangCode;
-use choufleur_core::prompt::{static_prompt, tracker_prompt, BiasMode, PromptConfig};
+use choufleur_core::prompt::{proper_nouns, static_prompt_with, tracker_prompt, BiasMode, PromptConfig};
 use choufleur_core::script::PreparedScript;
 use choufleur_core::tracker::{Confidence, Tracker, TrackerConfig, TrackerEvent};
 
@@ -282,7 +282,7 @@ pub fn run_from_audio(
             .first()
             .cloned()
             .unwrap_or(LangCode::new("en")),
-        static_prompt: static_prompt(script.title.as_deref(), &names),
+        static_prompt: static_prompt_with(script.title.as_deref(), &names, &proper_nouns(&prepared.lines, 40)),
         timings,
     };
 

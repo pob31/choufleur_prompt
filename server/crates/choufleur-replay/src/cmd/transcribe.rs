@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use choufleur_core::lang::LangCode;
-use choufleur_core::prompt::{static_prompt, BiasMode};
+use choufleur_core::prompt::{proper_nouns, static_prompt_with, BiasMode};
 
 use crate::engine::{Consumer, DecodeHint, Engine, EngineConfig};
 use crate::formats::{write_jsonl, SegmentRecord};
@@ -101,11 +101,15 @@ pub fn run(
     println!("mode:    {}", if realtime { "realtime" } else { "batch" });
 
     let names: Vec<String> = script.characters.iter().map(|c| c.name.clone()).collect();
+    let proper = proper_nouns(&prepared.lines, 40);
+    if !proper.is_empty() {
+        println!("lexicon: {}", proper.join(", "));
+    }
     let mut static_prompts = std::collections::HashMap::new();
     for lang in super::languages_used(&prepared) {
         static_prompts.insert(
             lang.as_str().to_string(),
-            static_prompt(script.title.as_deref(), &names),
+            static_prompt_with(script.title.as_deref(), &names, &proper),
         );
     }
 
