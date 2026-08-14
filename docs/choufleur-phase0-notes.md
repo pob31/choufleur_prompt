@@ -869,6 +869,40 @@ entirely — grey shading, mostly in the flattened layer — and a conduite that
 flattened differently might not carry them at all, which keeps the audio-derived
 proposals worth having as an independent source.
 
+### O. Ambient-only capture fails, and it fails at recognition
+
+*Lazzi* (Fabrice Melquiot), a two-hander, 1 h 53 m, captured on **one room mic** — no
+close mics, no reinforcement, the sound design being a handful of music cues. The
+hardest capture case in the corpus and the one that would most weaken the PRD's
+requirements if it worked.
+
+It does not work. 65 of 1023 lines reached (6 %), 64 losses, 1984 rejected segments,
+and a jump to 81 % of the script six minutes into the show.
+
+The tracker is not the problem, and the transcript says so plainly:
+
+    Je vous m’en mord du cul.
+    Les personnes en surtois.
+    Qui aura l’impression d’être quand on dévoile la romine ?
+
+Fluent, confident, and almost entirely wrong. Mean `avg_logprob` **−0.87**, against
+**−0.34** for the Hécube mixed feed. The tracker rejected 1984 segments because there
+was nothing in them to match; asking it to follow this is asking it to track noise.
+
+That is a cleaner result than a partial success would have been. It separates the two
+failure modes the corpus had so far confounded: Hécube proved a *mixed* feed tracks
+well, and Lazzi shows the limit is not mixing but **intelligibility at the microphone**.
+Level (finding L) predicted tracking within a production; this says the same across
+productions, at the extreme.
+
+What it does not yet establish is whether the limit is the room or the model — `small`
+was used throughout Phase 0, and the PRD recommends `medium` for non-English shows.
+That test is the obvious next one and costs nothing but time.
+
+Until it is run, the honest reading is: **close mics are a requirement, not a
+preference**, and a production that cannot provide them is out of scope rather than
+merely degraded.
+
 ---
 
 ## Open questions for the real corpus
