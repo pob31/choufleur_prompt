@@ -13,7 +13,7 @@ use anyhow::Result;
 use choufleur_core::lang::{LangCode, NormalizerRegistry};
 use choufleur_core::script::{PreparedScript, Script};
 use choufleur_core::tracker::TrackerConfig;
-use choufleur_replay::cmd::make_fixture::{default_script, generate, Synth};
+use choufleur_replay::cmd::make_fixture::{default_script, generate, Layout, Synth};
 use choufleur_replay::cmd::track::track_segments;
 use choufleur_replay::eval::metrics::{evaluate, Gate};
 use choufleur_replay::formats::{read_jsonl, GroundTruthLine, SegmentRecord};
@@ -46,7 +46,17 @@ fn build_fixture(name: &str) -> Fixture {
         .iter()
         .map(|c| (c.id.clone(), "Mock".into()))
         .collect();
-    generate(&dir, &script, &MockSynth, &voices, 42, 180, -60.0).expect("fixture generation");
+    generate(
+        &dir,
+        &script,
+        &MockSynth,
+        &voices,
+        42,
+        180,
+        -60.0,
+        Layout::Sequential,
+    )
+    .expect("fixture generation");
 
     let ground_truth: Vec<GroundTruthLine> =
         read_jsonl(&dir.join("ground-truth.jsonl")).expect("ground truth");

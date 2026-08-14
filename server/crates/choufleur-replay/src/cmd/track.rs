@@ -287,7 +287,7 @@ pub fn run_from_audio(
         println!("\n{stats}");
         if stats.fell_behind > 0 {
             println!(
-                "WARNING: fell behind real time {} time(s), worst {:.2} s",
+                "note:    processing was bursty — behind on {} occasion(s), worst {:.2} s",
                 stats.fell_behind, stats.max_backlog_s
             );
         }
@@ -320,7 +320,7 @@ fn report(trace: &[TraceRecord], segments: &[SegmentRecord]) {
     }
 }
 
-/// Summarize a trace for the console — used by `track` and `eval` alike.
+/// Summarize a trace's confidence mix for the console.
 pub fn describe_confidence(trace: &[TraceRecord]) -> String {
     let mut lost = 0usize;
     let mut word = 0usize;

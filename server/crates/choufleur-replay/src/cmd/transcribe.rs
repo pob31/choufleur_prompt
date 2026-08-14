@@ -137,9 +137,14 @@ pub fn run(
         );
     }
     if stats.fell_behind > 0 {
+        // Deliberately not phrased as failure. Decoding is bursty by nature: when
+        // several channels close a segment at once they are decoded back to back,
+        // so the run drops behind and catches up in the next quiet moment. What
+        // decides whether that matters is the end-to-end latency distribution,
+        // which `eval` reports against the budget — not the backlog itself.
         println!(
-            "WARNING: fell behind real time {} time(s), worst {:.2} s — the compute \
-             criterion is not met on this machine at this configuration",
+            "note:    processing was bursty — behind on {} occasion(s), worst {:.2} s.\n\
+             \x20        Whether that matters is the latency distribution: eval --segments.",
             stats.fell_behind, stats.max_backlog_s
         );
     }

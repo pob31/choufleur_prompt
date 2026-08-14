@@ -19,7 +19,7 @@ on the way*, especially where reality disagreed with the plan.
 | `corpus/README.md`, `research/align.py`, `scripts/fetch-models.sh` | done |
 | M0.1 corpus assembly, M0.4 sweep, the gate call | waiting on real recordings |
 
-137 tests pass; fmt and clippy are clean. The pipeline runs end to end on audio:
+139 tests pass; fmt and clippy are clean. The pipeline runs end to end on audio:
 WAVs in, Whisper transcript, tracked position, scored report.
 
 **Nothing here has met real theatre audio yet.** The numbers below are measured,
@@ -41,6 +41,10 @@ The whole point of building the harness first: these are outputs of
 | Batch, interim disabled | 15.2× real time | 2.67 s / 3.29 s | 99.7 % | **FAIL** (lag) |
 | Realtime, coupled, tracker-biased | 1.00× (paced) | 1.56 s / 1.67 s | 100 % | PASS |
 | Mixed feed (degraded mode) | 7.8× real time | 5.09 s / 19.9 s | 42.7 % | **FAIL** |
+
+That fixture has **one speaker at a time** — ordinary dialogue takes turns. The
+devplan's compute criterion is stated in *concurrent* active channels, so it needs
+its own fixture; see finding D.
 
 End-to-end latency, realtime coupled run: **median 351 ms, p95 510 ms, max 535 ms**
 against a budget of 1.5 s typical / 3 s worst case. That is the number an operator
@@ -273,6 +277,52 @@ diarization; this adds that multilingual mixed-feed tracking is deferred with it
 
 ---
 
+### D. The compute criterion holds at four concurrent channels, and the ceiling is about seven
+
+The accuracy fixtures are dialogue: exactly one channel is active at any instant,
+so "8.3× real time" was measuring a single stream however many channels the
+manifest listed. The devplan asks for *"sustained faster-than-real-time with 3–4
+concurrent active channels"*, which that cannot answer.
+
+`make-fixture --load-test <n>` builds the missing artifact: n characters on
+independent timelines, every channel speaking continuously. The 4-channel fixture
+runs with a **mean of 3.46 simultaneous speakers, four at once for 70 % of its
+length** — nothing like a play, which is the point.
+
+Measured, same audio, varying the channel subset (`small`, interim 1.5 s):
+
+| Concurrent channels | Throughput |
+|---|---|
+| 1 | 7.59× real time |
+| 2 | 3.78× |
+| 3 | 2.48× |
+| 4 | **1.75×** |
+| 8 | **0.84× — slower than real time** |
+
+Scaling is 1/N almost exactly, which is what a single sequential Whisper engine
+should do, and the 8-channel run was a prediction from the first four rows before
+it was measured. **The ceiling on this machine is about seven continuously active
+channels**; four leaves a 1.75× margin.
+
+End-to-end latency at four concurrent channels, realtime: **median 586 ms, p95
+1092 ms, max 1652 ms**. Two segments of 98 exceeded 1.5 s; none came close to the
+3 s worst case. So the criterion is met — but the margin at four channels is a
+factor of 1.75, not the factor of 8 the dialogue fixture suggested, and that is
+the number to carry into any decision about model size or channel count.
+
+This also puts a measured floor under the PRD's load-management argument. Sixteen
+*configured* channels is fine precisely because only three or four are ever
+*active*; active-speaker gating is not an optimization, it is what makes the
+channel count possible at all. Idle channels genuinely cost nothing — the VAD
+never opens on them and no decode happens.
+
+Extrapolating the same way for `medium` (roughly 3× the decode cost) puts four
+concurrent channels near 0.6× — under real time. That remains an extrapolation,
+one `--model` flag from being measured, and it matters because the PRD recommends
+`medium` for non-English shows.
+
+---
+
 ## Open questions for the real corpus
 
 - Is `member_coverage_min: 0.5` too strict for far-field zone channels, where ASR
@@ -284,8 +334,9 @@ diarization; this adds that multilingual mixed-feed tracking is deferred with it
   means a landmark line delivered by an understudy on a different mic never
   re-anchors.
 - Whether `medium` — which the PRD recommends for non-English shows — fits at all
-  with interim emission on four simultaneous channels. The arithmetic in finding A
-  says it does not on this machine; measuring it is one `--model` flag.
+  with interim emission on four simultaneous channels. Finding D's measured 1.75×
+  margin with `small` and `medium`'s roughly 3× decode cost put it under real
+  time; measuring it is one `--model` flag over `corpus/fixture-load`.
 - Whether real theatre audio changes the ~160 ms per-decode constant much. It is
   dominated by the fixed 30-second mel window, so it should be stable, but reverb
   and overlap make segments longer and more numerous.

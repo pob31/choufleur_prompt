@@ -208,6 +208,50 @@ pub fn plan_timeline(durations: &[u64], rng: &mut Rng, sample_rate: u32) -> Vec<
     out
 }
 
+/// How lines are laid out in time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    /// One speaker at a time, gaps between lines. What a scene sounds like, and
+    /// what the accuracy fixtures use.
+    Sequential,
+    /// Every channel talking at once, continuously. Nothing like a play — this is
+    /// a **load test**, built to answer the devplan's compute criterion, which is
+    /// stated in *concurrent active channels* and therefore cannot be measured on
+    /// dialogue that politely takes turns.
+    Concurrent,
+}
+
+/// Lay each character out on their own timeline, so every channel is busy at once.
+///
+/// Gaps are short and the channels independent, so with N characters this keeps
+/// roughly N channels in speech simultaneously for the whole recording — the worst
+/// case the ASR stage will ever see, and one a real performance never produces.
+/// The resulting ground truth overlaps heavily, which is deliberate: it also
+/// exercises the eval's latest-onset-wins rule.
+pub fn plan_timeline_concurrent(
+    durations: &[u64],
+    channel_of: &[usize],
+    n_channels: usize,
+    rng: &mut Rng,
+    sample_rate: u32,
+) -> Vec<Placement> {
+    let ms = |m: u64| m * sample_rate as u64 / 1000;
+    let lead = (LEAD_IN_S * sample_rate as f64) as u64;
+    let mut cursors = vec![lead; n_channels.max(1)];
+    let mut out = Vec::with_capacity(durations.len());
+    for (&frames, &ch) in durations.iter().zip(channel_of) {
+        let last = cursors.len() - 1;
+        let cursor = &mut cursors[ch.min(last)];
+        out.push(Placement {
+            onset: *cursor,
+            frames,
+        });
+        // Short breaths only: the point is to keep every channel speaking.
+        *cursor += frames + ms(rng.range(100, 350));
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------
 // The built-in script
 // ---------------------------------------------------------------------------
@@ -221,6 +265,74 @@ type FixtureRow = (
     Option<&'static [&'static str]>,
     u8,
 );
+
+/// A synthetic script with `n` characters, for the concurrent load test.
+///
+/// The content is irrelevant to what this measures — what matters is that the
+/// lines are of realistic length, so each decode costs what a real one costs, and
+/// that the characters alternate languages, so the load includes the per-segment
+/// language switching a bilingual production imposes.
+pub fn load_test_script(n_characters: usize) -> Script {
+    const LINES_FR: &[&str] = &[
+        "Tu ne devrais pas être ici, pas ce soir, pas après tout cela.",
+        "Alors pars avant qu'il ne rentre du théâtre et qu'il te trouve.",
+        "Les cerisiers ont brûlé pendant la nuit entière sans que personne bouge.",
+        "Personne ne viendra les rallumer maintenant, tu le sais très bien.",
+        "Va-t'en. Je ne veux plus jamais entendre ta voix dans cette maison.",
+        "C'est ainsi que les choses finissent toujours, sans un mot de plus.",
+        "Je ne t'accompagnerai pas jusqu'à la gare demain matin, c'est décidé.",
+        "La lampe s'est éteinte vers quatre heures du matin et rien n'a changé.",
+    ];
+    const LINES_EN: &[&str] = &[
+        "I came as soon as I heard about the fire at the far end of the orchard.",
+        "I saw the smoke from the station platform before the train had even stopped.",
+        "Nobody has slept in this house since Tuesday and nobody intends to tonight.",
+        "The lamps were still burning at four in the morning when I walked past.",
+        "The first train leaves a little after six o'clock, if you mean to catch it.",
+        "She never says what she actually means, and you have never once noticed.",
+        "I stopped expecting her to explain herself a very long time ago indeed.",
+        "Then let them finish quietly, for once, without another word from anyone.",
+    ];
+
+    let n = n_characters.max(1);
+    let characters: Vec<Character> = (0..n)
+        .map(|i| Character {
+            id: format!("char-{i}"),
+            name: format!("SPEAKER{i}"),
+            lang: Some(vec![LangCode::new(if i % 2 == 0 { "fr" } else { "en" })]),
+            channels: vec![(i + 1) as u16],
+        })
+        .collect();
+
+    let mut lines = Vec::new();
+    let mut seq = 1usize;
+    for (i, c) in characters.iter().enumerate() {
+        let pool = if i % 2 == 0 { LINES_FR } else { LINES_EN };
+        for text in pool {
+            lines.push(ScriptLine {
+                id: format!("L-{seq:04}"),
+                act: "act-1".into(),
+                scene: "sc-1".into(),
+                character: c.id.clone(),
+                text: (*text).into(),
+                lang: None,
+                landmark: 0,
+            });
+            seq += 1;
+        }
+    }
+
+    Script {
+        format: "choufleur-script".into(),
+        format_version: "0.1".into(),
+        title: Some(format!("Load test — {n} concurrent channels")),
+        default_lang: vec![LangCode::new("fr")],
+        acts: vec![],
+        scenes: vec![],
+        characters,
+        lines,
+    }
+}
 
 /// A bilingual two-scene fixture, built to exercise the awkward cases rather than
 /// to read well: a weight-3 landmark, two consecutive lines by the same speaker
@@ -465,6 +577,7 @@ fn assign_voices(
 // Generation
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     out_dir: &Path,
     script_path: Option<&Path>,
@@ -472,14 +585,22 @@ pub fn run(
     voices: Option<&str>,
     rate_wpm: u32,
     noise_db: f32,
+    load_test: Option<usize>,
 ) -> Result<()> {
-    let script = match script_path {
-        Some(p) => {
+    let script = match (load_test, script_path) {
+        (Some(n), _) => load_test_script(n),
+        (None, Some(p)) => {
             let text =
                 std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?;
             serde_json::from_str(&text).with_context(|| format!("parsing {}", p.display()))?
         }
-        None => default_script(),
+        (None, None) => default_script(),
+    };
+    let layout = if load_test.is_some() {
+        println!("layout:  concurrent — every channel speaking at once (load test)");
+        Layout::Concurrent
+    } else {
+        Layout::Sequential
     };
 
     let available = SaySynth::available_voices()?;
@@ -489,7 +610,7 @@ pub fn run(
     }
     let synth = SaySynth::new(out_dir.join(".tmp"))?;
     generate(
-        out_dir, &script, &synth, &voice_of, seed, rate_wpm, noise_db,
+        out_dir, &script, &synth, &voice_of, seed, rate_wpm, noise_db, layout,
     )?;
     let _ = std::fs::remove_dir_all(out_dir.join(".tmp"));
     println!("\nfixture written to {}", out_dir.display());
@@ -498,6 +619,7 @@ pub fn run(
 }
 
 /// The generation core, with synthesis injected.
+#[allow(clippy::too_many_arguments)]
 pub fn generate(
     out_dir: &Path,
     script: &Script,
@@ -506,6 +628,7 @@ pub fn generate(
     seed: u64,
     rate_wpm: u32,
     noise_db: f32,
+    layout: Layout,
 ) -> Result<Manifest> {
     std::fs::create_dir_all(out_dir)?;
 
@@ -526,10 +649,35 @@ pub fn generate(
     // 2. Place them.
     let mut rng = Rng::new(seed);
     let durations: Vec<u64> = audio.iter().map(|a| a.len() as u64).collect();
-    let plan = plan_timeline(&durations, &mut rng, SAMPLE_RATE);
+    let plan = match layout {
+        Layout::Sequential => plan_timeline(&durations, &mut rng, SAMPLE_RATE),
+        Layout::Concurrent => {
+            let channel_of: Vec<usize> = script
+                .lines
+                .iter()
+                .map(|l| {
+                    script
+                        .characters
+                        .iter()
+                        .position(|c| c.id == l.character)
+                        .unwrap_or(0)
+                })
+                .collect();
+            plan_timeline_concurrent(
+                &durations,
+                &channel_of,
+                script.characters.len(),
+                &mut rng,
+                SAMPLE_RATE,
+            )
+        }
+    };
+    // With a concurrent layout the last line in script order is not the last in
+    // time, so the recording's length is the furthest any channel reaches.
     let total_frames = plan
-        .last()
+        .iter()
         .map(|p| p.onset + p.frames + (TAIL_S * SAMPLE_RATE as f64) as u64)
+        .max()
         .unwrap_or(0);
 
     // 3. One writer per character channel, plus the mixdown.
@@ -552,10 +700,6 @@ pub fn generate(
             written: 0,
         });
     }
-    let mix_name = "mixdown.wav".to_string();
-    let mix_path = out_dir.join(&mix_name);
-    let mut mix = MonoWavWriter::create(&mix_path, SAMPLE_RATE)?;
-    let mut mix_written = 0u64;
 
     let mut noise_rng = Rng::new(seed ^ 0x9E37_79B9_7F4A_7C15);
     let mut ground_truth = Vec::with_capacity(script.lines.len());
@@ -583,17 +727,6 @@ pub fn generate(
         sink.writer.write(&audio[i])?;
         sink.written = place.onset + place.frames;
         let index = sink.index;
-
-        pad(
-            &mut mix,
-            place.onset.saturating_sub(mix_written),
-            amp,
-            &mut noise_rng,
-        )?;
-        // A touch below unity so summed noise cannot clip the mix.
-        let scaled: Vec<f32> = audio[i].iter().map(|s| s * 0.9).collect();
-        mix.write(&scaled)?;
-        mix_written = place.onset + place.frames;
 
         ground_truth.push(GroundTruthLine {
             line_id: line.id.clone(),
@@ -637,16 +770,34 @@ pub fn generate(
             note: None,
         });
     }
-    pad(
-        &mut mix,
-        total_frames.saturating_sub(mix_written),
-        amp,
-        &mut noise_rng,
-    )?;
-    mix.finalize()?;
 
-    // 5. Write the script, the ground truth and the manifest.
+    // 5. Mix down by reading the finished channels back and summing them.
+    //
+    // Not by appending as the lines are placed: with a concurrent layout the lines
+    // are emitted in script order but their onsets are not monotonic, so a single
+    // append cursor produces a file several times too long — `verify` caught
+    // exactly that. Summing the finished channels is correct for any layout, needs
+    // no assumption about ordering or overlap, and stays O(1) in memory: one block
+    // per channel, whatever the length of the recording.
+    let mix_name = "mixdown.wav".to_string();
+    let mix_path = out_dir.join(&mix_name);
+    mix_channels(
+        &specs
+            .iter()
+            .map(|c| out_dir.join(&c.audio.file))
+            .collect::<Vec<_>>(),
+        &mix_path,
+    )?;
+
+    // 6. Write the script, the ground truth and the manifest.
     write_json(&out_dir.join("script.json"), script, true)?;
+    // Ground truth is written in time order, not script order. Under a concurrent
+    // layout those differ, and `verify` insists onsets ascend.
+    ground_truth.sort_by(|a, b| {
+        a.onset
+            .partial_cmp(&b.onset)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     write_jsonl(&out_dir.join("ground-truth.jsonl"), &ground_truth)?;
 
     let manifest = Manifest {
@@ -699,6 +850,39 @@ struct ChannelSink {
     written: u64,
 }
 
+/// Sum finished channel files into one mono mix, block by block.
+fn mix_channels(channels: &[PathBuf], out: &Path) -> Result<()> {
+    let mut readers: Vec<WavBlockReader> = channels
+        .iter()
+        .map(|p| WavBlockReader::open(p))
+        .collect::<Result<_>>()?;
+    let mut writer = MonoWavWriter::create(out, SAMPLE_RATE)?;
+    let mut block = Vec::new();
+    let mut acc = vec![0.0f32; 12_000];
+    loop {
+        let mut most = 0usize;
+        acc.iter_mut().for_each(|s| *s = 0.0);
+        for r in &mut readers {
+            let n = r.read_block(&mut block, acc.len())?;
+            for (a, b) in acc.iter_mut().zip(&block[..n]) {
+                *a += b;
+            }
+            most = most.max(n);
+        }
+        if most == 0 {
+            break;
+        }
+        // A shade below unity so a single speaker matches the per-channel level.
+        // Simultaneous speakers do sum, and the writer clamps — which is what a
+        // real console mix does too.
+        for s in acc[..most].iter_mut() {
+            *s *= 0.9;
+        }
+        writer.write(&acc[..most])?;
+    }
+    writer.finalize()
+}
+
 /// Write `frames` of room tone — noise, not digital zero, so the VAD is exercised
 /// against something a microphone could actually produce.
 fn pad(w: &mut MonoWavWriter, frames: u64, amp: f32, rng: &mut Rng) -> Result<()> {
@@ -747,6 +931,66 @@ mod tests {
     }
 
     #[test]
+    fn the_concurrent_layout_actually_overlaps() {
+        // The whole point of this layout: a compute measurement taken on dialogue
+        // that takes turns is measuring one active channel, whatever the manifest
+        // says. If this stops overlapping, the load test measures nothing.
+        let durations = vec![48_000u64; 12]; // 1 s each
+        let channel_of: Vec<usize> = (0..12).map(|i| i % 4).collect();
+        let plan =
+            plan_timeline_concurrent(&durations, &channel_of, 4, &mut Rng::new(7), SAMPLE_RATE);
+
+        // Every channel starts at the same instant, so all four speak at once.
+        let firsts: Vec<u64> = (0..4).map(|c| plan[c].onset).collect();
+        assert!(
+            firsts.iter().all(|&o| o == firsts[0]),
+            "channels did not start together: {firsts:?}"
+        );
+
+        // A channel's own lines still never overlap each other.
+        for c in 0..4 {
+            let mine: Vec<&Placement> = plan
+                .iter()
+                .zip(&channel_of)
+                .filter(|(_, &ch)| ch == c)
+                .map(|(p, _)| p)
+                .collect();
+            for w in mine.windows(2) {
+                assert!(
+                    w[1].onset >= w[0].onset + w[0].frames,
+                    "channel {c} overlapped itself"
+                );
+            }
+        }
+
+        // The contrast: the sequential layout overlaps nothing at all.
+        let seq = plan_timeline(&durations, &mut Rng::new(7), SAMPLE_RATE);
+        for w in seq.windows(2) {
+            assert!(w[1].onset >= w[0].onset + w[0].frames);
+        }
+    }
+
+    #[test]
+    fn the_load_test_script_alternates_languages_across_channels() {
+        let s = load_test_script(4);
+        assert_eq!(s.characters.len(), 4);
+        let langs: Vec<&str> = s
+            .characters
+            .iter()
+            .map(|c| c.lang.as_ref().unwrap()[0].as_str())
+            .collect();
+        assert_eq!(
+            langs,
+            vec!["fr", "en", "fr", "en"],
+            "the load must include language switching"
+        );
+        assert!(s.lines.len() >= 32);
+        // Channel numbers must line up with the manifest the generator writes.
+        assert_eq!(s.characters[0].channels, vec![1]);
+        assert_eq!(s.characters[3].channels, vec![4]);
+    }
+
+    #[test]
     fn the_same_seed_produces_the_same_timeline() {
         let durations = vec![48_000; 20];
         let a = plan_timeline(&durations, &mut Rng::new(42), SAMPLE_RATE);
@@ -792,7 +1036,17 @@ mod tests {
             .map(|c| (c.id.clone(), "Mock".to_string()))
             .collect();
 
-        let manifest = generate(&dir, &script, &MockSynth, &voices, 42, 180, -60.0).unwrap();
+        let manifest = generate(
+            &dir,
+            &script,
+            &MockSynth,
+            &voices,
+            42,
+            180,
+            -60.0,
+            Layout::Sequential,
+        )
+        .unwrap();
         assert_eq!(manifest.channels.len(), 3);
         assert!(manifest.channels.iter().all(|c| !c.audio.sha256.is_empty()));
 

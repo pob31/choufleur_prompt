@@ -164,6 +164,13 @@ enum Command {
         /// against digital silence. Use 0 to disable.
         #[arg(long, default_value_t = -60.0)]
         noise_db: f32,
+        /// Build a load-test corpus instead: N characters, every channel speaking
+        /// at once. The devplan's compute criterion is stated in *concurrent*
+        /// active channels, and ordinary dialogue takes turns, so it cannot be
+        /// measured on a normal fixture. Not a tracking test — the audio is
+        /// nothing like a performance.
+        #[arg(long, value_name = "CHANNELS")]
+        load_test: Option<usize>,
     },
 }
 
@@ -252,6 +259,7 @@ fn main() -> Result<()> {
             voices,
             rate_wpm,
             noise_db,
+            load_test,
         } => cmd::make_fixture::run(
             &out,
             script.as_deref(),
@@ -259,6 +267,7 @@ fn main() -> Result<()> {
             voices.as_deref(),
             rate_wpm,
             noise_db,
+            load_test,
         ),
     }
 }
