@@ -99,6 +99,82 @@ pub struct Corpus {
     pub audio_root: Option<PathBuf>,
 }
 
+/// A show, as somebody would write it by hand.
+///
+/// The corpus manifest is a *measurement* format: channel arrays, per-file SHA-256,
+/// ground-truth paths, provenance. All of it earns its place when the point is a
+/// reproducible experiment, and all of it is in the way when the point is "run this
+/// show tonight". Four fields, no hashes, no channel table:
+///
+/// ```json
+/// {
+///   "title": "Hécube, pas Hécube",
+///   "script": "script.json",
+///   "audio":  "Hecube_20241116mono.wav"
+/// }
+/// ```
+///
+/// Paths are relative to the file. `audio` may be omitted, which simply means there is
+/// nothing to play — useful for opening a show to read and correct its script without
+/// a recording to hand.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShowFile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub script: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<PathBuf>,
+    /// Cues, as produced by the conduite readers. Not yet displayed; carried so the
+    /// file does not have to change shape when they are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cues: Option<PathBuf>,
+    #[serde(default = "default_sample_rate")]
+    pub sample_rate: u32,
+}
+
+fn default_sample_rate() -> u32 {
+    48_000
+}
+
+impl ShowFile {
+    /// Expand into the manifest the engine already knows how to run.
+    ///
+    /// One zone channel: a show file describes what to play, not who is on which mic.
+    /// Per-actor channels remain a corpus concern, because assigning them is exactly
+    /// the kind of bookkeeping this format exists to avoid.
+    pub fn into_manifest(self) -> Manifest {
+        let channels = self
+            .audio
+            .map(|file| {
+                vec![ChannelSpec {
+                    index: 1,
+                    audio: AudioFile {
+                        file,
+                        sha256: String::new(),
+                    },
+                    character: None,
+                    lang: None,
+                    note: Some("zone channel: no speaker identity".into()),
+                }]
+            })
+            .unwrap_or_default();
+        Manifest {
+            format: FORMAT.to_string(),
+            format_version: default_format_version(),
+            show: self.title.clone().unwrap_or_else(|| "show".into()),
+            act: "run".into(),
+            note: None,
+            sample_rate: self.sample_rate,
+            script: self.script,
+            ground_truth: None,
+            channels,
+            mixdown: None,
+            provenance: Default::default(),
+        }
+    }
+}
+
 impl Corpus {
     pub fn load(dir_or_file: &Path, audio_root: Option<PathBuf>) -> Result<Self> {
         let path = if dir_or_file.is_dir() {
@@ -108,6 +184,23 @@ impl Corpus {
         };
         let text = fs::read_to_string(&path)
             .with_context(|| format!("reading manifest {}", path.display()))?;
+        // A show file has a script and no channel table; a manifest always has both.
+        // Sniffing rather than requiring a format tag keeps the hand-written file as
+        // short as it looks in the docs.
+        let probe: serde_json::Value = serde_json::from_str(&text)
+            .with_context(|| format!("parsing {}", path.display()))?;
+        if probe.get("channels").is_none() && probe.get("script").is_some() {
+            let show: ShowFile = serde_json::from_value(probe)
+                .with_context(|| format!("parsing show file {}", path.display()))?;
+            return Ok(Corpus {
+                manifest: show.into_manifest(),
+                dir: path
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| PathBuf::from(".")),
+                audio_root,
+            });
+        }
         let manifest: Manifest = serde_json::from_str(&text)
             .with_context(|| format!("parsing manifest {}", path.display()))?;
         if manifest.format != FORMAT {
