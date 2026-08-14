@@ -608,6 +608,61 @@ Time to first fix on the full script, before and after:
 All six still locate the correct region, and **no excerpt records a single
 confident-wrong update**. The one bad adoption self-corrected within 16 seconds.
 
+### K. Learning does generalise across nights — but more nights did not help
+
+Three takes of two scenes, 9th to 11th January 2019, a show already well into its
+tour. The first genuinely held-out test: learn from the earlier nights, track the
+later one.
+
+**How stable is the text?** `research/night_variation.py` measures two things on one
+scale — how close a night is to the *written* line (fidelity), and how close two
+nights are to *each other* (consistency).
+
+| Scene | fidelity | consistency | gap |
+|---|---|---|---|
+| Sara & Fabian | 0.55 | 0.68 | +0.13 |
+| Sébastien & Tom | 0.60 | 0.71 | +0.12 |
+
+The company is more consistent with itself than with the script, which is the
+precondition for learning to be worth anything — but only by about 0.12. And in
+both scenes the two nights furthest apart are the least alike, which is what
+continuing drift looks like.
+
+**Held-out tracking of the 11th:**
+
+| Learned from | Sara & Fabian (44) | Sébastien & Tom (34) |
+|---|---|---|
+| nothing (written script) | 14 | 17 |
+| the 9th | 15 | **22** |
+| the 9th and 10th | 13 | 21 |
+| the 9th and 10th, both agreeing | 14 | 19 |
+
+**It generalises.** 17 → 22 on a night the learner never saw is the result worth
+having, and it is largest on the scene whose delivery is most consistent — which
+`night_variation.py` predicted in advance from the audio alone.
+
+**More nights did not help, and requiring agreement helped least.** That was the
+opposite of the prediction. Two causes, one fixed and one open.
+
+Fixed: recurrence was counted on *exact transcript strings*, which almost never
+repeat — the recogniser words things slightly differently every night even when the
+delivery is identical. Exact voting cut 38 proposals to 2. Variants are now
+clustered by similarity, and the most recent phrasing represents the cluster, since
+the text keeps drifting.
+
+Open: even with clustering, more alternates tracked slightly *worse*. Every added
+variant is another thing that can match somewhere it should not, and the ambiguity
+margin then rejects both. **Fewer, better alternates beat more alternates** — which
+means the interesting parameter is not how many nights are collected but how
+aggressively proposals are pruned, and two learning nights is not enough data to
+tune that. Anyone continuing this should treat the number of alternates per line as
+the dial, not the number of nights.
+
+A second measurement worth recording: the same scene ran **415, 430 and 457 seconds**
+on three consecutive nights, and 578, 565, 626 for the other — a 10 % spread in
+duration. Any pace or ETA model calibrated on one night carries that much error into
+the next.
+
 ---
 
 ## Open questions for the real corpus

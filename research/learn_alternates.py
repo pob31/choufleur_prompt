@@ -88,6 +88,12 @@ def main() -> None:
         "two or three can. This is what makes learning night after night worth more "
         "than learning once",
     )
+    ap.add_argument(
+        "--agree",
+        type=float,
+        default=0.6,
+        help="how similar two runs' wordings must be to count as the same variant",
+    )
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
@@ -96,10 +102,11 @@ def main() -> None:
     line_tokens = [set(tokens(l["text"])) for l in lines]
 
     # variant text -> how many runs proposed it, for that line
-    votes: list[dict[str, int]] = [dict() for _ in lines]
+    # per line: (run index, text, tokens) for every variant any run proposed
+    votes: list[list[tuple[int, str, set[str]]]] = [[] for _ in lines]
     already = 0
 
-    for path in args.segments:
+    for run_index, path in enumerate(args.segments):
         records = [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
         heard = [r for r in records if not r.get("interim") and not r.get("filtered")]
         spoken = [(r, set(tokens(r["text"]))) for r in heard]
@@ -151,23 +158,46 @@ def main() -> None:
                 continue
             if normalize(text) == normalize(lines[li]["text"]):
                 continue
-            votes[li][text] = votes[li].get(text, 0) + 1
+            votes[li].append((run_index, text, set(tokens(text))))
 
     proposed = 0
     for li, line in enumerate(lines):
-        for text, n in sorted(votes[li].items(), key=lambda kv: -kv[1]):
-            if n < args.min_runs:
+        # Cluster variants by similarity rather than counting identical strings.
+        #
+        # Requiring two runs to produce the *same text* is far too strict: the
+        # recogniser words things slightly differently every night even when the
+        # delivery is identical, so exact agreement almost never happens. Measured,
+        # exact-string voting cut 38 proposals to 2 and lost most of the benefit.
+        # What recurs is the *wording*, not the transcription of it.
+        clusters: list[dict] = []
+        for run_index, text, toks in votes[li]:
+            for c in clusters:
+                if dice(toks, c["tokens"]) >= args.agree:
+                    c["runs"].add(run_index)
+                    # Keep the most recent phrasing: the text keeps drifting, so
+                    # the latest run is the best guess at tonight's wording.
+                    if run_index >= c["latest"]:
+                        c["latest"], c["text"] = run_index, text
+                    c["tokens"] |= toks
+                    break
+            else:
+                clusters.append(
+                    {"runs": {run_index}, "text": text, "tokens": set(toks), "latest": run_index}
+                )
+
+        for c in sorted(clusters, key=lambda c: -len(c["runs"])):
+            if len(c["runs"]) < args.min_runs:
                 continue
             alts = line.setdefault("alternates", [])
-            if text in alts:
+            if c["text"] in alts:
                 continue
-            alts.append(text)
+            alts.append(c["text"])
             proposed += 1
             if not args.quiet:
-                seen = f"{n} run(s)" if len(args.segments) > 1 else ""
+                seen = f'{len(c["runs"])} run(s)' if len(args.segments) > 1 else ""
                 print(f'  {line["id"]} {seen}')
                 print(f'    written:   {line["text"][:78]}')
-                print(f'    performed: {text[:78]}')
+                print(f'    performed: {c["text"][:78]}')
 
     total = len(lines)
     print(f"\n{proposed} alternate(s) proposed over {total} line(s); "
