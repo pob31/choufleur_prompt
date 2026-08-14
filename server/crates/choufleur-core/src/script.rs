@@ -57,6 +57,17 @@ pub struct ScriptLine {
     /// boundaries are implicit weight-3 landmarks and need no entry here.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub landmark: u8,
+    /// Ways this line has actually been performed, as distinct from how it is
+    /// written.
+    ///
+    /// A production's text keeps moving after the premiere while the script
+    /// usually does not, and on real touring material that drift was the single
+    /// largest source of tracking loss. An alternate is an *additional* thing to
+    /// match against; it never replaces `text`, which stays exactly as the
+    /// playwright wrote it and is what every client displays (notation §2,
+    /// principle 1: pristine text).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alternates: Vec<String>,
 }
 
 fn is_zero(n: &u8) -> bool {
@@ -129,17 +140,27 @@ pub struct PreparedLine {
     pub scene: String,
     /// Pristine line text — used for ASR decode biasing, never for matching.
     pub text: String,
-    /// Resolved languages (§8.2), each with the line's text prepared under that
-    /// language's normalizer. A bilingual line carries two entries.
-    pub by_lang: Vec<(LangCode, MatchText)>,
+    /// Resolved languages (§8.2), each with every *form* of the line prepared
+    /// under that language's normalizer: the written text first, then any
+    /// alternates. A bilingual line carries two entries.
+    pub by_lang: Vec<(LangCode, Vec<MatchText>)>,
     /// Explicit weight, or 3 for an act/scene opening line.
     pub landmark_weight: u8,
     pub is_section_start: bool,
 }
 
 impl PreparedLine {
+    /// The written form under `lang` — the one used for span concatenation.
     pub fn match_text(&self, lang: &LangCode) -> Option<&MatchText> {
-        self.by_lang.iter().find(|(l, _)| l == lang).map(|(_, m)| m)
+        self.forms(lang).and_then(|f| f.first())
+    }
+
+    /// Every form of this line under `lang`: written text first, then alternates.
+    pub fn forms(&self, lang: &LangCode) -> Option<&[MatchText]> {
+        self.by_lang
+            .iter()
+            .find(|(l, _)| l == lang)
+            .map(|(_, m)| m.as_slice())
     }
     pub fn langs(&self) -> impl Iterator<Item = &LangCode> {
         self.by_lang.iter().map(|(l, _)| l)
@@ -214,7 +235,11 @@ impl PreparedScript {
             let langs = script.resolve_langs(line);
             let by_lang = langs
                 .iter()
-                .map(|l| (l.clone(), reg.prepare(&line.text, l)))
+                .map(|l| {
+                    let mut forms = vec![reg.prepare(&line.text, l)];
+                    forms.extend(line.alternates.iter().map(|a| reg.prepare(a, l)));
+                    (l.clone(), forms)
+                })
                 .collect();
 
             let landmark_weight = if is_section_start {
@@ -356,7 +381,7 @@ impl PreparedScript {
         Some(out)
     }
 
-    /// Tokens of a single line under `lang`.
+    /// Tokens of a single line under `lang`, written form only.
     pub fn line_tokens(&self, index: usize, lang: &LangCode) -> Option<Vec<&str>> {
         self.lines
             .get(index)?
@@ -364,7 +389,39 @@ impl PreparedScript {
             .map(|mt| mt.tokens.iter().map(String::as_str).collect())
     }
 
+    /// Every form a span may be matched against under `lang`.
+    ///
+    /// A single-line span offers the written line and each alternate. Multi-line
+    /// spans offer only the written concatenation: alternates exist because a
+    /// *line* was reworded, and enumerating every combination across a span would
+    /// be combinatorial for no benefit — a segment covering several lines is
+    /// already matching loosely enough that one reworded member is absorbed.
+    pub fn span_token_variants<'a>(&'a self, span: Span, lang: &LangCode) -> Vec<Vec<&'a str>> {
+        if span.len() == 1 {
+            if let Some(forms) = self.lines[span.first()].forms(lang) {
+                return forms
+                    .iter()
+                    .map(|mt| mt.tokens.iter().map(String::as_str).collect())
+                    .collect();
+            }
+            return Vec::new();
+        }
+        self.span_tokens(span, lang).into_iter().collect::<Vec<_>>()
+    }
+
     /// Languages appearing on any member of `span`, in first-seen order.
+    /// Does any line carry an alternate? Used only for reporting.
+    pub fn alternate_count(&self) -> usize {
+        self.lines
+            .iter()
+            .map(|l| {
+                l.by_lang
+                    .first()
+                    .map_or(0, |(_, f)| f.len().saturating_sub(1))
+            })
+            .sum()
+    }
+
     pub fn span_langs(&self, span: Span) -> Vec<LangCode> {
         let mut out: Vec<LangCode> = Vec::new();
         for i in span.iter() {
@@ -391,6 +448,7 @@ mod tests {
             text: text.into(),
             lang: None,
             landmark: 0,
+            alternates: Vec::new(),
         }
     }
 

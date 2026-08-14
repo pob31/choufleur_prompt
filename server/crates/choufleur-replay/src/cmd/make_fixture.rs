@@ -317,6 +317,7 @@ pub fn load_test_script(n_characters: usize) -> Script {
                 text: (*text).into(),
                 lang: None,
                 landmark: 0,
+                alternates: Vec::new(),
             });
             seq += 1;
         }
@@ -494,6 +495,7 @@ pub fn default_script() -> Script {
                 text: (*text).into(),
                 lang: lang.map(|ls| ls.iter().map(|l| LangCode::new(l)).collect()),
                 landmark: *lm,
+                alternates: Vec::new(),
             })
             .collect(),
     }

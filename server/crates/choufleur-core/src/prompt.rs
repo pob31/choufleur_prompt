@@ -129,6 +129,7 @@ mod tests {
             text: text.into(),
             lang: None,
             landmark: 0,
+            alternates: Vec::new(),
         };
         Script {
             format: "choufleur-script".into(),

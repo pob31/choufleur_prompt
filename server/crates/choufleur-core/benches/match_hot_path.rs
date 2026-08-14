@@ -31,6 +31,7 @@ fn build_script(n: usize) -> Script {
             text: LINES[i % LINES.len()].to_string(),
             lang: None,
             landmark: if i % 25 == 0 { 3 } else { 0 },
+            alternates: Vec::new(),
         })
         .collect();
     Script {

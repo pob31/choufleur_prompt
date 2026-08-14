@@ -85,6 +85,7 @@ fn toy_script() -> Script {
                 text: (*text).into(),
                 lang: None,
                 landmark: *lm,
+                alternates: Vec::new(),
             })
             .collect(),
     }

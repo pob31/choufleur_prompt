@@ -468,6 +468,54 @@ failure — and prompt honest failure is also what lets it find its way back.
 Lost-events per excerpt are now plausible where before they were not: 0 on the
 clean French monologue, 1 on the bilingual one, 2 on the fight.
 
+### H. Learning the performed text: it works, and the naive version makes things worse
+
+The dominant error source is script drift, so the obvious question is whether a
+production can teach Choufleur its own text night after night. Measured, on the
+La Reprise corpus, the answer is yes — with two conditions that are not optional.
+
+`ScriptLine` gains an `alternates` array: ways a line has actually been performed,
+matched *in addition to* the written text, which is never touched and is still what
+the client displays (notation §2, principle 1). `research/learn_alternates.py`
+aligns a run's transcript against the script offline and proposes them.
+
+**Learn from the recording, never from the tracker's own trace.** Learning from the
+live tracker's confident matches would be confirmation bias: it reinforces whatever
+the tracker already believed and drifts the script toward its own mistakes. The
+offline pass has the whole recording in both directions, no forward-only constraint
+and no latency budget, and is simply a better observer.
+
+**Proposals require a mutual best match.** The first implementation took each
+line's best-matching passage, and it *reduced* tracking on one excerpt. The reason
+is visible in one example: line L-0002 was proposed the alternate *"Ik ben het
+toneel opgelopen. Opkomen."* — whose first half is **line L-0001's text**. The
+alternate made L-0002 match passages that were never L-0002. Another line latched
+onto a wholly different speech on the coincidental overlap of the word *acteur*. A
+proposal is only trustworthy when the line's best passage also has that line as
+*its* best line: they must choose each other.
+
+Same audio, tracking with the written script versus with learned alternates:
+
+| Excerpt | written | learned | Δ |
+|---|---|---|---|
+| 3 Sara & Fabian (most drifted) | 9/44 | **19/44** | **+10** |
+| 4 Sébastien & Tom | 17/34 | 20/34 | +3 |
+| 5 Perche (boom mic) | 9/19 | 11/19 | +2 |
+| 1 Johan | 22/24 | 21/24 | −1 |
+| 2, 6 | unchanged | | 0 |
+
+The largest gain lands on the excerpt with the most drift, which is what the theory
+predicts and the reason to believe the mechanism rather than the number.
+
+Two honest caveats. This learned and measured on the **same run**, so it bounds
+what a *corrected script* is worth — the counterfactual "if the script had said what
+the actors say" — and says nothing yet about generalising to the next night. And
+one excerpt still regresses, because a single night cannot separate a real change
+in the text from an ASR slip or a one-off improvisation. That is what `--min-runs`
+is for: require a variant to recur across runs before proposing it. It is
+implemented and **untested**, for want of a second night — and it is the specific
+reason learning *night after night* is worth more than learning once.
+
 ---
 
 ## Open questions for the real corpus

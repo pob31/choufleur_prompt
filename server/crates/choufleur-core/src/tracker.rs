@@ -604,9 +604,10 @@ impl<'a> Tracker<'a> {
             if !seg.langs.is_empty() && !seg.langs.contains(lang) && span_langs.len() > 1 {
                 continue;
             }
-            let Some(line_tokens) = script.span_tokens(span, lang) else {
+            let variants = script.span_token_variants(span, lang);
+            if variants.is_empty() {
                 continue;
-            };
+            }
             let seg_tokens = self.prepared_segment(seg, lang);
 
             // Every line a multi-line span claims must be independently audible in
@@ -623,10 +624,14 @@ impl<'a> Tracker<'a> {
                 }
             }
 
-            let s = token_set_ratio(&seg_tokens, &line_tokens)
-                * token_dice(&seg_tokens, &line_tokens).powf(overlap_exp);
-            if s > fuzzy {
-                fuzzy = s;
+            // Best over the written line and every way it has actually been
+            // performed. The written form still wins ties, being first.
+            for line_tokens in &variants {
+                let s = token_set_ratio(&seg_tokens, line_tokens)
+                    * token_dice(&seg_tokens, line_tokens).powf(overlap_exp);
+                if s > fuzzy {
+                    fuzzy = s;
+                }
             }
         }
         if fuzzy <= 0.0 {
