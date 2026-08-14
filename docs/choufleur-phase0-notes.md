@@ -831,8 +831,8 @@ annotation is still to do, and is the first thing to try on this corpus.
 ### N. The cues are already written down
 
 The devplan assumes an operator types their cues in. They usually should not have to.
-A sound operator who has run a show owns a *conduite* — the script as a PDF with cues
-in the margin and trigger words highlighted — and the real one for Hécube holds 104
+A sound operator who has run a show owns a *conduite* — the script as a PDF, marked
+up — and the real one for Hécube holds 104
 cue notes and 113 marks as live PDF annotations: numbered cues against the light plot,
 Dugan automixer states, per-actor mutes and trims, distance-compensating delay, and
 visual triggers (*"Tissus qui tombe >"*, *"Elsa enjambe >"*). `conduite_to_cues.py`

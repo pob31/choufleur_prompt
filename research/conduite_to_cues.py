@@ -3,16 +3,28 @@
 
 The devplan assumes cues get typed in. They usually do not have to be. An operator
 who has run a show already owns a conduite — the script as a PDF, with the cues
-written in the margin and the trigger words highlighted — and that document holds
+written in the margin and the pages marked up — and that document holds
 the two things Choufleur needs: *what happens* and *when*. Typing all of it again is
 a few hours of work with a fresh opportunity for error on every line.
 
     python conduite_to_cues.py conduite.pdf script.json -o cues.json
 
-The margin notes come out as FreeText annotations and the trigger marks as
-Highlights, both carrying a position on the page. Anchoring is therefore geometric
+The margin notes come out as FreeText annotations and the highlights as Highlight
+annotations, both carrying a position on the page. Anchoring is therefore geometric
 first — a cue belongs to whatever it was written next to — and textual second: the
 words near it are matched against the script to find the line.
+
+**The colours mean something, and it is not for this tool to say what.** *Some* marks
+are trigger points — on a word or a phrase, or standing in for a visual cue. Some flag
+a passage that must be ridden because it is about to get loud. On this conduite a
+neutral grey lies over the cuts. The colour carries the rest of the coding: which
+system acts, a QLab go or a move on the desk. All of that is one person's scheme for
+one show, and the same person may mark the next one differently.
+
+So each cue is emitted with the colour of the mark it was anchored to, and the
+palette is printed with a count of what each colour covers. Mapping colour to meaning
+is a single decision made once in prep, by somebody who knows. Guessing it here would
+be wrong roughly as often as conventions differ.
 
 **Pages are aligned before cues are.** Anchoring each note by its own marked words
 fails, and fails in a way worth recording: the marks are short — *"polymestor"*,
@@ -322,10 +334,12 @@ def main() -> None:
         if near:
             near.sort(key=lambda m: abs(m["y"] - cue["y"]))
             evidence, source = near[0]["text"], "highlight"
+            mark_colour = near[0]["colour"]
         else:
             rows = [t for y, t in body.get(cue["page"], [])
                     if -args.band <= y - cue["y"] <= 12.0]
             evidence, source = " ".join(rows[-3:]), "page"
+            mark_colour = None
 
         want = tokens(evidence)
         lo, hi = window(cue["page"])
@@ -359,6 +373,7 @@ def main() -> None:
             "page": cue["page"],
             "evidence": evidence[:120],
             "evidenceFrom": source,
+            "markColour": mark_colour,
             "score": round(best, 3),
         }
         if VISUAL.search(cue["text"]):
