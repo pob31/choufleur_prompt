@@ -1134,3 +1134,50 @@ This is the clearest remaining structural gap, and unlike the others it is not a
 audio at all. Candidate direction: on a zone or mixed feed a short segment should still
 be allowed multi-line spans, since one VAD segment routinely covers three short
 exchanges. It needs measuring against both nights before it is believed.
+
+### V. The lexicon earns its place; the matchers are redundant
+
+The full 2×2 the operator asked for — lexicon on/off × matcher — on both Hécube
+nights. The two act at different stages, so it costs two transcriptions rather than
+eight: the lexicon changes recognition, the matcher changes only matching.
+
+| lexicon | matcher | night | reached | lost | time lost |
+| --- | --- | --- | --- | --- | --- |
+| off | words | 16 | 611 | 27 | 758 s |
+| off | both | 16 | 618 | 23 | 749 s |
+| **on** | **both** | 16 | **621** | **21** | **537 s** |
+| off | words | 17 | 559 | 34 | 1205 s |
+| off | both | 17 | 570 | 34 | 1200 s |
+| **on** | **both** | 17 | 586 | **23** | **807 s** |
+
+**Time spent lost falls 28 % and 33 %** with the lexicon — far more than any matcher
+change bought, and in the direction argued against an hour earlier on the strength of
+watching it produce `Les, Polyxènes, Troie, Les, Polyxènes, Troie…`. That recitation is
+real; the hallucination filter catches it; the net is strongly positive. Best cell is
+both together on both nights, so the two are complementary.
+
+`window_accuracy` is deliberately absent from that table. Its anchors are derived from
+the transcript, so changing the transcript changes the denominator and the percentages
+stop being comparable down the lexicon column.
+
+**The two matchers, though, are near-identical.** Racing characters+sound against
+words-only over night 16: they agree **96.4 %** of sampled moments, the lead changes
+hands 5 times, median gap 0 lines — but the maximum gap is 711. So the alternating lead
+an operator sees is real, rare, and the only part that matters; the rest is two names
+for the same tracker.
+
+### W. What watching it changed about the display
+
+None of these came from a metric.
+
+- **The reading line sits a third down, not centred.** The operator needs what is
+  coming; centring spends half the screen on text whose only job is to confirm you were
+  right.
+- **The scroll anticipates, the highlight does not.** After a match goes quiet the
+  viewport drifts partway toward the next line, because a reader's eye is already there
+  before the actor finishes. The highlight stays on confirmed ground — it is a claim,
+  the scroll is only comfort.
+- **A one-line move eases; a relocation cuts.** Animating a jump across scenes implies
+  a journey that did not happen.
+- **No reading band.** A tinted strip across the current line sounded helpful and was
+  glare: the current line is already the only bright thing on a dim page.

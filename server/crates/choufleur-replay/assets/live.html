@@ -18,7 +18,6 @@
     --now: #ffd479;      /* the current line: warm, like a work light */
     --lost: #ff6b5e;
     --speaker: #7fb2d9;
-    --band: rgba(255, 212, 121, 0.06);
   }
   * { box-sizing: border-box; }
   html, body {
@@ -78,7 +77,6 @@
   }
   .lane .scroll::-webkit-scrollbar { display: none; }
   body[data-race="on"] #scroller { padding-left: 3vw; padding-right: 3vw; }
-  body[data-race="on"] #band { display: none; }
   body[data-race="on"] #view > .tag {
     position: absolute; z-index: 2; top: .4em; left: 25%; transform: translateX(-50%);
     padding: .2em .8em; border-radius: 999px; background: var(--edge); color: var(--dim);
@@ -93,18 +91,14 @@
   }
   .lane.ahead .tag { background: var(--now); color: #1a0d0b; }
   #view { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; z-index: 0; }
-  /* Centred on the script box, not on the window: the reading line has to sit in the
-     middle of what is actually visible. */
-  #band {
-    position: absolute; left: 0; right: 0; top: 50%; height: 2.6em;
-    transform: translateY(-50%);
-    background: var(--band);
-    border-top: 1px solid var(--edge); border-bottom: 1px solid var(--edge);
-    pointer-events: none; z-index: 1;
-  }
+
+  /* There is deliberately no reading band. A tinted strip across the reading line
+     seemed like it would help the eye find the position and did not: the current line
+     is already the only bright thing on a dim page, so the strip added glare without
+     adding information. Removed on the operator's word after watching it in a booth. */
   #scroller {
     position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden;
-    scrollbar-width: none; padding: 50vh 6vw;
+    scrollbar-width: none; padding: 34vh 6vw 66vh;
   }
   #scroller::-webkit-scrollbar { display: none; }
 
@@ -145,7 +139,6 @@
   body[data-conf="block"] .line.now { opacity: .72; }
   body[data-conf="scene"] .line.now { opacity: .5; font-style: italic; }
   body[data-conf="lost"] .line.now { color: var(--dim); opacity: .4; }
-  body[data-conf="lost"] #band { background: none; }
 
   /* Lost is loud on purpose. The measured error distribution is bimodal — on the
      line, or off by tens to hundreds — so the failure to design for is not "slightly
@@ -226,17 +219,20 @@
      attribution wrongly imported as dialogue, which is the commonest importer
      mistake, is precisely a case where the speaker is the part that needs fixing. */
   .editor { display: block; margin: 0 0 .85em 0; max-width: 46em; }
-  .editor input {
+  .editor input, .editor textarea {
     display: block; width: 100%; background: #16181d; color: var(--fg);
     border: 1px solid var(--dimmer); border-radius: 4px; padding: .35em .5em;
     font: inherit;
+  }
+  .editor textarea {
+    resize: vertical; overflow: hidden; line-height: 1.5; min-height: 2.4em;
   }
   .editor input.who-field {
     font: 600 .68em/1.4 ui-sans-serif, system-ui, sans-serif;
     letter-spacing: .09em; text-transform: uppercase; color: var(--speaker);
     margin-bottom: .3em; border-color: var(--edge);
   }
-  .editor input:focus { outline: none; border-color: var(--now); }
+  .editor input:focus, .editor textarea:focus { outline: none; border-color: var(--now); }
   .editor .row { display: flex; gap: .5em; align-items: center; margin-top: .35em; }
   .editor button {
     border: 1px solid var(--dimmer); background: none; color: var(--dim);
@@ -244,7 +240,7 @@
     font: 400 .62em/1.4 ui-sans-serif, system-ui, sans-serif; letter-spacing: .05em;
   }
   .editor button.struck { border-color: var(--lost); color: var(--lost); }
-  .editor input.gone { text-decoration: line-through; opacity: .45; }
+  .editor input.gone, .editor textarea.gone { text-decoration: line-through; opacity: .45; }
   .editor .keys {
     font: 400 .6em/1.5 ui-sans-serif, system-ui, sans-serif;
     color: var(--dimmer); margin-top: .25em; letter-spacing: .05em;
@@ -277,8 +273,7 @@
 <div id="stage">
   <div id="lost">position lost — waiting to recognise the text</div>
   <div id="view">
-    <div id="band"></div>
-    <div id="hint">tap the line being spoken to put it back on track</div>
+      <div id="hint">tap the line being spoken to put it back on track</div>
     <div id="scroller"><div id="lines"></div></div>
 
   </div>
@@ -344,6 +339,66 @@
     $lines.appendChild(frag);
   }
 
+  // ---- scrolling ------------------------------------------------------------
+  //
+  // Two behaviours the browser's own `smooth` cannot express. A move of one line while
+  // the text is still on screen should glide, because the eye is tracking it and a
+  // jerk breaks reading; a relocation across scenes should cut, because pretending to
+  // travel there implies a journey that did not happen.
+  let tween = null;
+  function scrollTo(top, ms) {
+    if (tween) cancelAnimationFrame(tween);
+    const from = $scroller.scrollTop;
+    const delta = top - from;
+    if (ms <= 0 || Math.abs(delta) < 1) { $scroller.scrollTop = top; return; }
+    const t0 = performance.now();
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / ms);
+      // Cosine ease: no abrupt start or stop, which is what makes a one-line move
+      // read as the page breathing rather than jumping.
+      const e = 0.5 - Math.cos(Math.PI * k) / 2;
+      $scroller.scrollTop = from + delta * e;
+      tween = k < 1 ? requestAnimationFrame(step) : null;
+    };
+    tween = requestAnimationFrame(step);
+  }
+
+  // Where the window should sit for a given line. Measured from the boxes rather than
+  // offsetTop, which is relative to the nearest *positioned* ancestor — #lines became
+  // positioned when the race pointers arrived, and every target silently came up short
+  // by the scroller's padding.
+  function anchorFor(index) {
+    const el = els[index];
+    if (!el) return null;
+    return (
+      $scroller.scrollTop +
+      el.getBoundingClientRect().top -
+      $scroller.getBoundingClientRect().top -
+      $scroller.clientHeight * READING_LINE +
+      el.offsetHeight / 2
+    );
+  }
+
+  // Lean toward the next line once this one has gone quiet.
+  //
+  // A reader's eye is on the next line before the actor has finished the current one,
+  // so waiting for confirmation makes the page feel like it trails the room. After a
+  // match falls silent the viewport drifts part of the way to the following line: the
+  // *scroll* anticipates, the highlight never does. Nothing here claims a position —
+  // if the show goes elsewhere the next update simply scrolls there instead.
+  let leanTimer = null;
+  function lean(index) {
+    clearTimeout(leanTimer);
+    leanTimer = setTimeout(() => {
+      if (!following || openEditor || current !== index) return;
+      const here = anchorFor(index), next = anchorFor(index + 1);
+      if (here === null || next === null) return;
+      selfScrolling++;
+      scrollTo(here + (next - here) * 0.45, 1400);
+      setTimeout(() => { selfScrolling = Math.max(0, selfScrolling - 1); }, 1520);
+    }, 900);
+  }
+
   function show(index, conf) {
     if (index < 0 || index >= els.length) return;
     if (!els[index] || !els[index].isConnected) {
@@ -376,21 +431,17 @@
 
     // Ease a step, cut a relocation. Gliding across three hundred lines would both
     // look absurd and disguise the fact that something significant just happened.
-    const el = els[index];
-    // Measured from the boxes themselves rather than from offsetTop. offsetTop is
-    // relative to the nearest *positioned* ancestor, and #lines became positioned when
-    // the race pointers were added — which silently made every scroll target short by
-    // the scroller's 50vh padding, and the script stopped following.
-    const target =
-      $scroller.scrollTop +
-      el.getBoundingClientRect().top -
-      $scroller.getBoundingClientRect().top -
-      $scroller.clientHeight / 2 +
-      el.offsetHeight / 2;
-    const jump = Math.abs(target - $scroller.scrollTop) > $scroller.clientHeight * 1.2;
+    const target = anchorFor(index);
+    if (target === null) return;
+    const distance = Math.abs(target - $scroller.scrollTop);
+    // Beyond a screen and a bit, the destination is a different place rather than a
+    // further one, so it is cut to rather than travelled to.
+    const offScreen = distance > $scroller.clientHeight * 1.2;
+    const ms = offScreen ? 0 : Math.min(900, 320 + distance * 1.1);
     selfScrolling++;
-    $scroller.scrollTo({ top: target, behavior: jump ? 'auto' : 'smooth' });
-    setTimeout(() => { selfScrolling = Math.max(0, selfScrolling - 1); }, jump ? 60 : 700);
+    scrollTo(target, ms);
+    setTimeout(() => { selfScrolling = Math.max(0, selfScrolling - 1); }, ms + 120);
+    lean(index);
   }
 
   $scroller.addEventListener('scroll', () => {
@@ -417,8 +468,35 @@
   });
 
   let openEditor = null;
-  function beginEdit(el) {
+  /// Where in the line the operator actually clicked.
+  ///
+  /// A speech runs to several visual lines, and dropping the caret at the end means
+  /// scrolling back to the word you were looking at — the correction you came to make
+  /// is almost never at the end.
+  function caretAt(el, ev) {
+    if (!ev) return null;
+    let node = null, offset = 0;
+    if (document.caretRangeFromPoint) {
+      const r = document.caretRangeFromPoint(ev.clientX, ev.clientY);
+      if (r) { node = r.startContainer; offset = r.startOffset; }
+    } else if (document.caretPositionFromPoint) {
+      const c = document.caretPositionFromPoint(ev.clientX, ev.clientY);
+      if (c) { node = c.offsetNode; offset = c.offset; }
+    }
+    if (!node || node.nodeType !== 3 || !el.contains(node)) return null;
+    // The line element holds a speaker chip and then the text, so the offset has to
+    // be counted from the start of the text the editor will actually contain.
+    let seen = 0;
+    for (const child of el.childNodes) {
+      if (child === node) return seen + offset;
+      if (child.nodeType === 3) seen += child.textContent.length;
+    }
+    return null;
+  }
+
+  function beginEdit(el, ev) {
     if (openEditor) openEditor(false);
+    const caret = caretAt(el, ev);
     const i = Number(el.dataset.i);
     const wasWho = lines[i].character || '';
     const wasText = lines[i].text;
@@ -428,8 +506,17 @@
     const who = document.createElement('input');
     who.className = 'who-field';
     who.value = wasWho.replace(/^char-/, '').replace(/-/g, ' ');
-    const txt = document.createElement('input');
+    // A textarea, not an input: script lines wrap over several visual lines and an
+    // input shows one, so a long speech became a slot you had to scroll sideways
+    // through to read what you were correcting.
+    const txt = document.createElement('textarea');
+    txt.rows = 1;
     txt.value = wasText;
+    const fit = () => {
+      txt.style.height = 'auto';
+      txt.style.height = txt.scrollHeight + 'px';
+    };
+    txt.addEventListener('input', fit);
     // Cut, not delete. The line stays in the script and stays on the page, struck
     // through, because a cut is a decision about tonight and not about the play — and
     // one that gets reversed often enough that losing the text would be worse than
@@ -485,8 +572,10 @@
     box.addEventListener('focusout', (e) => {
       if (!box.contains(e.relatedTarget)) done(true);
     });
+    fit();
     txt.focus();
-    txt.setSelectionRange(txt.value.length, txt.value.length);
+    const at = caret === null ? txt.value.length : Math.min(caret, txt.value.length);
+    txt.setSelectionRange(at, at);
   }
 
   function render(i) {
@@ -504,7 +593,7 @@
   $lines.addEventListener('click', (ev) => {
     const el = ev.target.closest('.line');
     if (!el || !ws || ws.readyState !== 1) return;
-    if (editing) { beginEdit(el); return; }
+    if (editing) { beginEdit(el, ev); return; }
     const i = Number(el.dataset.i);
     ws.send(JSON.stringify({ type: 'position_jump', lineIndex: i }));
     el.classList.remove('placed');
@@ -573,6 +662,13 @@
 
   // ---- the race: two matchers, one script, a pointer each --------------------
   const $gap = document.getElementById('gap');
+  // Where the current line sits in the window, as a fraction from the top.
+  //
+  // Not the middle. The operator needs what is *coming* — a cue two lines away is
+  // worth more than a line already spoken, and centring spends half the screen on
+  // text whose only job is to confirm you were right. A third down leaves roughly
+  // twice as much road ahead as behind, which is how a GPS frames it too.
+  const READING_LINE = 0.34;
   let raceOn = false, posA = -1, posB = -1;
   const ptr = {};
 
