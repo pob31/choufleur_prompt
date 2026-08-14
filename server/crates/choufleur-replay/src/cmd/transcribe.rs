@@ -78,6 +78,7 @@ pub fn run(
     channels: Option<Vec<u16>>,
     interim_ms: Option<u32>,
     audio_root: Option<PathBuf>,
+    no_agc: bool,
 ) -> Result<()> {
     let corpus = Corpus::load(corpus_path, audio_root)?;
     let (script, prepared) = super::load_script(&corpus.script_path())?;
@@ -87,6 +88,7 @@ pub fn run(
         super::resolve_model(vad_model, super::DEFAULT_VAD_MODEL)?,
     );
     cfg.realtime = realtime;
+    cfg.agc.enabled = !no_agc;
     cfg.mixdown = mixdown;
     cfg.channels = channels;
     if let Some(ms) = interim_ms {

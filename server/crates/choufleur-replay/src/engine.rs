@@ -22,6 +22,7 @@ use std::collections::BinaryHeap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use choufleur_asr::agc::AgcConfig;
 use choufleur_asr::channel::ChannelFrontend;
 use choufleur_asr::filter::{FilterConfig, HallucinationFilter};
 use choufleur_asr::segmenter::{AudioSegment, VadConfig};
@@ -80,6 +81,9 @@ pub struct EngineConfig {
     pub whisper_model: PathBuf,
     pub vad_model: PathBuf,
     pub vad: VadConfig,
+    /// Per-channel adaptive gain. On by default; measured off on ambient captures,
+    /// where lifting the room between phrases is a way to invent speech.
+    pub agc: AgcConfig,
     pub whisper: WhisperOpts,
     pub filter: FilterConfig,
     /// Pace the run against the wall clock and measure end-to-end latency.
@@ -94,6 +98,7 @@ pub struct EngineConfig {
 impl EngineConfig {
     pub fn new(whisper_model: PathBuf, vad_model: PathBuf) -> Self {
         EngineConfig {
+            agc: AgcConfig::default(),
             whisper_model,
             vad_model,
             vad: VadConfig::default(),
@@ -291,7 +296,7 @@ impl Engine {
                 character: None,
                 lang: None,
                 reader,
-                frontend: ChannelFrontend::new(0, self.cfg.vad.clone())?,
+                frontend: ChannelFrontend::with_agc(0, self.cfg.vad.clone(), self.cfg.agc.clone())?,
                 finished: false,
             });
             return Ok(sources);
@@ -310,7 +315,7 @@ impl Engine {
                 character: ch.character.clone(),
                 lang: ch.lang.clone(),
                 reader,
-                frontend: ChannelFrontend::new(ch.index, self.cfg.vad.clone())?,
+                frontend: ChannelFrontend::with_agc(ch.index, self.cfg.vad.clone(), self.cfg.agc.clone())?,
                 finished: false,
             });
         }

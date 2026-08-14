@@ -31,6 +31,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AgcConfig {
+    /// Whether to touch the signal at all.
+    ///
+    /// Off is a real operating point, not just a test harness: on a close mic the
+    /// gain earns its keep, but on an ambient capture the same rule lifts room tone
+    /// and reverb between phrases, and handing the recogniser louder noise is how it
+    /// is invited to invent. Which of those a given channel is cannot be known from
+    /// the audio alone, so it stays switchable and is measured per corpus.
+    pub enabled: bool,
     /// Where speech should end up, in dBFS. Roughly what the models were trained on.
     pub target_dbfs: f32,
     /// Never amplify by more than this. A channel that needs more than 40 dB is
@@ -53,6 +61,7 @@ pub struct AgcConfig {
 impl Default for AgcConfig {
     fn default() -> Self {
         AgcConfig {
+            enabled: true,
             target_dbfs: -20.0,
             max_gain_db: 40.0,
             min_snr_db: 12.0,
@@ -116,7 +125,7 @@ impl AutoGain {
 
     /// Apply gain to one block in place, updating the estimates from it first.
     pub fn process(&mut self, block: &mut [f32]) {
-        if block.is_empty() {
+        if block.is_empty() || !self.cfg.enabled {
             return;
         }
         let rms = (block.iter().map(|s| s * s).sum::<f32>() / block.len() as f32).sqrt();

@@ -59,6 +59,14 @@ struct AudioArgs {
     /// lag can then be no better than the length of the line being spoken.
     #[arg(long)]
     interim_ms: Option<u32>,
+    /// Turn off the per-channel adaptive gain.
+    ///
+    /// It earns its keep on a close mic gained for a shout. On an ambient capture
+    /// the same rule lifts room tone and reverb between phrases, and handing the
+    /// recogniser louder noise is how it is invited to invent — so which way this
+    /// goes is a measurement, per corpus, not a default.
+    #[arg(long)]
+    no_agc: bool,
 }
 
 #[derive(Parser)]
@@ -198,6 +206,7 @@ fn main() -> Result<()> {
             audio.channels,
             audio.interim_ms,
             audio_root,
+            audio.no_agc,
         ),
         Command::Track {
             corpus,
