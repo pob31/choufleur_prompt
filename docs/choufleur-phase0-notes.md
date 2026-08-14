@@ -903,6 +903,51 @@ Until it is run, the honest reading is: **close mics are a requirement, not a
 preference**, and a production that cannot provide them is out of scope rather than
 merely degraded.
 
+### P. The tracker optimises the wrong thing
+
+Put by the operator, and it reframes the problem: the job is to turn the page and to
+prod a technician whose attention has drifted. Not to transcribe, and not to *match* —
+to know **where we are and how sure we are**. Those are different objectives, and the
+engine has been built for the wrong one.
+
+The tracker decides. Each segment is scored, and if the best score clears a threshold
+the position moves; otherwise the segment is discarded. On Lazzi that discarded 1984
+of 2199 segments and reached 6 % of the script, because no single segment ever looked
+good enough to act on. But 1984 unusable observations are not 1984 *empty* ones.
+
+`position_filter.py` keeps a distribution instead — `p(line | everything heard)`,
+updated by a motion model (the show advances at a knowable pace, smeared) and an
+observation model scored on **character trigrams**, since a recogniser that hears
+"romine" for "ruine" has still delivered most of the trigrams. Word matching scores
+that zero, which is precisely why the hard tracker starves on a bad channel.
+
+On the same garbled Lazzi transcript the hard tracker could not use:
+
+    250 s L0002 · 671 s L0101 · 1491 s L0252 · 2826 s L0497 · 4386 s L0769 · 6744 s L0996
+
+Monotonic, start to end, over 1 h 53 m. The signal was always in there; the threshold
+was throwing it away. Median belief within ±12 lines — about a page — is **52.9 %** on
+Lazzi and **79.6 %** on Hécube.
+
+**But the confidence is not calibrated, which is the part that was actually asked
+for.** When the filter says it is 90 % sure, it agrees with the show's average pace
+only 54 % of the time on Hécube and 43 % on Lazzi. Some of that gap is the filter and
+some is the yardstick: linear pace is a poor proxy for where a show really is, since
+scenes differ and nothing runs to a metronome. Which of the two is at fault cannot be
+established with the material as it stands.
+
+So this is where labelled onsets stop being a tidy-up task and become the blocking
+one. A number like "95 % certain" is a *claim about calibration*, and calibration is
+the one property that cannot be measured against a proxy — it needs ground truth, on
+at least one act, and it has been item 7 on the list all along.
+
+Two further things the trajectories show. The filter inherits finding M's
+repeated-passage problem and its leak term makes it worse: Hécube throws it back to
+L0029 and L0112 late in the show, which is the scene-2 copy of the scene-4 text.
+And confidence and accuracy are not the same failure — a filter can be sure and wrong,
+which for an operator is worse than being unsure, so the prodding behaviour must key
+off the *distribution's* shape rather than off the peak alone.
+
 ---
 
 ## Open questions for the real corpus
