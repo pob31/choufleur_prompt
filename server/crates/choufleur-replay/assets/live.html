@@ -162,7 +162,10 @@
     position: relative; z-index: 4;
     flex: 0 0 9em; height: 9em; overflow-y: auto;
     padding: .5em 1.1em .6em; background: #000;
-    border-top: 1px solid var(--edge);
+    /* Above the script, so the transcript takes its room from the past rather than
+       the future: the reading line sits a third down and everything below it is text
+       that has not been said yet, which is the part worth screen space. */
+    border-bottom: 1px solid var(--edge);
     font: 400 .66em/1.5 ui-mono, ui-monospace, SFMono-Regular, Menlo, monospace;
     user-select: text; -webkit-user-select: text; cursor: text;
   }
@@ -272,12 +275,12 @@
 <body data-conf="scene" data-running="true">
 <div id="stage">
   <div id="lost">position lost — waiting to recognise the text</div>
+  <div id="heard"><div class="head">heard<button id="copy">copy</button></div><div id="heardlog"></div></div>
   <div id="view">
       <div id="hint">tap the line being spoken to put it back on track</div>
     <div id="scroller"><div id="lines"></div></div>
 
   </div>
-  <div id="heard"><div class="head">heard<button id="copy">copy</button></div><div id="heardlog"></div></div>
   <div id="editing">editing — click a line to correct it</div>
   <footer>
     <span id="dot"></span>
@@ -303,9 +306,7 @@
   let els = [];
   let current = -1;
   let following = true;
-  // Programmatic scrolling fires the same events as a finger, so follow is only
-  // dropped when the scroll was not one we asked for.
-  let selfScrolling = 0;
+
 
   const fmt = (s) => {
     s = Math.max(0, Math.round(s));
@@ -345,22 +346,49 @@
   // the text is still on screen should glide, because the eye is tracking it and a
   // jerk breaks reading; a relocation across scenes should cut, because pretending to
   // travel there implies a journey that did not happen.
-  let tween = null;
-  function scrollTo(top, ms) {
-    if (tween) cancelAnimationFrame(tween);
-    const from = $scroller.scrollTop;
-    const delta = top - from;
-    if (ms <= 0 || Math.abs(delta) < 1) { $scroller.scrollTop = top; return; }
-    const t0 = performance.now();
-    const step = (now) => {
-      const k = Math.min(1, (now - t0) / ms);
-      // Cosine ease: no abrupt start or stop, which is what makes a one-line move
-      // read as the page breathing rather than jumping.
-      const e = 0.5 - Math.cos(Math.PI * k) / 2;
-      $scroller.scrollTop = from + delta * e;
-      tween = k < 1 ? requestAnimationFrame(step) : null;
-    };
-    tween = requestAnimationFrame(step);
+  // A continuous follower rather than a tween per update.
+  //
+  // Discrete eased hops are irregular by construction: each one accelerates from rest
+  // and brakes to a stop, so a run of updates reads as a series of lurches whose
+  // rhythm is set by when segments happen to arrive. Holding a target and moving
+  // toward it at a bounded speed makes the motion depend on distance alone — the page
+  // creeps while the show creeps and travels while it travels, and an update landing
+  // mid-move simply changes where it is going without interrupting it.
+  const MAX_SPEED = 240;      // px per second: a pace text stays readable through
+  const MIN_SPEED = 26;       // so the last few pixels do not crawl indefinitely
+  let scrollTarget = null;
+  let lastProgrammatic = 0;
+  let lastFrame = 0;
+
+  function follow(now) {
+    requestAnimationFrame(follow);
+    const dt = Math.min(0.05, lastFrame ? (now - lastFrame) / 1000 : 0);
+    lastFrame = now;
+    if (scrollTarget === null || dt <= 0) return;
+    const remaining = scrollTarget - $scroller.scrollTop;
+    if (Math.abs(remaining) < 0.6) {
+      $scroller.scrollTop = scrollTarget;
+      scrollTarget = null;
+      lastProgrammatic = now;
+      return;
+    }
+    // Constant speed far out, easing only over the last stretch, so arrivals settle
+    // instead of stopping dead.
+    const speed = Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.abs(remaining) * 1.6));
+    const step = Math.sign(remaining) * Math.min(Math.abs(remaining), speed * dt);
+    $scroller.scrollTop += step;
+    lastProgrammatic = now;
+  }
+  requestAnimationFrame(follow);
+
+  function scrollTo(top, instant) {
+    if (instant) {
+      scrollTarget = null;
+      $scroller.scrollTop = top;
+      lastProgrammatic = performance.now();
+      return;
+    }
+    scrollTarget = top;
   }
 
   // Where the window should sit for a given line. Measured from the boxes rather than
@@ -393,9 +421,7 @@
       if (!following || openEditor || current !== index) return;
       const here = anchorFor(index), next = anchorFor(index + 1);
       if (here === null || next === null) return;
-      selfScrolling++;
-      scrollTo(here + (next - here) * 0.45, 1400);
-      setTimeout(() => { selfScrolling = Math.max(0, selfScrolling - 1); }, 1520);
+      scrollTo(here + (next - here) * 0.45, false);
     }, 900);
   }
 
@@ -431,27 +457,48 @@
 
     // Ease a step, cut a relocation. Gliding across three hundred lines would both
     // look absurd and disguise the fact that something significant just happened.
+    // Only move when the line actually changes. Re-anchoring on every update fought
+    // the anticipatory drift directly: lean() eases forward, the next segment reports
+    // the same line, and the page slid back to where it started — a visible twitch per
+    // segment, worst at the opening where segments are densest.
+    if (index === scrolledTo) return;
+
+    // Do not chase a position the tracker itself calls uncertain. Before the first
+    // real fix it searches the whole script, so the reported line can be anywhere; the
+    // banner and the dimming already say so, and following it as well turns an honest
+    // "I do not know" into a page that cannot sit still.
+    if (conf === 'lost' || conf === 'scene') return;
+
     const target = anchorFor(index);
     if (target === null) return;
+    scrolledTo = index;
     const distance = Math.abs(target - $scroller.scrollTop);
     // Beyond a screen and a bit, the destination is a different place rather than a
     // further one, so it is cut to rather than travelled to.
     const offScreen = distance > $scroller.clientHeight * 1.2;
-    const ms = offScreen ? 0 : Math.min(900, 320 + distance * 1.1);
-    selfScrolling++;
-    scrollTo(target, ms);
-    setTimeout(() => { selfScrolling = Math.max(0, selfScrolling - 1); }, ms + 120);
+    // Duration grows faster than distance, which is the point: a fixed ceiling means
+    // a longer move is simply a faster one, and several lines at once flicked past
+    // while the reader was still reading them. Holding roughly constant speed instead
+    // keeps a three-line advance legible — the text stays readable *through* the move,
+    // which is what a page being read has to do and a page being animated does not.
+    scrollTo(target, offScreen);
     lean(index);
   }
 
   $scroller.addEventListener('scroll', () => {
-    if (selfScrolling > 0) return;
+    // The follower writes scrollTop on almost every frame, so a counter with timeouts
+    // cannot tell its own motion from a finger. Recency can: anything within a couple
+    // of frames of our last write was us.
+    if (performance.now() - lastProgrammatic < 120) return;
     if (following) { following = false; $follow.hidden = false; }
   }, { passive: true });
 
   $follow.addEventListener('click', () => {
     following = true;
     $follow.hidden = true;
+    // Force a re-anchor: the reader has asked to come back, so the usual
+    // same-line-means-stay-put rule does not apply.
+    scrolledTo = -1;
     if (current >= 0) show(current, document.body.dataset.conf);
   });
 
@@ -669,6 +716,9 @@
   // text whose only job is to confirm you were right. A third down leaves roughly
   // twice as much road ahead as behind, which is how a GPS frames it too.
   const READING_LINE = 0.34;
+  // The line the viewport is currently placed for, which is not the same as the line
+  // the tracker is on: the drift moves the window without changing this.
+  let scrolledTo = -1;
   let raceOn = false, posA = -1, posB = -1;
   const ptr = {};
 
