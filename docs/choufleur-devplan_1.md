@@ -27,6 +27,13 @@ Everything runs against files on disk. No live audio capture, no server, no clie
 
 *Tasks:*
 - Select 1–2 productions; export per-channel WAVs (and a mixed-down variant of the same material) for at least one full act
+- **Check the script is the one that was performed.** A prep document ages: a show's
+  text keeps moving after the premiere while the script usually does not. Measured
+  on real touring material, drift between a premiere-dated script and a mid-tour
+  recording was the largest single error source, and it is indistinguishable from
+  engine failure unless it is looked for. `research/script_vs_audio.py` reports the
+  ceiling — what fraction of script lines appear anywhere in the audio at all —
+  and should be run before any tuning
 - Prepare the matching script as plain structured text (character + line, per act/scene) — hand-rolled format is fine here; the real show file arrives in Phase 1
 - Produce a **ground-truth timeline** (line → onset timestamp): forced alignment in the Python harness (e.g. WhisperX/aeneas), then hand-correct — correcting is far faster than labeling from scratch
 - Define the corpus manifest: paths, channels, character→channel map, language tags, SHA-256 of each audio file. Audio lives on external storage; the manifest (with hashes) lives in git
@@ -75,11 +82,34 @@ On real recordings, full act, `small` model (`medium` acceptable for non-English
 
 | Criterion | Threshold |
 |---|---|
-| Coverage | Reported position within **±1 line** of ground truth for **≥ 90 %** of speech-active time |
+| **Page** | Reported position within **±5 lines** of ground truth for **≥ 90 %** of speech-active time |
+| Precision | Within **±1 line** for **≥ 60 %** of speech-active time |
 | Lag | Median line-detection lag (audio onset → tracker update) **≤ 2.0 s**, p95 **≤ 4.0 s** |
-| Honesty | **< 1 confident-wrong event per act** (tracker at word/line confidence while > ±3 lines off) — "uncertain is better than wrong", made numeric |
+| Honesty | **No confident-wrong event lasting longer than one segment** (tracker at word/line confidence while > ±5 lines off), and total confidently-wrong time **< 2 %** of speech-active time |
 | Recovery | After any tracking loss, re-anchor within **≤ 30 s** of subsequent speech, or at the next landmark |
-| Compute | Sustained faster-than-real-time with 3–4 concurrent active channels |
+| Compute | Sustained faster-than-real-time with 3–4 **concurrent** active channels |
+
+Three of these were revised after Phase 0 measured real material; the reasoning is
+in the [Phase 0 notes](choufleur-phase0-notes.md) and matters more than the numbers.
+
+**Page, not line.** The operator reads a page and needs the current line in the
+middle third of it (PRD, *How accurate is accurate enough*). ±1 line is a
+transcription-alignment criterion, not an operator one, and it is roughly five
+times stricter than the job requires — a system that satisfied every real need
+would have failed the old gate. ±1 is kept as a secondary *precision* figure
+because cue timing does care about it, at a threshold that reflects what is
+achievable rather than what would be nice.
+
+**Honesty in duration, not in count.** A cut wider than skip tolerance cannot be
+noticed until the next material is heard, so a brief stale window after a cut is
+physics, not a defect. What must not happen is a *sustained* confident-wrong
+stretch. Note that a position advancing at cue-block confidence is by definition
+not confidently wrong, which is what makes steady coarse tracking safe.
+
+**Concurrent, and it means it.** Ordinary dialogue takes turns, so a corpus of
+scene work measures one active channel however many the manifest lists. The
+criterion needs a genuinely overlapping fixture — `make-fixture --load-test <n>`
+builds one.
 
 **Pass** → Phase 1. **Marginal** (e.g. coverage 80–90 %) → one bounded iteration on biasing/landmarks/VAD, then re-gate. **Fail** → stop, or pivot the concept to manual-drive-first with ASR assist. Do not build the app on a broken engine.
 

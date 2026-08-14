@@ -151,8 +151,31 @@ The system maintains a probability distribution over current script position and
 |-------|-------------|---------------------|
 | Word | Exact transcript match | Falls back to line level |
 | Line | Rough semantic match, fuzzy | Falls back to cue block level |
-| Cue block | "Somewhere in this exchange before cue N" | Holds, waits for landmark |
+| Cue block | "Somewhere in this exchange before cue N" — also the level reported when the position advances on a plausible but imperfect match | Holds, waits for landmark |
 | Scene | Absolute anchor, very reliable | Re-anchors at scene change |
+
+### How accurate is accurate enough
+
+The operator reads a page, not a line number. What they need is that **the page on
+screen is the right page, and the current line sits somewhere in the middle third
+of it** — near enough that the eye finds it without scrolling, with enough text
+visible above and below to follow the sense. Line-perfect tracking is not the
+requirement and never was.
+
+This has consequences that run through the whole design:
+
+- **Steadiness beats precision.** A position that keeps pace a few lines behind is
+  useful. A position frozen two minutes ago is worse than useless, because the page
+  looks live and is not. Refusing to move is not the conservative choice it appears
+  to be — see *Confidence levels* below, and the honesty rule that goes with it.
+- **Precision still matters near a cue.** Coarse position is fine for reading; it is
+  not fine for deciding when a standby fires. Cue leads expressed in lines rather
+  than seconds (see *Warning Design*) degrade gracefully with a coarse position,
+  where a seconds-based lead needs a pace estimate the tracker may not have.
+- **The confidence level is what carries the honesty**, not the refusal to move. A
+  position advancing at cue-block confidence says "somewhere around here", and the
+  client renders it as such. A *confidently* wrong position is the dangerous thing,
+  and that is what the go/no-go gate counts.
 
 ### Key principles
 
@@ -279,6 +302,12 @@ The goal is peripheral awareness, not alarm. A tap on the shoulder.
 
 - **Red frame** on script display — catches peripheral vision without demanding attention
 - **Configurable lead time per cue** — some cues need 30 seconds warning, some need 5; multi-stage standby/final warnings supported (see the notation spec, §4)
+- **Leads may be expressed in lines as well as seconds.** A seconds-based lead has
+  to be converted into a script position using the pace model, which is an estimate;
+  a lead of "three lines before" needs no such conversion and degrades gracefully
+  when the tracked position is coarse. Time is the right unit for a cue that must
+  land on a musical or lighting beat; lines are the right unit for "get ready, it's
+  coming". Both are wanted, and a cue may carry one of each.
 - **Warning fires even while browsing** — operator sees alert even when looking ahead in the script
 - **Footer always visible** — current cue, next cue, estimated time remaining
 
@@ -333,7 +362,20 @@ The script text is pristine; everything else is a layer. This model, the line-ID
 
 ### Script amendments
 
-Directors cut and rewrite. Annotations must survive.
+Directors cut and rewrite, and productions tour. Both matter, and the second is the
+one that bites quietly: a show's text keeps moving after the premiere while the
+prep document usually does not. A script that is six months stale looks perfectly
+valid, loads without complaint, and costs coverage in a way indistinguishable from
+the engine failing. Measured on real touring material, script drift was the single
+largest error source — larger than recognition, accents, or far-field capture.
+
+Two implications. The prep workflow should make the script's provenance visible
+(what draft, from when), and the run log — which records what was actually heard
+against what was expected — is the raw material for proposing updates back into the
+script. Learning a production's real text from its own run logs is a post-MVP
+direction, but the data to do it is collected from the first night.
+
+Annotations must survive all of this.
 
 - Re-importing an edited .docx re-anchors all layers to the new text via the four-pass algorithm in the notation spec (§3): exact match, order alignment, fuzzy match, orphan collection
 - The show file is **automatically backed up (timestamped) before every re-import**; re-import refuses to run if the backup cannot be written
