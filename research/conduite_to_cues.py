@@ -81,6 +81,25 @@ VISUAL = re.compile(
 )
 
 
+def colour_name(colour) -> str:
+    """A stable, human label for a highlight colour, so it can be named on the
+    command line without anybody typing RGB triples."""
+    if not colour or len(colour) < 3:
+        return "none"
+    r, g, b = colour[:3]
+    if max(r, g, b) - min(r, g, b) < 0.08:
+        light = (r + g + b) / 3
+        return "white" if light > 0.95 else "black" if light < 0.2 else "grey"
+    h = max(r, g, b)
+    if r == h and g >= 0.75 * r:
+        return "yellow" if b < 0.6 and g > 0.7 else "orange"
+    if r == h:
+        return "red" if b < 0.5 else "pink"
+    if g == h:
+        return "green"
+    return "blue" if b > r else "purple"
+
+
 def extract(pdf: Path):
     """Every cue note and every highlight, with the page text around it."""
     doc = fitz.open(pdf)
@@ -100,9 +119,11 @@ def extract(pdf: Path):
                     w[4] for w in words if fitz.Rect(w[:4]).intersects(r)
                 )
                 if covered.strip():
+                    c = a.colors.get("stroke") or a.colors.get("fill")
                     marks.append(
                         {"page": pno + 1, "y": r.y0, "text": " ".join(covered.split()),
-                         "kind": kind}
+                         "kind": kind, "colour": colour_name(c),
+                         "rgb": tuple(round(x, 2) for x in c) if c else None}
                     )
     return doc, cues, marks
 
@@ -138,6 +159,16 @@ def main() -> None:
                     help="how many lines a single page may span")
     ap.add_argument("--lookahead", type=int, default=60,
                     help="lines to search ahead when locating a page")
+    ap.add_argument("--segments", type=Path, nargs="*", default=[],
+                    help="one segments.jsonl per run; lets the recording say which "
+                         "highlight colour marks cuts rather than assuming a convention")
+    ap.add_argument("--cut-colour", nargs="*",
+                    help="name the colour(s) that mark cuts, e.g. --cut-colour grey. "
+                         "Overrides whatever the recording suggests")
+    ap.add_argument("--cut-rate", type=float, default=25.0,
+                    help="a colour whose lines are performed this rarely marks cuts")
+    ap.add_argument("--heard", type=float, default=0.6,
+                    help="how much of a line must appear in the audio to count as performed")
     args = ap.parse_args()
 
     script = json.loads(args.script.read_text())
@@ -146,9 +177,6 @@ def main() -> None:
 
     doc, cues, marks = extract(args.pdf)
     body = page_lines(doc)
-    by_page: dict[int, list[dict]] = {}
-    for m in marks:
-        by_page.setdefault(m["page"], []).append(m)
 
     cues.sort(key=lambda c: (c["page"], c["y"], c["x"]))
 
@@ -205,6 +233,86 @@ def main() -> None:
         before = [spans[p][0] for p in located if p < pno]
         after = [spans[p][1] for p in located if p > pno]
         return (before[-1] if before else 0), (after[0] if after else len(lines) - 1)
+
+    # Which lines each mark lies over. Containment bounded to the mark's page —
+    # unbounded, a marked epilogue matched seventeen lines scattered through the
+    # show, because this play repeats itself and a short mark carries no location.
+    for m in sorted(marks, key=lambda m: (m["page"], m["y"])):
+        want = tokens(m["text"])
+        lo, hi = window(m["page"])
+        m["lines"] = [
+            i for i in range(lo, hi + 1)
+            if len(line_toks[i]) >= 3
+            and len(line_toks[i] & want) / len(line_toks[i]) >= args.printed
+        ]
+
+    # What each colour *means* is one operator's habit on one show, so it is not
+    # guessed from the colour. It is measured, when a recording is offered: a mark
+    # over text that is still performed is a trigger, and a mark over text nobody
+    # says is a cut. That reads the convention off the evidence instead of assuming
+    # this conduite's grey is anyone else's.
+    heard: set[int] = set()
+    if args.segments:
+        passages: list[set[str]] = []
+        for path in args.segments:
+            recs = [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+            kept = [tokens(r["text"]) for r in recs
+                    if not r.get("interim") and not r.get("filtered")]
+            for i in range(len(kept)):
+                merged = set()
+                for k in range(3):
+                    if i + k >= len(kept):
+                        break
+                    merged |= kept[i + k]
+                    passages.append(set(merged))
+        for i, want in enumerate(line_toks):
+            if len(want) >= 3 and any(
+                len(want & p) / len(want) >= args.heard for p in passages
+            ):
+                heard.add(i)
+
+    palette: dict[str, dict] = {}
+    for m in marks:
+        p = palette.setdefault(m["colour"], {"marks": 0, "lines": set(), "multi": 0})
+        p["marks"] += 1
+        p["lines"].update(m["lines"])
+        if len(m["lines"]) > 1:
+            p["multi"] += 1
+
+    print("\nHIGHLIGHT COLOURS — what each one turned out to cover")
+    for name, p in sorted(palette.items(), key=lambda kv: -kv[1]["marks"]):
+        n = len(p["lines"])
+        if args.segments and n:
+            rate = 100 * len(p["lines"] & heard) / n
+            verdict = "CUT?" if rate <= args.cut_rate else "trigger"
+            note = f"{rate:3.0f}% still performed   {verdict}"
+        else:
+            note = f'{p["multi"]} mark(s) span several lines'
+        print(f'  {name:<8} {p["marks"]:3d} mark(s), {n:3d} line(s)   {note}')
+    if not args.segments:
+        print("  (pass --segments to have the recording say which colour means cut)")
+
+    chosen = set(args.cut_colour or [])
+    if not chosen and args.segments:
+        chosen = {
+            name for name, p in palette.items()
+            if p["lines"] and 100 * len(p["lines"] & heard) / len(p["lines"]) <= args.cut_rate
+        }
+    cut_ids, cut_marks = [], []
+    for m in sorted(marks, key=lambda m: (m["page"], m["y"])):
+        if m["colour"] not in chosen:
+            continue
+        cut_marks.append(m)
+        for i in m["lines"]:
+            if lines[i]["id"] not in cut_ids:
+                cut_ids.append(lines[i]["id"])
+
+    # A cut is not a trigger: the text under it is precisely what is no longer said,
+    # so it must not be offered as the words a cue fires on.
+    by_page: dict[int, list[dict]] = {}
+    for m in marks:
+        if m["colour"] not in chosen:
+            by_page.setdefault(m["page"], []).append(m)
 
     out, anchored = [], 0
     for cue in cues:
@@ -278,10 +386,22 @@ def main() -> None:
         for r in weak[:12]:
             print(f'  p{r["page"]:<4} {r["cue"][:58]}')
 
+    if chosen:
+        how = "named on the command line" if args.cut_colour else "identified from the recording"
+        print(f'\nCUTS — {"/".join(sorted(chosen))} marks, {how} '
+              f"({len(cut_marks)} mark(s), {len(cut_ids)} line(s))")
+        for m in cut_marks:
+            got = ", ".join(lines[i]["id"] for i in m["lines"]) or "no line located"
+            print(f'  p{m["page"]:<4} {got}')
+            print(f'         {m["text"][:78]}')
+    else:
+        print("\nNo colour identified as cuts. Name one with --cut-colour, or pass")
+        print("--segments and let the recording decide.")
+
     if args.out:
         args.out.write_text(
             json.dumps({"format": "choufleur-cues", "formatVersion": "0.1",
-                        "source": args.pdf.name, "cues": out},
+                        "source": args.pdf.name, "cues": out, "cutLineIds": cut_ids},
                        ensure_ascii=False, indent=1) + "\n"
         )
         print(f"\nwrote {args.out}")
