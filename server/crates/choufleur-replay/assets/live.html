@@ -986,6 +986,10 @@
     // — and `cueEditing` would be left pointing at a card that no longer exists,
     // freezing the layout for good. Commit it first.
     if (openCue) openCue();
+    // Filter first, then decide whether there is a rail to show. Reading `shown`
+    // before assigning it used the *previous* render's list, which on a fresh load is
+    // empty — so the rail hid itself on the one pass where nothing could correct it.
+    shown = mine();
     document.body.dataset.rail = shown.length ? 'on' : 'off';
     // Only one mark per line: two cues on the same line would fight over the text,
     // and the second leader can point at the first one's mark perfectly well.
@@ -995,7 +999,6 @@
     // lost its last one untouched — so the underline stays under words that no longer
     // fire anything, which is a lie the page keeps telling until something else
     // happens to redraw that line.
-    shown = mine();
     const had = new Set(triggerOf.keys());
     triggerOf = new Map();
     for (const c of shown) {
