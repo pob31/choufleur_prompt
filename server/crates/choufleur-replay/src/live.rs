@@ -24,7 +24,18 @@ use serde::Serialize;
 use crate::engine::Consumer;
 use crate::formats::SegmentRecord;
 
-pub const PROTOCOL_VERSION: u32 = 0;
+/// Bumped whenever the page needs something this binary might not have.
+///
+/// The page is served from disk and reloads in a second; the binary is not and does
+/// not. That gap is useful — it is what makes the display iterable during a two-hour
+/// run — and it is also a trap, because a page can quietly be newer than the server it
+/// is talking to. Observed: a flag control that rendered perfectly, sent `flag_line`
+/// into a server built before the message existed, and did nothing at all, with the
+/// page giving no hint that anything was wrong.
+///
+/// So the page carries the version it was written against and says so on screen when
+/// they disagree. A silent no-op is the one failure mode worth spending a field on.
+pub const PROTOCOL_VERSION: u32 = 1;
 
 /// One script line, as the client needs it. Sent once, in bulk.
 #[derive(Clone, Serialize)]

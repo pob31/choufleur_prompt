@@ -308,6 +308,18 @@
   }
   #edit.on { border-color: var(--now); color: var(--now); }
 
+  /* The page reloads from disk, the binary does not. When they disagree, controls
+     render and then do nothing — say so rather than letting it look like a bug in
+     whatever was just clicked. */
+  #stale {
+    display: none; position: absolute; z-index: 4; left: 50%; top: .6em;
+    transform: translateX(-50%); padding: .35em 1em; border-radius: 999px;
+    background: var(--lost); color: #1a0d0b; letter-spacing: .04em;
+    font: 600 .64em/1.4 ui-sans-serif, system-ui, sans-serif; text-transform: uppercase;
+  }
+  body[data-stale="on"] #stale { display: block; }
+  body[data-stale="on"] #editing { display: none; }
+
   #edit {
     margin-left: auto; border: 1px solid var(--dimmer); background: none;
     color: var(--dim); border-radius: 999px; padding: .3em .9em; font: inherit;
@@ -361,6 +373,7 @@
 </head>
 <body data-conf="scene" data-running="true">
 <div id="stage">
+  <div id="stale">this page is newer than the server — restart it to pick up the changes</div>
   <div id="lost">position lost — waiting to recognise the text</div>
   <div id="heard"><div class="head">heard<button id="copy">copy</button></div><div id="heardlog"></div></div>
   <div id="view">
@@ -1152,6 +1165,8 @@
   };
   window.addEventListener('resize', replace);
 
+  // What this page was written against. See PROTOCOL_VERSION in live.rs.
+  const PROTOCOL = 1;
   // Whether this is a reconnection rather than the first join.
   let joined = false;
 
@@ -1160,6 +1175,12 @@
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
       if (m.type === 'hello') {
+        // A page newer than its server renders every new control and then quietly
+        // does nothing when they are used. Say so.
+        document.body.dataset.stale = m.protocol === PROTOCOL ? 'off' : 'on';
+        if (m.protocol !== PROTOCOL) {
+          console.warn(`page speaks protocol ${PROTOCOL}, server speaks ${m.protocol}`);
+        }
         if (m.title) document.title = m.title + (m.prep ? ' — prep' : ' — live');
         if (m.prep) { document.body.dataset.prep = 'on'; setEditing(true); }
         // Re-read the script on every *re*-connect, never only at startup.
