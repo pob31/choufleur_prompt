@@ -183,6 +183,9 @@ mod tests {
 
     fn script() -> Script {
         let mk = |id: &str, ch: &str, text: &str| ScriptLine { cut: false,
+            kind: Default::default(),
+            hold: None,
+            hold_seconds: None,
             id: id.into(),
             act: "act-1".into(),
             scene: "sc-1".into(),

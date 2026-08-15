@@ -1505,3 +1505,64 @@ deleted — two stage directions and a speaker label — and one of them is
 `Chorégraphie sur la musique d'Otis Redding`, which is the music passage that started
 the whole "silence and music must not advance" thread. The place where a cue lost its
 line is exactly the place that wants a marker.
+
+### AD. Didascalies are a type, holds are a rule, and short lines are magnets
+
+The operator: *"The stage direction notes (didascalies) need to have also a type of
+marker in the script."* Three things came out of building it, and only the first was
+the one being asked for.
+
+**Detection comes from the document, not from a keyword list.** French scripts set
+didascalies in italic and the Hécube DOCX does — 40 mostly-italic paragraphs. The
+difference against guessing is stark: searching for "silence" finds Éric saying
+*"Silence, mes amies"* a dozen times, while the italics find the one stage direction
+that reads `Silence.` and nothing else. `research/mark_didascalies.py` marks 21 lines,
+every one of them genuine.
+
+Two traps in that, both learned here. Over half the italic paragraphs are **speaker
+attributions carrying a manner** — `NADIA, s'asseyant.`, `POLYMESTOR, toujours plus
+rapidement` — and must not become lines. And the cast list contains **`SÉPHORA, lit
+les didascalies`**: a performer whose job is to read the stage directions out loud, and
+she does, for the quoted Euripides ones. So `kind: stage` is presentational and
+**never** excludes a line from matching. A rule that "stage directions are not spoken"
+would have silently dropped a chunk of this show.
+
+**`hold` is the rule that does something.** Music, a held silence, an improvised
+passage: the script declaring in advance that it cannot predict what is coming. While
+the position sits on one, nothing heard is evidence — no decay, no timers, and above
+all no whole-script challenger, so the recogniser's opinion of a saxophone cannot
+relocate the show. It ends by hearing something further on, never on a timer:
+`hold_seconds` is a display hint, because a company does not hit its music cue to the
+second and a hold that expired on a stopwatch would restore the very problem it exists
+to remove. Two scenario tests pin it, and the second is the control — with the marker
+removed the same thirty segments of transcribed Otis Redding demonstrably lose the show.
+
+**The unlooked-for one: a short line is a jump magnet.** Tracking the prepped script
+put back two 100-line jumps, and the first landed on `Là.` — one word — at exactly the
+follow threshold, from `Excellences au milieu de la route`. `min_segment_tokens` has
+always treated a one-word *segment* as weak evidence that may confirm but never
+relocate. Nothing said the same about a one-word *line*, and it is the identical
+argument from the other end: 213 of Hécube's lines are three tokens or fewer, spread
+across the script like a field of magnets, each scoring respectably against anything
+because there is so little there to disagree with. `min_relocate_tokens: 4` guards both
+doors; following onto a short line is untouched, since a show walking onto its own next
+line needs no protection from itself.
+
+| | night 16 | night 17 |
+|---|---|---|
+| time lost | 261 → 241 s | 305 → 288 s |
+| moves ≥ 15 lines | 14 → 8 | 5 → 4 |
+| 6-line accuracy | 91 % | 93 → 94 % |
+
+**And the hand-prepping pays.** The operator's own edits — cuts applied, extraction
+errors fixed, stray speaker labels removed — are worth 91 % → 93 % on night 16 and
+93 % → 94 % on night 17, with p90 error 3 → 2 lines. Prepped script plus both guards is
+where the day ends: **93 % and 94 % in a six-line window, p90 error 2 and 1 lines, and
+no jump over a hundred lines on either night** — against 90 % / 92 %, p90 4 / 2, and 14
+and 15 such jumps yesterday morning.
+
+**Still open: the show before the show.** Hécube opens with ninety seconds of Otis
+Redding and house noise before line 1, all of it transcribed as dialogue. There is no
+line to hang a marker on, because the script has not started. That is not a marker
+problem but a run-control one — the operator's own "live processing that can be
+manually suspended and restarted".

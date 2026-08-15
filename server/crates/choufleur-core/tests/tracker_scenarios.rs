@@ -7,7 +7,7 @@
 //! what makes these assertions stable enough to be a regression net.
 
 use choufleur_core::lang::{LangCode, NormalizerRegistry};
-use choufleur_core::script::{Character, PreparedScript, Script, ScriptLine};
+use choufleur_core::script::{Character, Hold, LineKind, PreparedScript, Script, ScriptLine};
 use choufleur_core::tracker::{
     Confidence, PositionCause, RejectReason, Tracker, TrackerConfig, TrackerEvent,
 };
@@ -77,7 +77,11 @@ fn toy_script() -> Script {
         lines: rows
             .iter()
             .enumerate()
-            .map(|(i, (scene, ch, text, lm))| ScriptLine { cut: false,
+            .map(|(i, (scene, ch, text, lm))| ScriptLine {
+                cut: false,
+                kind: LineKind::Dialogue,
+                hold: None,
+                hold_seconds: None,
                 id: format!("L-{:04}", i + 1),
                 act: "act-1".into(),
                 scene: (*scene).into(),
@@ -739,6 +743,9 @@ fn long_script(n: usize) -> Script {
     let lines: Vec<ScriptLine> = (0..n)
         .map(|i| ScriptLine {
             cut: false,
+            kind: LineKind::Dialogue,
+            hold: None,
+            hold_seconds: None,
             id: format!("L-{:04}", i + 1),
             act: "act-1".into(),
             scene: "sc-1".into(),
@@ -876,4 +883,63 @@ fn audio_nothing_in_the_script_explains_can_be_made_to_cost_the_position_nothing
             );
         }
     }
+}
+
+#[test]
+fn a_marked_hold_stops_the_clock_instead_of_merely_hiding_the_page() {
+    // Otis Redding plays, Whisper writes it down as dialogue, and none of it fits.
+    // Without the marker that counts as evidence against the position; with it, the
+    // passage is simply not evidence at all.
+    let mut script = toy_script();
+    script.lines[3].kind = LineKind::Stage;
+    script.lines[3].text = "Chorégraphie sur la musique d'Otis Redding.".into();
+    script.lines[3].hold = Some(Hold::Music);
+    let prepared = prepared(&script);
+
+    let mut tracker = Tracker::new(&prepared, TrackerConfig::default());
+    let mut segs = SegBuilder::new();
+    for i in 0..4 {
+        tracker.update(&segs.say(Some(if i % 2 == 0 { A } else { B }), &script.lines[i].text, 3.0));
+    }
+    assert_eq!(tracker.position(), 3, "reached the music");
+    assert_eq!(tracker.hold(), Some(Hold::Music), "and knows why it is waiting");
+    let held = tracker.confidence();
+
+    // Two minutes of a recogniser's opinion of a soul record.
+    for _ in 0..30 {
+        tracker.update(&segs.say(Some(A), "Ouh, loving you, oh yeah, sittin' on the dock", 3.5));
+    }
+    assert_eq!(tracker.position(), 3, "the music never moved the show");
+    assert_eq!(
+        tracker.confidence(),
+        held,
+        "and never counted against it: a hold is absence of evidence, not evidence"
+    );
+
+    // The company comes back in, and the page comes back with it.
+    let events = tracker.update(&segs.say(Some(A), &script.lines[4].text, 3.0));
+    assert_eq!(position_of(&events).map(|(i, ..)| i), Some(4), "released by being heard");
+    assert_eq!(tracker.hold(), None);
+}
+
+#[test]
+fn without_the_marker_the_same_music_loses_the_show() {
+    // The control. Same audio, same script, marker removed — this is what the operator
+    // was watching when they said silence and music "expand the detection".
+    let mut script = toy_script();
+    script.lines[3].text = "Chorégraphie sur la musique d'Otis Redding.".into();
+    let prepared = prepared(&script);
+    let mut tracker = Tracker::new(&prepared, TrackerConfig::default());
+    let mut segs = SegBuilder::new();
+    for i in 0..4 {
+        tracker.update(&segs.say(Some(if i % 2 == 0 { A } else { B }), &script.lines[i].text, 3.0));
+    }
+    let before = tracker.confidence();
+    for _ in 0..30 {
+        tracker.update(&segs.say(Some(A), "Ouh, loving you, oh yeah, sittin' on the dock", 3.5));
+    }
+    assert!(
+        tracker.confidence() < before,
+        "unmarked, the music is read as the show having left us behind"
+    );
 }

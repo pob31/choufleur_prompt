@@ -310,6 +310,9 @@ pub fn load_test_script(n_characters: usize) -> Script {
         let pool = if i % 2 == 0 { LINES_FR } else { LINES_EN };
         for text in pool {
             lines.push(ScriptLine {
+                kind: Default::default(),
+                hold: None,
+                hold_seconds: None,
                 cut: false,
                 id: format!("L-{seq:04}"),
                 act: "act-1".into(),
@@ -489,6 +492,9 @@ pub fn default_script() -> Script {
             .iter()
             .enumerate()
             .map(|(i, (scene, ch, text, lang, lm))| ScriptLine {
+                kind: Default::default(),
+                hold: None,
+                hold_seconds: None,
                 cut: false,
                 id: format!("L-{:04}", i + 1),
                 act: "act-1".into(),

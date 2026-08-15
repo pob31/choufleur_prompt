@@ -42,6 +42,42 @@ pub struct SectionMeta {
     pub lang: Option<Vec<LangCode>>,
 }
 
+/// What a line *is*, as distinct from what it says.
+///
+/// Presentational, and deliberately not a matching rule. A didascalie is usually
+/// unspoken, but "usually" is not a thing to build on: in Hécube the cast list
+/// contains `SÉPHORA, lit les didascalies` — a performer whose job is to read the
+/// stage directions out loud — so a rule that excluded them from matching would
+/// silently drop a chunk of what is actually said on stage. Whether tracking should
+/// stop is `hold`'s business, and it is stated per line rather than inferred.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LineKind {
+    #[default]
+    Dialogue,
+    /// A stage direction (didascalie).
+    Stage,
+}
+
+/// A passage where the script stops predicting what will be heard.
+///
+/// Music, a held silence, an improvised exchange: the show is running, the operator
+/// still needs the page, and there is simply nothing to match against. Left to itself
+/// the tracker treats the gap as evidence — the recogniser writes down the music, none
+/// of it fits, the position's evidence erodes and something four hundred lines away
+/// starts to look reasonable. Saying so in the script costs one field and removes the
+/// guesswork.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Hold {
+    /// Nobody speaks.
+    Silence,
+    /// Music plays. Whisper will transcribe it as dialogue; it means nothing.
+    Music,
+    /// The company is off-script — improvisation, riffing, a running gag played long.
+    Adlib,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScriptLine {
@@ -77,6 +113,22 @@ pub struct ScriptLine {
     /// principle 1: pristine text).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub alternates: Vec<String>,
+    /// Dialogue, or a stage direction. See [`LineKind`].
+    #[serde(default, skip_serializing_if = "is_dialogue")]
+    pub kind: LineKind,
+    /// Tracking suspends here until something further on is heard. See [`Hold`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<Hold>,
+    /// Roughly how long the hold lasts, for the display's benefit. A hint and never a
+    /// gate: a company does not hit its music cue to the second, and a hold that
+    /// expired on a stopwatch while the music was still playing would put back exactly
+    /// the problem it was added to remove. The hold ends when the show is heard again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold_seconds: Option<f64>,
+}
+
+fn is_dialogue(k: &LineKind) -> bool {
+    matches!(k, LineKind::Dialogue)
 }
 
 fn is_false(v: &bool) -> bool {
@@ -150,6 +202,11 @@ pub struct PreparedLine {
     pub id: String,
     /// Struck from this production; see `ScriptLine::cut`.
     pub cut: bool,
+    /// Dialogue or didascalie; see [`LineKind`].
+    pub kind: LineKind,
+    /// Tracking suspends on this line; see [`Hold`].
+    pub hold: Option<Hold>,
+    pub hold_seconds: Option<f64>,
     /// Hash of the normalized text, so two lines that say the same thing can be
     /// recognised as saying the same thing without comparing strings in the hot path.
     ///
@@ -287,6 +344,9 @@ impl PreparedScript {
                 index,
                 id: line.id.clone(),
                 cut: line.cut,
+                kind: line.kind,
+                hold: line.hold,
+                hold_seconds: line.hold_seconds,
                 text_key,
                 character: line.character.clone(),
                 act: line.act.clone(),
@@ -412,6 +472,20 @@ impl PreparedScript {
         Some(out)
     }
 
+    /// How many tokens a span offers to match against, in its first language.
+    ///
+    /// The size of the evidence a candidate *can* provide, as opposed to how well it
+    /// happened to score. A one-word line scores well against almost anything.
+    pub fn span_token_count(&self, span: Span) -> usize {
+        span.iter()
+            .filter_map(|i| {
+                let line = self.lines.get(i)?;
+                let (lang, _) = line.by_lang.first()?;
+                line.match_text(lang).map(|mt| mt.tokens.len())
+            })
+            .sum()
+    }
+
     /// Tokens of a single line under `lang`, written form only.
     pub fn line_tokens(&self, index: usize, lang: &LangCode) -> Option<Vec<&str>> {
         self.lines
@@ -489,6 +563,9 @@ mod tests {
     fn line(id: &str, act: &str, scene: &str, ch: &str, text: &str) -> ScriptLine {
         ScriptLine {
             cut: false,
+            kind: LineKind::Dialogue,
+            hold: None,
+            hold_seconds: None,
             id: id.into(),
             act: act.into(),
             scene: scene.into(),

@@ -256,6 +256,21 @@ pub struct TrackerConfig {
     pub min_segment_tokens: usize,
     /// **[sweep]** The higher bar a weak-evidence segment must clear.
     pub short_accept_threshold: f64,
+    /// **[sweep]** Tokens a candidate must *offer* before it may relocate the show.
+    ///
+    /// The mirror of `min_segment_tokens`, and it was missing. A one- or two-word
+    /// segment has long been treated as weak evidence that may confirm the next line
+    /// and never move the position — but a one- or two-word *line* was allowed to be
+    /// the destination of a jump of any size, and it is the same argument seen from
+    /// the other end. "Là." has almost no content to disagree with, so it scores
+    /// respectably against anything; Hécube has 213 lines of three tokens or fewer,
+    /// sitting across the script like a field of magnets.
+    ///
+    /// Observed: `Excellences au milieu de la route` moved the show 178 lines onto
+    /// `Là.` at exactly the follow threshold. Short lines remain perfectly good to
+    /// *follow* onto — that is `skip_max`'s territory, and a show walking onto its own
+    /// next line needs no protection from itself.
+    pub min_relocate_tokens: usize,
     /// Seconds of unmatched speech after which an unconfirmed jump is forgotten.
     pub jump_pending_ttl_s: f64,
     /// **[sweep]** Seconds of speech during which the position never advanced
@@ -458,6 +473,7 @@ impl Default for TrackerConfig {
             decay_to_lost_s: 20.0,
             min_segment_tokens: 3,
             short_accept_threshold: 0.80,
+            min_relocate_tokens: 4,
             jump_pending_ttl_s: 8.0,
             stall_to_lost_s: 90.0,
             noise_floor: 0.0,
@@ -523,6 +539,8 @@ pub struct Tracker<'a> {
     /// Running average of how well the *current* position explains recent speech,
     /// on the same scale as a challenger's, so the two are directly comparable.
     incumbent_evidence: f64,
+    /// The position currently sits on a line marked `hold`; see `ScriptLine::hold`.
+    holding: bool,
     /// Best score anywhere in the script for the segment being handled, so that a
     /// segment nothing can explain is recognised as noise rather than as divergence.
     /// See `noise_floor`.
@@ -547,6 +565,7 @@ impl<'a> Tracker<'a> {
             pending_jump: None,
             challenger: None,
             incumbent_evidence: 0.0,
+            holding: false,
             best_anywhere: 0.0,
             spans: Vec::new(),
             landmark_spans: Vec::new(),
@@ -562,6 +581,11 @@ impl<'a> Tracker<'a> {
     }
     pub fn config(&self) -> &TrackerConfig {
         &self.cfg
+    }
+    /// The hold the position is currently sitting on, if any. The display uses this
+    /// to say *why* nothing is moving — "music", not a frozen page.
+    pub fn hold(&self) -> Option<crate::script::Hold> {
+        self.script.lines.get(self.position).and_then(|l| l.hold)
     }
     pub fn line_id(&self) -> Option<&str> {
         self.script.lines.get(self.position).map(|l| l.id.as_str())
@@ -594,6 +618,21 @@ impl<'a> Tracker<'a> {
         }
         let weak = token_count < self.cfg.min_segment_tokens;
         self.best_anywhere = 0.0;
+        // Sitting on a marked hold — music, a held silence, an improvised passage. The
+        // script has said in advance that it cannot predict what comes out of the
+        // speakers here, so nothing heard during it is evidence about position: it
+        // must not erode the incumbent, must not run the timers towards `Lost`, and
+        // above all must not let the whole-script challenger relocate the show on the
+        // strength of a recogniser's opinion of a saxophone.
+        //
+        // The hold ends the moment something further on is heard — never on a timer.
+        // See `ScriptLine::hold_seconds` for why.
+        self.holding = self
+            .script
+            .lines
+            .get(self.position)
+            .and_then(|l| l.hold)
+            .is_some();
         // Weak evidence keeps its higher bar; everything else may move the
         // position on `follow_threshold` and report the lower confidence honestly.
         let move_threshold = if weak {
@@ -604,7 +643,7 @@ impl<'a> Tracker<'a> {
 
         // Look at the whole script every time, not only once lost. Cheap, and it
         // is the only way to notice that somewhere else explains this better.
-        if self.cfg.challenger_enabled && !weak {
+        if self.cfg.challenger_enabled && !weak && !self.holding {
             if let Some(ev) = self.run_challenger(seg) {
                 events.push(ev);
                 return events;
@@ -733,6 +772,15 @@ impl<'a> Tracker<'a> {
             // that has decayed to `Lost` reaches this path with the whole script in
             // view and would otherwise relocate three hundred lines on two sightings.
             let distance = best.span.first().abs_diff(self.position);
+            if self.script.span_token_count(best.span) < self.cfg.min_relocate_tokens {
+                events.push(TrackerEvent::Rejected {
+                    reason: RejectReason::WeakEvidence,
+                    best_score: best.score,
+                    best_index: Some(best.span.first()),
+                });
+                self.on_unmatched(seg, best.score, &mut events);
+                return events;
+            }
             let seen = match self.pending_jump.take() {
                 Some(p) if best.span.first().abs_diff(p.index) <= 1 => p.sightings + 1,
                 _ => 1,
@@ -841,6 +889,9 @@ impl<'a> Tracker<'a> {
         // is not the show diverging from the script — it is not the show speaking the
         // script at all, and the position we hold is no less likely than it was a
         // moment ago. See `noise_floor`.
+        if self.holding {
+            return;
+        }
         if self.cfg.noise_floor > 0.0 && best_local.max(self.best_anywhere) < self.cfg.noise_floor {
             return;
         }
@@ -922,6 +973,9 @@ impl<'a> Tracker<'a> {
         let best = self.scan_whole_script(seg);
         self.best_anywhere = best.as_ref().map_or(0.0, |b| b.score);
         let best = best?;
+        if self.script.span_token_count(best.span) < self.cfg.min_relocate_tokens {
+            return None;
+        }
         let target = best.span.last();
         let near_incumbent = target >= self.position
             && target.saturating_sub(self.position) <= self.cfg.window_ahead;
