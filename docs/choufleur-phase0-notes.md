@@ -1662,3 +1662,64 @@ one that refuses to run. The less obvious one is that **a script is not trustwor
 because somebody has read it**: this one had been read closely enough that afternoon to
 have its cuts applied, its didascalies typed and its speakers corrected, and the gaps
 still survived, because a missing line looks exactly like a line that was never there.
+
+### AG. `medium` writes a better transcript and tracks no better
+
+Two questions, asked together because only the second matters: is a bigger model better,
+and does the tracker care.
+
+**The baseline was stale, and that had to be fixed first.** `out/hecube_20241116.jsonl`
+predates the lexicon work, and it shows: `Otis` appears twice in it against 46 in a
+fresh run of the same audio with the same model, `Hécube` zero against eight. Every
+figure quoted today was measured on that transcript and was therefore pessimistic.
+Re-tracked on a fresh `small` run, night 16 is **94 %, p90 one line, and zero moves of
+fifteen lines or more** — not 92 %, p90 two, and three.
+
+Worth noticing *how* the lexicon helps: mean agreement across the script barely moves
+(0.618 → 0.613) while the proper nouns transform. It buys nothing in aggregate word
+agreement and a great deal in **anchoring**, because the words it fixes are the ones
+that say where you are. That is the same shape as the earlier measurement that it cut
+lost time by 28 % and 33 % without looking much better on paper.
+
+**`medium` writes a clearly better transcript.** Same audio, same settings, 2.5× the
+compute (48.6 min against 19.4 for a two-hour recording — 2.5× real time against 6.2×):
+
+| | small | medium |
+| --- | --- | --- |
+| lines recognisable *as written* | 84 | **120** |
+| lines *not found* at all | 18 | **8** |
+| mean agreement | 0.613 | **0.645** |
+| `Hécube` heard | 8 | **28** |
+
+**And the tracker does not care.** The first comparison looked like a regression — 92 %
+against 94 % — until the anchor counts gave it away: 206 against 185. `window_accuracy`
+derives its spot-checks from the transcript it is given, so a better transcript is
+tested at more moments, and the extra ones are the previously unpinnable, harder ones.
+The percentages were not measured on the same set.
+
+Scored properly, each trace against **both** anchor sets:
+
+| | anchors from small | anchors from medium |
+| --- | --- | --- |
+| small | **173/185** = 94 % | 188/206 = 91 % |
+| medium | 172/185 = 93 % | **190/206** = 92 % |
+
+Each model wins on its own anchors by one or two moments out of ~190. That is a tie, and
+the apparent difference was an artefact of how the test set is built. Elsewhere: lost
+time 272 s → 220 s to `medium` (a real 19 % gain), long moves 0 → 3 against it.
+
+**So `medium` does not earn 2.5× the compute, and the conclusion generalises.** The
+matcher already copes with a transcript full of `le fils des cubes`; improving the words
+it is given moves the position hardly at all. **The binding constraint is the matcher,
+not the model** — which retires the ANE/Core ML question too, since there is no point
+accelerating a model we have just shown we do not want.
+
+Where the effort belongs instead, in order: the segment-accumulation idea for long
+passages (a 16-second speech is chopped into four 5-second fragments and each is scored
+*alone* against a 173-word line, which is why those lines sit at `block`), then the
+channel-pool matrix, and only then hardware.
+
+One caveat on the test set itself: `window_accuracy`'s anchors are derived from the
+recording, so they under-sample exactly the passages where recognition is worst. A model
+that helps only in the mush would be invisible here. Two nights of a second show would
+settle it; the accent-heavy La Reprise scenes are the obvious candidates.
