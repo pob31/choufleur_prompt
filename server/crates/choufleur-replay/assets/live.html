@@ -878,6 +878,13 @@
     document.body.dataset.rail = cues.length ? 'on' : 'off';
     // Only one mark per line: two cues on the same line would fight over the text,
     // and the second leader can point at the first one's mark perfectly well.
+    // The union of before and after, not just after.
+    //
+    // Re-rendering only the lines that *have* a trigger leaves a line that has just
+    // lost its last one untouched — so the underline stays under words that no longer
+    // fire anything, which is a lie the page keeps telling until something else
+    // happens to redraw that line.
+    const had = new Set(triggerOf.keys());
     triggerOf = new Map();
     for (const c of cues) {
       if (!c.triggerText) continue;
@@ -886,7 +893,9 @@
         id: c.id, text: c.triggerText, colour: c.colour, nth: c.triggerNth || 0,
       });
     }
-    for (const i of triggerOf.keys()) if (els[i]) decorate(els[i], lines[i]);
+    for (const i of new Set([...had, ...triggerOf.keys()])) {
+      if (els[i]) decorate(els[i], lines[i]);
+    }
     lineTops = null;
     $rail.textContent = '';
     cueAway = [];
@@ -1320,6 +1329,22 @@
     repaint();
     fit();
     what.focus();
+
+    // Unfold upwards when there is no room below.
+    //
+    // A cue waiting at the foot of the rail — its line not yet in sight — becomes an
+    // editor several times its own height, and the buttons end up below the window.
+    // Scrolling the rail to reach them is not an option either: the cards are frozen
+    // while editing precisely so they do not move under the operator's hands. So the
+    // card rises far enough to fit, which is the one direction with space in it.
+    requestAnimationFrame(() => {
+      if (cueEditing !== k) return;
+      const railBox = $rail.getBoundingClientRect();
+      const box = el.getBoundingClientRect();
+      const top = box.top - railBox.top;
+      const over = top + box.height - railBox.height;
+      if (over > 0) el.style.transform = `translateY(${Math.max(0, top - over - 6).toFixed(1)}px)`;
+    });
 
     let closed = false;
     function close(commit) {
