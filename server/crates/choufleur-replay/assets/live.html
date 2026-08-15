@@ -921,10 +921,16 @@
     // the moment the operator scrolls to select a phrase, the whole rail slides and
     // the card they are typing into goes with it.
     //
-    // Editing a cue is a modal activity: the rail holds still until it is finished,
-    // then re-measures and settles. Reported from the chair as cues slipping under
-    // each other and "the display of the cues jump around".
-    if (cueEditing >= 0) return;
+    // Editing a cue is a modal activity for the *cards*: they hold still until it is
+    // finished, then re-measure and settle. Reported from the chair as cues slipping
+    // under each other and "the display of the cues jump around".
+    //
+    // The tendrils are the opposite case and freezing them was wrong. A card is fixed
+    // while the script scrolls under it — which is the whole point, since scrolling is
+    // how the operator reaches the words they want to select — so a tendril that does
+    // not follow ends up pointing at a line that has moved on. "Things get confusing"
+    // is generous. Cards frozen, tendrils live.
+    const frozen = cueEditing >= 0;
     if (!lineTops) measure();
     const top = $scroller.scrollTop;
     const fold = railH;                 // below this, a line is not on screen yet
@@ -943,7 +949,8 @@
       else if (y < fold) here.push([k, y]);
       else ahead.push([k, y]);
     }
-    for (const k of gone) cueEls[k].style.display = 'none';
+    // Not while frozen: hiding the card being edited would take the editor with it.
+    if (!frozen) for (const k of gone) cueEls[k].style.display = 'none';
 
     // Reserve the foot for the lookahead, then fill upwards from the top with the
     // cues whose lines are actually on screen.
@@ -954,6 +961,7 @@
 
     let floor = 0;
     for (const [k, y] of here) {
+      if (frozen) break;
       const el = cueEls[k], h = cueHeights[k] || 44;
       const want = Math.max(floor, Math.min(y, ceiling - h));
       if (want + h > ceiling && floor > 0) { el.style.display = 'none'; continue; }
@@ -971,6 +979,7 @@
     const from = current >= 0 ? current : (here.length ? cues[here[0][0]].lineIndex : 0);
     let y = railH - reserved + CUE_GAP;
     for (const [k] of queued) {
+      if (frozen) break;
       const el = cueEls[k], h = cueHeights[k] || 44;
       el.style.display = '';
       el.style.transform = `translateY(${Math.round(y)}px)`;
@@ -980,8 +989,12 @@
       cueAway[k].textContent = away > 0 ? `in ${away} line${away === 1 ? '' : 's'} · ` : '';
       y += h + CUE_GAP;
     }
-    for (let i = LOOKAHEAD; i < ahead.length; i++) cueEls[ahead[i][0]].style.display = 'none';
-    drawLeads(here);
+    if (!frozen) {
+      for (let i = LOOKAHEAD; i < ahead.length; i++) cueEls[ahead[i][0]].style.display = 'none';
+    }
+    // Always. The card being edited is usually the one whose line the operator is
+    // scrolling to, so its tendril is the one that most needs to keep up.
+    drawLeads(frozen ? here.concat(ahead.filter(([k]) => k === cueEditing)) : here);
   }
 
   // A line from the cue to the thing that fires it.
