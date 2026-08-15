@@ -35,7 +35,7 @@ use crate::formats::SegmentRecord;
 ///
 /// So the page carries the version it was written against and says so on screen when
 /// they disagree. A silent no-op is the one failure mode worth spending a field on.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// One script line, as the client needs it. Sent once, in bulk.
 #[derive(Clone, Serialize)]
@@ -68,6 +68,8 @@ pub struct LineView {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CueView {
+    /// Stable across runs and across re-sorting; see `load_cues`.
+    pub id: String,
     /// Position in the script. Cues arrive sorted by it.
     pub line_index: usize,
     pub line_id: String,
@@ -170,6 +172,13 @@ pub enum Update {
         line_index: usize,
         line: LineView,
     },
+    /// The cue sheet changed. The whole set is re-sent rather than a delta.
+    ///
+    /// A cue edit can move it to another line, which re-sorts the rail, or remove it,
+    /// which renumbers nothing but invalidates every index the page was holding. At
+    /// 133 cues the whole list is a few kilobytes and arrives once per edit — a delta
+    /// protocol here would be three more message types and a class of bug for no gain.
+    CuesChanged { cues: Vec<CueView> },
     /// A line was flagged or unflagged.
     ///
     /// Its own message rather than a field on `LineEdited`, because it is the one
@@ -245,7 +254,9 @@ pub struct LiveState {
     /// thread, which must never be interrupted mid-decode.
     pub steer: Mutex<Vec<usize>>,
     /// The cue sheet, projected for the rail. Empty when there is none.
-    pub cues: Vec<CueView>,
+    pub cues: Mutex<Vec<CueView>>,
+    /// Where cue edits are written.
+    pub cues_path: std::path::PathBuf,
     /// Prep mode: the script is served for editing and nothing is running.
     ///
     /// Everything the operator has to set — which lines are cut, which are stage
@@ -406,7 +417,8 @@ mod tests {
             tx,
             audible_until: Mutex::new(f64::INFINITY),
             steer: Mutex::new(Vec::new()),
-            cues: Vec::new(),
+            cues: Mutex::new(Vec::new()),
+            cues_path: std::path::PathBuf::from("/dev/null"),
             prep: false,
         };
         let s = serde_json::to_string(&state.hello()).unwrap();

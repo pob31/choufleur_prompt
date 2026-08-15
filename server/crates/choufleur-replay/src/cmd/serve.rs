@@ -154,10 +154,39 @@ fn load_cues(path: &Path, lines: &[LineView]) -> Vec<CueView> {
     let Ok(raw) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
-    let Ok(doc) = serde_json::from_str::<serde_json::Value>(&raw) else {
+    let Ok(mut doc) = serde_json::from_str::<serde_json::Value>(&raw) else {
         eprintln!("cues: {} could not be parsed; carrying on without", path.display());
         return Vec::new();
     };
+    // Give every cue an id, once, and write them back.
+    //
+    // The sheet was extracted from a PDF and its cues have never needed naming: they
+    // were only ever read in order. Editing one needs a way to say *which*, and
+    // position will not do — the rail sorts by line while the file is in page order,
+    // and either can change under the other. Written back rather than assigned per
+    // run so an id means the same thing tomorrow.
+    if let Some(arr) = doc.get_mut("cues").and_then(|c| c.as_array_mut()) {
+        let mut next = 1usize;
+        let mut assigned = false;
+        for c in arr.iter_mut() {
+            if c.get("id").and_then(|v| v.as_str()).is_some() {
+                continue;
+            }
+            if let Some(o) = c.as_object_mut() {
+                o.insert("id".into(), format!("Q-{next:04}").into());
+                assigned = true;
+            }
+            next += 1;
+        }
+        if assigned {
+            if let Ok(text) = serde_json::to_string_pretty(&doc) {
+                let tmp = path.with_extension("json.tmp");
+                if std::fs::write(&tmp, text + "\n").is_ok() && std::fs::rename(&tmp, path).is_ok() {
+                    println!("cues:    assigned ids to {} cues", next - 1);
+                }
+            }
+        }
+    }
     let index: std::collections::HashMap<&str, usize> = lines
         .iter()
         .enumerate()
@@ -166,7 +195,8 @@ fn load_cues(path: &Path, lines: &[LineView]) -> Vec<CueView> {
     let means = doc.get("colourMeans").cloned().unwrap_or_default();
     let mut out = Vec::new();
     let mut dangling: Vec<String> = Vec::new();
-    for c in doc.get("cues").and_then(|c| c.as_array()).unwrap_or(&Vec::new()) {
+    let empty = Vec::new();
+    for c in doc.get("cues").and_then(|c| c.as_array()).unwrap_or(&empty) {
         let Some(id) = c.get("lineId").and_then(|v| v.as_str()) else {
             continue; // a page-level note with no anchor; nothing to place it against
         };
@@ -193,6 +223,11 @@ fn load_cues(path: &Path, lines: &[LineView]) -> Vec<CueView> {
             .and_then(|v| v.as_str())
             .and_then(|ev| trigger_phrase(ev, &lines[line_index].text));
         out.push(CueView {
+            id: c
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
             line_index,
             line_id: id.to_string(),
             cue: text,
@@ -227,6 +262,106 @@ fn load_cues(path: &Path, lines: &[LineView]) -> Vec<CueView> {
         );
     }
     out
+}
+
+/// Write a cue back to the sheet, or add or remove one.
+///
+/// `None` for a field means leave it as it was, which is what lets the page send only
+/// what the operator touched. `Some("")` on the trigger clears it — the distinction
+/// matters, because a trigger that could be set and not unset is a trap.
+///
+/// The whole sheet is rewritten each time. At 133 cues that costs nothing, and it has
+/// the property that matters during a show: the file on disk is never half a cue.
+#[allow(clippy::too_many_arguments)]
+fn write_cue(
+    path: &Path,
+    id: &str,
+    cue: Option<&str>,
+    trigger: Option<&str>,
+    trigger_text: Option<&str>,
+    colour: Option<&str>,
+    line_id: Option<&str>,
+    delete: bool,
+) -> Result<()> {
+    let raw = std::fs::read_to_string(path)?;
+    let mut doc: serde_json::Value = serde_json::from_str(&raw)?;
+    let arr = doc
+        .get_mut("cues")
+        .and_then(|c| c.as_array_mut())
+        .context("cue sheet has no cues")?;
+    let at = arr
+        .iter()
+        .position(|c| c.get("id").and_then(|v| v.as_str()) == Some(id))
+        .context("no such cue")?;
+    if delete {
+        arr.remove(at);
+    } else {
+        let c = arr[at].as_object_mut().context("cue is not an object")?;
+        if let Some(v) = cue {
+            c.insert("cue".into(), v.into());
+        }
+        if let Some(v) = trigger {
+            c.insert("trigger".into(), v.into());
+        }
+        if let Some(v) = line_id {
+            c.insert("lineId".into(), v.into());
+        }
+        if let Some(v) = colour {
+            if v.is_empty() {
+                c.remove("noteColour");
+            } else {
+                c.insert("noteColour".into(), v.into());
+            }
+        }
+        if let Some(v) = trigger_text {
+            // Stored where the extractor put it, so a hand-set trigger and an
+            // extracted one are the same kind of thing and survive a re-anchor
+            // together. `evidenceFrom` says which, because "the operator chose this"
+            // is worth more than "the PDF suggested it" when the two disagree.
+            if v.is_empty() {
+                c.remove("evidence");
+                c.remove("evidenceFrom");
+            } else {
+                c.insert("evidence".into(), v.into());
+                c.insert("evidenceFrom".into(), "operator".into());
+            }
+        }
+        // A cue the operator has been through is a cue somebody has checked.
+        c.remove("needsReview");
+    }
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// Add a cue against a line, and return its id.
+fn append_cue(path: &Path, line_id: &str) -> Result<String> {
+    let raw = std::fs::read_to_string(path)?;
+    let mut doc: serde_json::Value = serde_json::from_str(&raw)?;
+    let arr = doc
+        .get_mut("cues")
+        .and_then(|c| c.as_array_mut())
+        .context("cue sheet has no cues")?;
+    let taken: std::collections::HashSet<String> = arr
+        .iter()
+        .filter_map(|c| c.get("id").and_then(|v| v.as_str()).map(str::to_string))
+        .collect();
+    let id = (1..)
+        .map(|n| format!("Q-{n:04}"))
+        .find(|c| !taken.contains(c))
+        .expect("an unused id always exists");
+    arr.push(serde_json::json!({
+        "id": id,
+        "lineId": line_id,
+        "cue": "",
+        "trigger": "text",
+        "source": "operator",
+    }));
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
+    std::fs::rename(&tmp, path)?;
+    Ok(id)
 }
 
 /// Play a file to the monitor, on a thread that does nothing else.
@@ -358,7 +493,8 @@ pub fn run(
         tx,
         audible_until: Mutex::new(if monitor { 0.0 } else { f64::INFINITY }),
         steer: Mutex::new(Vec::new()),
-        cues,
+        cues: Mutex::new(cues),
+        cues_path: cue_path.clone(),
         prep,
     });
 
@@ -762,7 +898,9 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
             )
             .route(
                 "/cues.json",
-                get(|State(s): State<Arc<LiveState>>| async move { axum::Json(s.cues.clone()) }),
+                get(|State(s): State<Arc<LiveState>>| async move {
+                    axum::Json(s.cues.lock().unwrap().clone())
+                }),
             )
             .route(
                 "/ws",
@@ -783,6 +921,67 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                         continue;
                                     };
                                     let kind = v.get("type").and_then(|t| t.as_str());
+                                    // Cue messages are addressed by cue id, not by
+                                    // line, so they are handled before the line-index
+                                    // requirement below — which would otherwise drop
+                                    // every one of them on the floor without a word.
+                                    if matches!(kind, Some("edit_cue" | "delete_cue" | "insert_cue"))
+                                    {
+                                        let str_of = |k: &str| {
+                                            v.get(k).and_then(|x| x.as_str()).map(str::to_string)
+                                        };
+                                        let id = str_of("id").unwrap_or_default();
+                                        let outcome = match kind {
+                                            Some("insert_cue") => v
+                                                .get("lineId")
+                                                .and_then(|x| x.as_str())
+                                                .context("insert_cue needs a lineId")
+                                                .and_then(|lid| {
+                                                    append_cue(&inbound.cues_path, lid)
+                                                })
+                                                .map(|_| ()),
+                                            Some("delete_cue") => write_cue(
+                                                &inbound.cues_path,
+                                                &id,
+                                                None,
+                                                None,
+                                                None,
+                                                None,
+                                                None,
+                                                true,
+                                            ),
+                                            _ => write_cue(
+                                                &inbound.cues_path,
+                                                &id,
+                                                str_of("cue").as_deref(),
+                                                str_of("trigger").as_deref(),
+                                                str_of("triggerText").as_deref(),
+                                                str_of("colour").as_deref(),
+                                                str_of("lineId").as_deref(),
+                                                false,
+                                            ),
+                                        };
+                                        match outcome {
+                                            Err(e) => eprintln!("cue edit failed: {e:#}"),
+                                            Ok(()) => {
+                                                // Re-read rather than patch in place.
+                                                // The trigger phrase is derived from
+                                                // the line's text, the sort is by line,
+                                                // and a re-anchor changes both — so the
+                                                // only copy worth trusting is the one
+                                                // the loader produces.
+                                                let fresh = {
+                                                    let lines = inbound.lines.lock().unwrap();
+                                                    load_cues(&inbound.cues_path, &lines)
+                                                };
+                                                *inbound.cues.lock().unwrap() = fresh.clone();
+                                                let _ = inbound
+                                                    .tx
+                                                    .send(Update::CuesChanged { cues: fresh });
+                                            }
+                                        }
+                                        continue;
+                                    }
                                     let Some(i) = v
                                         .get("lineIndex")
                                         .and_then(|i| i.as_u64())

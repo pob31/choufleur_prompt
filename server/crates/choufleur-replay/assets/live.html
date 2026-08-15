@@ -155,6 +155,32 @@
   /* Its line is the one being spoken. */
   .cue.now { color: var(--now); border-left-color: var(--now); background: #221d12; }
   .cue.review { border-left-style: dotted; }
+  /* Editable only in prep. A cue moved or retyped mid-show is a cue somebody is not
+     watching for, and the rail is the one part of this page an operator reads without
+     looking away from the stage. */
+  body[data-prep="on"] .cue { pointer-events: auto; cursor: text; }
+  body[data-prep="on"] .cue:hover { background: #1d2129; }
+  .cue.editing { background: #1b1f26; cursor: default; }
+  .cue textarea, .cue input {
+    display: block; width: 100%; background: #0f1114; color: var(--fg);
+    border: 1px solid var(--dimmer); border-radius: 3px; padding: .25em .4em;
+    font: inherit; margin-bottom: .25em;
+  }
+  .cue textarea { resize: vertical; overflow: hidden; line-height: 1.35; }
+  .cue textarea:focus, .cue input:focus { outline: none; border-color: var(--now); }
+  .cue .ctl { display: flex; flex-wrap: wrap; gap: .25em; align-items: center; }
+  .cue .ctl button {
+    border: 1px solid var(--dimmer); background: none; color: var(--dim);
+    border-radius: 999px; padding: .15em .55em; cursor: pointer;
+    font: 400 .82em/1.4 ui-sans-serif, system-ui, sans-serif;
+  }
+  .cue .ctl button.on { border-color: var(--now); color: var(--now); }
+  .cue .ctl button.kill { margin-left: auto; }
+  .cue .ctl button.kill.armed { border-color: var(--lost); color: var(--lost); }
+  .cue .hintline {
+    font: 400 .78em/1.4 ui-sans-serif, system-ui, sans-serif; color: var(--dimmer);
+    margin-top: .3em;
+  }
   .cue.review .means::after { content: ' · check'; color: var(--lost); }
 
   #scroller {
@@ -814,6 +840,10 @@
       if (!r.ok) return;
       cues = await r.json();
     } catch { return; }
+    renderRail();
+  }
+
+  function renderRail() {
     document.body.dataset.rail = cues.length ? 'on' : 'off';
     // Only one mark per line: two cues on the same line would fight over the text,
     // and the second leader can point at the first one's mark perfectly well.
@@ -971,6 +1001,125 @@
       dot.classList.toggle('now', isNow);
     });
   }
+
+  // ---- editing a cue ----------------------------------------------------------
+  //
+  // In prep only. A cue retyped or moved mid-show is a cue nobody is watching for, and
+  // the rail is the part of this page an operator reads without looking away from the
+  // stage.
+  //
+  // The trigger phrase is set from a selection in the script rather than typed. Typing
+  // it means retyping the playwright, and a phrase that does not appear in the line
+  // exactly cannot be marked — so the operator would be debugging their own spelling
+  // against somebody else's punctuation. Selecting is also how you would say it out
+  // loud: point at the words.
+  let openCue = null;
+  // Set when this client asked for a cue, so it — and only it — opens the new card.
+  let pendingCueFor = null;
+
+  function editCue(k) {
+    if (openCue) openCue();
+    const el = cueEls[k], c = cues[k];
+    const before = el.innerHTML;
+    el.classList.add('editing');
+    el.innerHTML = '';
+
+    const what = document.createElement('textarea');
+    what.rows = 2;
+    what.value = c.cue;
+    const fit = () => { what.style.height = 'auto'; what.style.height = what.scrollHeight + 'px'; };
+    what.addEventListener('input', fit);
+
+    let trigger = c.trigger, colour = c.colour || '', triggerText = c.triggerText || '';
+    const ctl = document.createElement('div');
+    ctl.className = 'ctl';
+    const mk = (label, isOn, onClick) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.onmousedown = (e) => e.preventDefault();
+      b.onclick = (e) => { e.preventDefault(); onClick(); repaint(); };
+      b.dataset.on = isOn;
+      return b;
+    };
+    const bText = mk('text', 'trigger:text', () => { trigger = 'text'; });
+    const bVis  = mk('visual', 'trigger:visual', () => { trigger = 'visual'; });
+    const bQLab = mk('QLab', 'colour:blue', () => { colour = colour === 'blue' ? '' : 'blue'; });
+    const bDesk = mk('console', 'colour:purple', () => { colour = colour === 'purple' ? '' : 'purple'; });
+    const bTrig = mk('use selection', 'never', () => {
+      const sel = String(window.getSelection() || '').trim();
+      if (!sel) { hint.textContent = 'select the words in the script first, then press this'; return; }
+      const line = lines[c.lineIndex];
+      if (!line.text.includes(sel)) {
+        hint.textContent = 'that selection is not inside this cue’s line';
+        return;
+      }
+      triggerText = sel;
+      hint.textContent = '';
+    });
+    const bClear = mk('no trigger word', 'never', () => { triggerText = ''; });
+    const kill = document.createElement('button');
+    kill.className = 'kill';
+    kill.textContent = 'delete';
+    let armed = false;
+    kill.onmousedown = (e) => e.preventDefault();
+    kill.onclick = (e) => {
+      e.preventDefault();
+      if (!armed) { armed = true; kill.textContent = 'delete cue?'; kill.classList.add('armed'); return; }
+      close(false);
+      ws.send(JSON.stringify({ type: 'delete_cue', id: c.id }));
+    };
+    ctl.append(bText, bVis, bQLab, bDesk, bTrig, bClear, kill);
+
+    const hint = document.createElement('div');
+    hint.className = 'hintline';
+
+    const repaint = () => {
+      bText.classList.toggle('on', trigger === 'text');
+      bVis.classList.toggle('on', trigger === 'visual');
+      bQLab.classList.toggle('on', colour === 'blue');
+      bDesk.classList.toggle('on', colour === 'purple');
+      bTrig.classList.toggle('on', !!triggerText);
+      if (!hint.textContent) {
+        hint.textContent = triggerText ? `on “${triggerText}”` : 'fires on the whole line';
+      }
+    };
+    el.append(what, ctl, hint);
+    repaint();
+    fit();
+    what.focus();
+
+    function close(commit) {
+      openCue = null;
+      el.classList.remove('editing');
+      if (commit) {
+        ws.send(JSON.stringify({
+          type: 'edit_cue', id: c.id, cue: what.value.trim(),
+          trigger, colour, triggerText,
+        }));
+      }
+      el.innerHTML = before;
+      lineTops = null;
+    }
+    openCue = () => close(true);
+    what.onkeydown = (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); close(true); }
+      if (e.key === 'Escape') { e.preventDefault(); close(false); }
+    };
+    el.addEventListener('focusout', (e) => {
+      // A selection in the script pulls focus out of the card, which is the whole
+      // point of "use selection" — so closing on blur would make that button
+      // impossible to reach.
+      if (!el.contains(e.relatedTarget) && e.relatedTarget !== null) close(true);
+    });
+  }
+
+  $rail.addEventListener('click', (ev) => {
+    if (document.body.dataset.prep !== 'on') return;
+    const card = ev.target.closest('.cue');
+    if (!card || card.classList.contains('editing')) return;
+    const k = cueEls.indexOf(card);
+    if (k >= 0) editCue(k);
+  });
 
   // ---- flags ----------------------------------------------------------------
   //
@@ -1157,6 +1306,18 @@
     paintFlagBtn();
     repaintOpenFlag = paintFlagBtn;
     row.append(sep(), bFlag);
+
+    const bAddCue = document.createElement('button');
+    bAddCue.className = 'insert';
+    bAddCue.textContent = 'add cue';
+    bAddCue.onmousedown = (e) => e.preventDefault();
+    bAddCue.onclick = (e) => {
+      e.preventDefault();
+      pendingCueFor = lines[i].id;
+      ws.send(JSON.stringify({ type: 'insert_cue', lineId: lines[i].id }));
+      done(true);
+    };
+    row.appendChild(bAddCue);
 
     const bDelete = document.createElement('button');
     bDelete.className = 'danger';
@@ -1460,7 +1621,7 @@
   window.addEventListener('resize', () => { lineTops = null; replace(); });
 
   // What this page was written against. See PROTOCOL_VERSION in live.rs.
-  const PROTOCOL = 3;
+  const PROTOCOL = 4;
   // Whether this is a reconnection rather than the first join.
   let joined = false;
 
@@ -1505,6 +1666,17 @@
         lines[m.lineIndex].hold = m.hold ?? null;
         render(m.lineIndex);
         replace();
+      } else if (m.type === 'cues_changed') {
+        cues = m.cues;
+        renderRail();
+        // A cue added from a line opens straight away: an empty card in the rail is
+        // not a cue, it is a promise to type one, and it should not be possible to
+        // walk away having made it by accident.
+        if (pendingCueFor) {
+          const k = cues.findIndex((c) => c.lineId === pendingCueFor && !c.cue);
+          pendingCueFor = null;
+          if (k >= 0) requestAnimationFrame(() => { goTo(cues[k].lineIndex, true); editCue(k); });
+        }
       } else if (m.type === 'line_flagged') {
         lines[m.lineIndex].flag = m.flag;
         // An open editor has replaced the line element, so re-rendering it would
