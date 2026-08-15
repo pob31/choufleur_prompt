@@ -688,6 +688,7 @@ pub fn run(
     interim_ms: Option<u32>,
     audio_root: Option<PathBuf>,
     no_agc: bool,
+    agc_max_gain: Option<f32>,
     no_lexicon: bool,
     realtime: bool,
     port: u16,
@@ -788,6 +789,9 @@ pub fn run(
     // `--no-monitor` usable as the passthrough gate rather than a two-hour wait.
     ecfg.realtime = monitor || realtime;
     ecfg.agc.enabled = !no_agc;
+    if let Some(db) = agc_max_gain {
+        ecfg.agc.max_gain_db = db;
+    }
     ecfg.mixdown = mixdown;
     ecfg.channels = channels;
     if let Some(ms) = interim_ms {

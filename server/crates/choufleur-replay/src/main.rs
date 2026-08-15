@@ -75,6 +75,16 @@ struct AudioArgs {
     /// goes is a measurement, per corpus, not a default.
     #[arg(long)]
     no_agc: bool,
+    /// Ceiling on the adaptive gain, in dB. Default 40.
+    ///
+    /// A source feed for a spatialisation engine carries no channel processing at all,
+    /// and is gained for the loudest moment of the night — measured on a WFS show,
+    /// loud speech sat at −67 dBFS, which needs 47 dB to reach the −20 both models
+    /// were trained around. At the default the limiter engages and the recogniser is
+    /// handed audio 7 dB quieter than it expects. Which feed a venue offers is not
+    /// ours to choose, so the ceiling is a dial.
+    #[arg(long, value_name = "DB")]
+    agc_max_gain: Option<f32>,
 }
 
 #[derive(Parser)]
@@ -267,6 +277,7 @@ fn main() -> Result<()> {
             audio.interim_ms,
             audio_root,
             audio.no_agc,
+            audio.agc_max_gain,
             audio.no_lexicon,
         ),
         Command::Serve {
@@ -294,6 +305,7 @@ fn main() -> Result<()> {
             audio.interim_ms,
             audio_root,
             audio.no_agc,
+            audio.agc_max_gain,
             audio.no_lexicon,
             audio.realtime,
             port,

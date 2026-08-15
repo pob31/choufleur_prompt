@@ -79,6 +79,7 @@ pub fn run(
     interim_ms: Option<u32>,
     audio_root: Option<PathBuf>,
     no_agc: bool,
+    agc_max_gain: Option<f32>,
     no_lexicon: bool,
 ) -> Result<()> {
     let corpus = Corpus::load(corpus_path, audio_root)?;
@@ -90,6 +91,9 @@ pub fn run(
     );
     cfg.realtime = realtime;
     cfg.agc.enabled = !no_agc;
+    if let Some(db) = agc_max_gain {
+        cfg.agc.max_gain_db = db;
+    }
     cfg.mixdown = mixdown;
     cfg.channels = channels;
     if let Some(ms) = interim_ms {

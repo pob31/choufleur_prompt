@@ -1768,3 +1768,46 @@ Until then the honest position is: **`small` stays the default** — proven suff
 a clean processed feed — and there is real evidence, not yet conclusive, that raw
 preamp feeds with heavy accents want `medium`. Which argues for the model being a
 per-show setting rather than a global one, and it is already a flag.
+
+### AI. Why the two corpora differ, and what the gain ceiling is not
+
+The operator, closing three open questions at once: *"I guess DPA accounted for the
+microphone placement of the chest microphones and I probably eq'd the Hécube show where
+this processing is not present on the raw recordings that would be used for virtual
+soundcheck. La Reprise was in WFS whereas Hécube was plain mono."*
+
+That explains a measurement that had contradicted a prediction. I expected the chest
+necklaces to show a rolled-off top end against Hécube's ear and hairline mics, because
+consonants are what a recogniser lives on. They do not: 3–7 kHz tilt is comparable
+across all four channels, and Fabian is *brighter* than Hécube. **DPA compensate for
+chest placement in the capsule**, so the measurement was right and the hypothesis was
+looking for a rolloff the manufacturer had already engineered out. The one thing that
+does show is Fabian at +21 dB at 300 Hz against Hécube's +9 — chest resonance — and even
+that is not consistent, Sara and Tom sitting at +9.
+
+And WFS explains the levels: those channels are **source feeds for a spatialisation
+engine**, so they carry no channel processing at all. Which is also exactly what a
+virtual soundcheck replays — so the raw, quiet, unprocessed case is not an artefact of
+this corpus, it is the normal shape of the feed a venue can offer without disturbing
+anybody's mix.
+
+**The AGC ceiling is not the limiting factor.** Sara's loud speech is at −67 dBFS and
+the −20 both models were trained around needs 47 dB, while `max_gain_db` defaults to 40
+— so the limiter is engaged and the recogniser gets audio 7 dB quieter than it wants.
+Swept (`--agc-max-gain`, added for this):
+
+| ceiling | segments | words | mean avgLogprob |
+| --- | --- | --- | --- |
+| 40 dB (default) | 131 | 811 | −0.642 |
+| 50 dB | 139 | 854 | **−0.635** |
+| 55 dB | 140 | 834 | −0.692 |
+| *medium at 40 dB* | *121* | *720* | ***−0.524*** |
+
+A shallow optimum near 50 and a clear penalty at 55 — the module's own warning about
+amplified room tone, arriving on schedule. But the whole sweep is worth less than a
+tenth of what the model change is worth on the same audio. **Gain staging is not what
+makes this material hard.**
+
+Left at 40 as the default: 50 is inside the noise, and a number that helps one corpus by
+0.007 is not a default worth moving. The flag exists now so the next person can measure
+their own feed instead of inheriting ours.
