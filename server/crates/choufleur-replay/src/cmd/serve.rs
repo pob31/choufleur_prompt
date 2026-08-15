@@ -31,7 +31,7 @@ use choufleur_core::prompt::{proper_nouns, static_prompt_with, BiasMode, PromptC
 use choufleur_core::tracker::Tracker;
 
 use crate::engine::{Engine, EngineConfig};
-use crate::live::{Broadcast, CueCategory, CueList, CueView, LineView, LiveState, Update};
+use crate::live::{Broadcast, CueCategory, CueSheet, CueView, LineView, LiveState, Update};
 use crate::manifest::Corpus;
 use crate::monitor::Monitor;
 
@@ -72,8 +72,38 @@ fn swatch(name: &str) -> String {
     .to_string()
 }
 
-/// The list's vocabulary: what its marks mean and what to paint them.
-fn load_cue_list(doc: &serde_json::Value) -> CueList {
+/// Every cue list beside the script, in a stable order.
+///
+/// `cues.json` and `cues-*.json`. A show grows a list per operator, and asking for each
+/// path on the command line every time is friction with no decision behind it.
+fn find_cue_files(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.extension().and_then(|e| e.to_str()) == Some("json")
+                && p.file_stem()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|s| s == "cues" || s.starts_with("cues-"))
+                // Backups are for reading by hand, not for serving.
+                && !p.to_string_lossy().contains("backup")
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// A sheet's meta read straight from its file.
+fn read_sheet_meta(path: &Path, id: &str) -> Option<CueSheet> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let doc: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    Some(sheet_meta(&doc, id))
+}
+
+/// A sheet's identity and vocabulary: what it is called and what its marks mean.
+fn sheet_meta(doc: &serde_json::Value, id: &str) -> CueSheet {
     // An explicit list wins. Nothing writes one yet, but this is the shape the
     // per-operator lists will arrive in, and reading it now costs a dozen lines.
     if let Some(arr) = doc.get("categories").and_then(|c| c.as_array()) {
@@ -94,8 +124,9 @@ fn load_cue_list(doc: &serde_json::Value) -> CueList {
                 Some(CueCategory { key, label, swatch: swatch_of })
             })
             .collect();
-        return CueList {
-            name: doc.get("name").and_then(|n| n.as_str()).map(str::to_string),
+        return CueSheet {
+            id: id.to_string(),
+            name: sheet_name(doc, id),
             categories,
         };
     }
@@ -124,13 +155,35 @@ fn load_cue_list(doc: &serde_json::Value) -> CueList {
             });
         }
     }
-    CueList {
-        name: doc
-            .get("source")
-            .and_then(|n| n.as_str())
-            .map(str::to_string),
+    CueSheet {
+        id: id.to_string(),
+        name: sheet_name(doc, id),
         categories,
     }
+}
+
+/// What the operator calls this list. `name` if they have said, otherwise the source
+/// document's own name — the sound conduite already carries the PDF's filename there —
+/// and the file's stem as a last resort.
+fn sheet_name(doc: &serde_json::Value, id: &str) -> String {
+    for key in ["name", "source"] {
+        if let Some(v) = doc.get(key).and_then(|v| v.as_str()) {
+            let v = v.trim();
+            if !v.is_empty() {
+                return v.to_string();
+            }
+        }
+    }
+    id.to_string()
+}
+
+/// The sheet id for a file: its stem, so `cues-lumiere.json` is `cues-lumiere` and a
+/// client can name it in a URL. Stable as long as the file is.
+fn sheet_id(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("cues")
+        .to_string()
 }
 
 /// Fold for comparison, keeping a way back to the original.
@@ -231,7 +284,7 @@ fn trigger_phrase(evidence: &str, line: &str) -> Option<String> {
 /// sheet is an aid, and a display that refuses to start because one cue points at a
 /// line that was deleted this afternoon would be worse than no cue sheet at all — so
 /// the dangling ones are counted, named on the console, and dropped.
-fn load_cues(path: &Path, lines: &[LineView]) -> Vec<CueView> {
+fn load_cues(path: &Path, lines: &[LineView], sheet: &str) -> Vec<CueView> {
     let Ok(raw) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
@@ -277,7 +330,7 @@ fn load_cues(path: &Path, lines: &[LineView]) -> Vec<CueView> {
     // from the PDF's own key otherwise. Categories win: once somebody has said their
     // targets are a desk and a QLab 5, the highlighter legend is history — and
     // renaming a target has to change what the cards say or the rename did nothing.
-    let list = load_cue_list(&doc);
+    let list = sheet_meta(&doc, sheet);
     let means: std::collections::HashMap<String, String> = if list.categories.is_empty() {
         doc.get("colourMeans")
             .and_then(|m| m.as_object())
@@ -357,6 +410,18 @@ fn load_cues(path: &Path, lines: &[LineView]) -> Vec<CueView> {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
                 .to_string(),
+            sheet: sheet.to_string(),
+            fired_by: match c.get("firedBy").and_then(|v| v.as_str()) {
+                Some("auto") => "auto",
+                _ => "operator",
+            }
+            .to_string(),
+            via: c
+                .get("via")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string),
             line_index,
             line_id: id.to_string(),
             cue: text_of_cue,
@@ -407,6 +472,9 @@ fn write_cue(
     trigger_text: Option<&str>,
     trigger_nth: Option<u64>,
     colour: Option<&str>,
+    // `(firedBy, via)`. An empty `via` clears it; an unrecognised `firedBy` leaves both
+    // alone, so a client that does not know about the field cannot erase it.
+    fired: Option<(String, String)>,
     line_id: Option<&str>,
     delete: bool,
 ) -> Result<()> {
@@ -458,6 +526,25 @@ fn write_cue(
             } else {
                 c.insert("evidence".into(), v.into());
                 c.insert("evidenceFrom".into(), "operator".into());
+            }
+        }
+        if let Some((fired_by, via)) = &fired {
+            match fired_by.as_str() {
+                "auto" => {
+                    c.insert("firedBy".into(), "auto".into());
+                    if via.trim().is_empty() {
+                        c.remove("via");
+                    } else {
+                        c.insert("via".into(), via.trim().into());
+                    }
+                }
+                "operator" => {
+                    // Removed rather than written false: the default is that a person
+                    // presses it, and the file should only record the exception.
+                    c.remove("firedBy");
+                    c.remove("via");
+                }
+                _ => {}
             }
         }
         // A cue the operator has been through is a cue somebody has checked.
@@ -609,7 +696,7 @@ pub fn run(
     buffer_ms: u32,
     trace_out: Option<PathBuf>,
     prep: bool,
-    cues_path: Option<&Path>,
+    cues_path: &[PathBuf],
 ) -> Result<()> {
     let corpus = Corpus::load(corpus_path, audio_root)?;
     let (script, prepared) = super::load_script(&corpus.script_path())?;
@@ -641,29 +728,30 @@ pub fn run(
         })
         .collect();
 
-    // Beside the script unless told otherwise, because that is where it lives for
-    // every show that has one and asking for a path each time is friction with no
-    // decision behind it.
-    let cue_path = cues_path
-        .map(PathBuf::from)
-        .unwrap_or_else(|| corpus.script_path().with_file_name("cues.json"));
-    let cues = load_cues(&cue_path, &lines);
-    let cue_list = std::fs::read_to_string(&cue_path)
-        .ok()
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .map(|doc| load_cue_list(&doc))
-        .unwrap_or(CueList { name: None, categories: Vec::new() });
-    if !cues.is_empty() {
-        println!("cues:    {} from {}", cues.len(), cue_path.display());
-        let labels: Vec<&str> = cue_list
-            .categories
-            .iter()
-            .map(|c| c.label.as_str())
-            .collect();
-        if !labels.is_empty() {
-            println!("targets: {}", labels.join(", "));
-        }
+    // Every cue list beside the script unless told otherwise. A show has as many as it
+    // has operators, each in its own file — the lists are independent documents, not
+    // views of one, so they are never merged and never renumbered against each other.
+    let cue_paths: Vec<PathBuf> = if cues_path.is_empty() {
+        find_cue_files(&corpus.script_path().with_file_name("."))
+    } else {
+        cues_path.iter().map(|p| p.to_path_buf()).collect()
+    };
+    let mut cues: Vec<CueView> = Vec::new();
+    let mut sheets: Vec<CueSheet> = Vec::new();
+    let mut sheet_paths = std::collections::HashMap::new();
+    for path in &cue_paths {
+        let id = sheet_id(path);
+        let found = load_cues(path, &lines, &id);
+        let Some(meta) = read_sheet_meta(path, &id) else {
+            continue;
+        };
+        println!("list:    {} — {} cues from {}", meta.name, found.len(), path.display());
+        cues.extend(found);
+        sheet_paths.insert(id, path.clone());
+        sheets.push(meta);
     }
+    cues.sort_by_key(|c| c.line_index);
+
 
     let (tx, _rx) = tokio::sync::broadcast::channel(256);
     let state = Arc::new(LiveState {
@@ -677,8 +765,8 @@ pub fn run(
         audible_until: Mutex::new(if monitor { 0.0 } else { f64::INFINITY }),
         steer: Mutex::new(Vec::new()),
         cues: Mutex::new(cues),
-        cues_path: cue_path.clone(),
-        cue_list: Mutex::new(cue_list),
+        sheet_paths,
+        sheets: Mutex::new(sheets),
         prep,
     });
 
@@ -1047,19 +1135,32 @@ struct LineEdit {
 /// Re-read rather than patched in place: the trigger phrase is derived from the line's
 /// text, the sort is by line, and the categories decide the painting — so the only
 /// copy worth trusting is the one the loader produces.
-fn reload_cues(state: &Arc<LiveState>) -> (Vec<CueView>, CueList) {
-    let cues = {
-        let lines = state.lines.lock().unwrap();
-        load_cues(&state.cues_path, &lines)
-    };
-    let list = std::fs::read_to_string(&state.cues_path)
-        .ok()
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .map(|doc| load_cue_list(&doc))
-        .unwrap_or(CueList { name: None, categories: Vec::new() });
+fn reload_cues(state: &Arc<LiveState>, changed: &str) -> (Vec<CueView>, CueSheet) {
+    let lines = state.lines.lock().unwrap();
+    let mut cues: Vec<CueView> = Vec::new();
+    let mut sheets: Vec<CueSheet> = Vec::new();
+    // Every sheet, not only the one that changed: the client is sent the whole set and
+    // replaces its copy wholesale, which is a few kilobytes and cannot go stale.
+    for sheet in state.sheets.lock().unwrap().iter() {
+        let Some(path) = state.sheet_paths.get(&sheet.id) else {
+            continue;
+        };
+        cues.extend(load_cues(path, &lines, &sheet.id));
+        sheets.push(read_sheet_meta(path, &sheet.id).unwrap_or_else(|| sheet.clone()));
+    }
+    cues.sort_by_key(|c| c.line_index);
+    let mine = sheets
+        .iter()
+        .find(|s| s.id == changed)
+        .cloned()
+        .unwrap_or_else(|| CueSheet {
+            id: changed.to_string(),
+            name: changed.to_string(),
+            categories: Vec::new(),
+        });
     *state.cues.lock().unwrap() = cues.clone();
-    *state.cue_list.lock().unwrap() = list.clone();
-    (cues, list)
+    *state.sheets.lock().unwrap() = sheets;
+    (cues, mine)
 }
 
 /// The HTTP side: the page, the script, and the position stream.
@@ -1107,9 +1208,9 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                 }),
             )
             .route(
-                "/cuelist.json",
+                "/sheets.json",
                 get(|State(s): State<Arc<LiveState>>| async move {
-                    axum::Json(s.cue_list.lock().unwrap().clone())
+                    axum::Json(s.sheets.lock().unwrap().clone())
                 }),
             )
             .route(
@@ -1135,21 +1236,34 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                     // line, so they are handled before the line-index
                                     // requirement below — which would otherwise drop
                                     // every one of them on the floor without a word.
+                                    // Which list an edit concerns. Independent lists
+                                    // mean an edit is meaningless without one, so a
+                                    // message that omits it is dropped rather than
+                                    // guessed at — guessing writes a lighting
+                                    // correction into the sound sheet.
+                                    let sheet_of = |v: &serde_json::Value| -> Option<(String, PathBuf)> {
+                                        let id = v.get("sheet")?.as_str()?.to_string();
+                                        let path = inbound.sheet_paths.get(&id)?.clone();
+                                        Some((id, path))
+                                    };
                                     if kind == Some("edit_categories") {
+                                        let Some((id, path)) = sheet_of(&v) else {
+                                            continue;
+                                        };
                                         let cats: Vec<serde_json::Value> = v
                                             .get("categories")
                                             .and_then(|c| c.as_array())
                                             .cloned()
                                             .unwrap_or_default();
-                                        if let Err(e) =
-                                            write_categories(&inbound.cues_path, &cats)
-                                        {
+                                        if let Err(e) = write_categories(&path, &cats) {
                                             eprintln!("could not save the targets: {e:#}");
                                         }
-                                        let (fresh, list) = reload_cues(&inbound);
-                                        let _ = inbound
-                                            .tx
-                                            .send(Update::CuesChanged { cues: fresh, list });
+                                        let (fresh, list) = reload_cues(&inbound, &id);
+                                        let _ = inbound.tx.send(Update::CuesChanged {
+                                            sheet: id,
+                                            cues: fresh,
+                                            list,
+                                        });
                                         continue;
                                     }
                                     if matches!(kind, Some("edit_cue" | "delete_cue" | "insert_cue"))
@@ -1157,19 +1271,21 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                         let str_of = |k: &str| {
                                             v.get(k).and_then(|x| x.as_str()).map(str::to_string)
                                         };
+                                        let Some((sheet, path)) = sheet_of(&v) else {
+                                            continue;
+                                        };
                                         let id = str_of("id").unwrap_or_default();
                                         let outcome = match kind {
                                             Some("insert_cue") => v
                                                 .get("lineId")
                                                 .and_then(|x| x.as_str())
                                                 .context("insert_cue needs a lineId")
-                                                .and_then(|lid| {
-                                                    append_cue(&inbound.cues_path, lid)
-                                                })
+                                                .and_then(|lid| append_cue(&path, lid))
                                                 .map(|_| ()),
                                             Some("delete_cue") => write_cue(
-                                                &inbound.cues_path,
+                                                &path,
                                                 &id,
+                                                None,
                                                 None,
                                                 None,
                                                 None,
@@ -1179,13 +1295,17 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                 true,
                                             ),
                                             _ => write_cue(
-                                                &inbound.cues_path,
+                                                &path,
                                                 &id,
                                                 str_of("cue").as_deref(),
                                                 str_of("trigger").as_deref(),
                                                 str_of("triggerText").as_deref(),
                                                 v.get("triggerNth").and_then(|x| x.as_u64()),
                                                 str_of("colour").as_deref(),
+                                                Some((
+                                                    str_of("firedBy").unwrap_or_default(),
+                                                    str_of("via").unwrap_or_default(),
+                                                )),
                                                 str_of("lineId").as_deref(),
                                                 false,
                                             ),
@@ -1199,10 +1319,15 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                 // and a re-anchor changes both — so the
                                                 // only copy worth trusting is the one
                                                 // the loader produces.
-                                                let (fresh, list) = reload_cues(&inbound);
-                                                let _ = inbound
-                                                    .tx
-                                                    .send(Update::CuesChanged { cues: fresh, list });
+                                                let (fresh, list) =
+                                                    reload_cues(&inbound, &sheet);
+                                                let _ = inbound.tx.send(
+                                                    Update::CuesChanged {
+                                                        sheet,
+                                                        cues: fresh,
+                                                        list,
+                                                    },
+                                                );
                                             }
                                         }
                                         continue;

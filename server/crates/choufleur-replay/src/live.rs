@@ -35,7 +35,7 @@ use crate::formats::SegmentRecord;
 ///
 /// So the page carries the version it was written against and says so on screen when
 /// they disagree. A silent no-op is the one failure mode worth spending a field on.
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// One script line, as the client needs it. Sent once, in bulk.
 #[derive(Clone, Serialize)]
@@ -81,12 +81,33 @@ pub struct CueCategory {
     pub swatch: String,
 }
 
-/// A cue list: who it belongs to and what its marks mean.
+/// One operator's cue list: their document, in their notation.
+///
+/// A first-class thing, and **deliberately not** what notation §6.2 and §9 describe.
+/// The spec models this as a single shared cue array partitioned by a `cueTypes`
+/// registry, with each operator filtering on type. From the chair: *"The cue lists are
+/// independent. Each operator should take their notes as they prefer."*
+///
+/// They are right and the spec should be amended. A cue list is one person's working
+/// document: its colours mean what they decided they mean, its wording is their
+/// shorthand, and what even counts as a cue is their judgement. This production's sound
+/// sheet says `2 Mute micros / lumière 11 / Musique` — a lighting state written into a
+/// sound cue because that was useful *to the sound operator*. A shared array with a
+/// shared vocabulary makes one operator's conventions structurally visible to another
+/// and forces a common language on people who do not have one.
+///
+/// So: **the script and the position are shared; everything else belongs to a list.**
+/// Two lists may both contain a `Q-0007` and never collide, because a cue id is only
+/// ever resolved within its own sheet.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CueList {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
+pub struct CueSheet {
+    /// Stable, from the file's stem. How a client says which list it is showing.
+    pub id: String,
+    /// What the operator calls it: "Conduite SON", "LX".
+    pub name: String,
+    /// This list's own vocabulary. Personal by construction — renaming a target on one
+    /// list can never touch another.
     pub categories: Vec<CueCategory>,
 }
 
@@ -101,7 +122,11 @@ pub struct CueList {
 #[serde(rename_all = "camelCase")]
 pub struct CueView {
     /// Stable across runs and across re-sorting; see `load_cues`.
+    ///
+    /// Unique within its sheet, not across sheets: see [`CueSheet`].
     pub id: String,
+    /// Which list this cue belongs to.
+    pub sheet: String,
     /// Position in the script. Cues arrive sorted by it.
     pub line_index: usize,
     pub line_id: String,
@@ -132,6 +157,24 @@ pub struct CueView {
     pub trigger_nth: usize,
     /// Placed by the re-anchoring tool but not confidently. Shown as such.
     pub needs_review: bool,
+    /// `"operator"` — the owner of this list presses go — or `"auto"`, meaning a
+    /// machine does it and the human is on standby.
+    ///
+    /// Reported from the production: QLab sent OSC to the lighting desk so transitions
+    /// stayed in sync, *"but the light operator was always on standby in case something
+    /// didn't go right."* Nothing else in the system records who acts, so a cue that
+    /// fires itself was indistinguishable from one waiting to be pressed.
+    ///
+    /// This does not break warn-only semantics (notation §2.4: *"Nothing in this
+    /// notation can express 'trigger'"*). That rule forbids the format instructing
+    /// hardware. This instructs nothing and reaches no machine — it records who acts in
+    /// the room, which is exactly what a standby operator needs warning about. It
+    /// changes the wording of a warning, never its nature.
+    pub fired_by: String,
+    /// How it fires, in the operator's words: "OSC from QLab". Free text, shown
+    /// verbatim, never parsed — the moment this is parsed it has become show control.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub via: Option<String>,
 }
 
 /// Where the show is. `None` before the first fix.
@@ -192,6 +235,9 @@ pub enum Update {
         position: Option<Position>,
         /// No audio, no engine — the page is here to be edited, not watched.
         prep: bool,
+        /// The cue lists this show carries, so a client can offer the picker without a
+        /// second fetch.
+        sheets: Vec<CueSheet>,
     },
     PositionUpdate(Position),
     /// A line was corrected; every client should update its copy.
@@ -218,12 +264,16 @@ pub enum Update {
     /// 133 cues the whole list is a few kilobytes and arrives once per edit — a delta
     /// protocol here would be three more message types and a class of bug for no gain.
     CuesChanged {
+        /// Which list changed. A screen showing another one ignores this entirely —
+        /// the lists are independent, so an edit to the lighting sheet is not news to
+        /// the sound operator and must not redraw their rail.
+        sheet: String,
         cues: Vec<CueView>,
         /// Sent alongside, always. The categories decide how every cue is painted, so
         /// a client holding one and not the other would draw the sheet in colours it
         /// no longer uses — and the two change together often enough that a separate
         /// message would only be a way for them to disagree.
-        list: CueList,
+        list: CueSheet,
     },
     /// A line was flagged or unflagged.
     ///
@@ -301,10 +351,12 @@ pub struct LiveState {
     pub steer: Mutex<Vec<usize>>,
     /// The cue sheet, projected for the rail. Empty when there is none.
     pub cues: Mutex<Vec<CueView>>,
-    /// Where cue edits are written.
-    pub cues_path: std::path::PathBuf,
-    /// The list's own vocabulary; see [`CueList`].
-    pub cue_list: Mutex<CueList>,
+    /// Where each list's edits are written, by sheet id. Resolved per edit rather than
+    /// held as one path: writing a lighting correction into the sound sheet is this
+    /// feature's characteristic failure.
+    pub sheet_paths: std::collections::HashMap<String, std::path::PathBuf>,
+    /// Every cue list this show carries, each owning its own file. See [`CueSheet`].
+    pub sheets: Mutex<Vec<CueSheet>>,
     /// Prep mode: the script is served for editing and nothing is running.
     ///
     /// Everything the operator has to set — which lines are cut, which are stage
@@ -323,6 +375,7 @@ impl LiveState {
             line_count: self.lines.lock().unwrap().len(),
             position: *self.latest.lock().unwrap(),
             prep: self.prep,
+            sheets: self.sheets.lock().unwrap().clone(),
         }
     }
 }
@@ -466,8 +519,8 @@ mod tests {
             audible_until: Mutex::new(f64::INFINITY),
             steer: Mutex::new(Vec::new()),
             cues: Mutex::new(Vec::new()),
-            cues_path: std::path::PathBuf::from("/dev/null"),
-            cue_list: Mutex::new(CueList { name: None, categories: Vec::new() }),
+            sheet_paths: std::collections::HashMap::new(),
+            sheets: Mutex::new(Vec::new()),
             prep: false,
         };
         let s = serde_json::to_string(&state.hello()).unwrap();
@@ -475,6 +528,7 @@ mod tests {
         assert!(s.contains(r#""lineCount":1"#), "{s}");
         assert!(s.contains(r#""position":null"#), "{s}");
         assert!(s.contains(r#""prep":false"#), "{s}");
+        assert!(s.contains(r#""sheets":[]"#), "{s}");
     }
 
     #[test]

@@ -147,9 +147,11 @@ enum Command {
         /// playback to reach the passage you want to fix makes it work nobody does.
         #[arg(long)]
         prep: bool,
-        /// Cue sheet to display. Defaults to `cues.json` beside the script.
+        /// Cue lists to display. Repeatable — a show has one per operator, and they
+        /// are independent documents rather than views of one another. Defaults to
+        /// every `cues.json` and `cues-*.json` beside the script.
         #[arg(long)]
-        cues: Option<std::path::PathBuf>,
+        cues: Vec<std::path::PathBuf>,
         /// Output device to play through; substring match. Default device otherwise.
         #[arg(long)]
         output_device: Option<String>,
@@ -300,7 +302,7 @@ fn main() -> Result<()> {
             buffer_ms,
             out,
             prep,
-            cues.as_deref(),
+            &cues,
         ),
         Command::Track {
             corpus,

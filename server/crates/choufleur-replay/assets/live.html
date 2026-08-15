@@ -165,6 +165,16 @@
   /* Its line is the one being spoken. */
   .cue.now { color: var(--now); border-left-color: var(--now); background: #221d12; }
   .cue.review { border-left-style: dotted; }
+  /* Not yours to press. Outlined rather than filled, because a card that looks like a
+     button is one somebody will reach for — but fully legible, because standing by is
+     an instruction too. */
+  .cue.auto { background: none; border: 1px dashed var(--dimmer); border-left-width: 3px; }
+  .cue.auto .what { color: var(--dim); }
+  .cue .standby {
+    display: block; margin-top: .15em;
+    font: 600 .74em/1.4 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .04em; color: var(--now);
+  }
   /* Editable only in prep. A cue moved or retyped mid-show is a cue somebody is not
      watching for, and the rail is the one part of this page an operator reads without
      looking away from the stage. */
@@ -443,6 +453,16 @@
   #follow { margin-left: .6em; }
   /* Naming your own targets. Prep only: what a mark means is a decision about the
      show, not something to change while running it. */
+  /* Which list this screen is showing. Available in a run as well as in prep:
+     somebody covering another position mid-show should not have to restart anything. */
+  #picker { display: inline-flex; gap: .25em; margin-left: .6em; align-items: center; }
+  #picker button {
+    border: 1px solid var(--dimmer); background: none; color: var(--dim);
+    border-radius: 999px; padding: .3em .8em; font: inherit; cursor: pointer;
+  }
+  #picker button.on { border-color: var(--now); color: var(--now); }
+  #picker.single { display: none; }
+
   #targets { display: none; margin-left: .6em; }
   body[data-prep="on"] #targets {
     display: inline-block; border: 1px solid var(--dimmer); background: none;
@@ -557,6 +577,7 @@
     <span id="clock">0:00</span>
     <span id="gap">—</span>
     <input id="find" placeholder="find a line, or a number" spellcheck="false">
+    <span id="picker"></span>
     <button id="targets" title="what this cue list drives">targets</button>
     <span id="flags">
       <button id="flagprev" title="previous flag">&#9664;</button>
@@ -891,6 +912,11 @@
   const $leads = document.getElementById('leads');
   let leadEls = [];
   let cues = [];
+  // What this screen is drawing: the chosen list, in script order. Every index in
+  // `cueEls`, `cueAway` and the layout refers to *this*, never to the full set — the
+  // two diverge the moment a list is selected, and conflating them would put a lighting
+  // cue's tendril on a sound cue's card.
+  let shown = [];
   let cueEls = [];
   let cueAway = [];
   // Line offsets, cached: this runs every animation frame, and asking the browser for
@@ -917,24 +943,36 @@
 
   async function loadCues() {
     try {
-      const list = await fetch('cuelist.json');
-      if (list.ok) cueCats = (await list.json()).categories || [];
-    } catch { /* an older server has no list; the rail still works uncoloured */ }
+      const list = await fetch('sheets.json');
+      if (list.ok) sheets = await list.json();
+    } catch { /* an older server has no lists; the rail still works uncoloured */ }
     try {
       const r = await fetch('cues.json');
       if (!r.ok) return;
       cues = await r.json();
     } catch { return; }
+    // An unknown list — a stale bookmark, a renamed file — falls back to the first
+    // rather than to an empty rail, which would read as "no cues tonight".
+    if (viewing && viewing !== '*' && !sheetOf(viewing)) viewing = null;
+    if (!viewing) viewing = sheets.length === 1 ? sheets[0].id : '*';
     paintCategoryRules();
+    paintPicker();
     renderRail();
   }
+
+  // Cues on the list this screen is showing, in script order.
+  const mine = () => (viewing === '*' ? cues : cues.filter((c) => c.sheet === viewing));
 
   // Paint the marks and cards from the list, so a department that does not use these
   // colours is not stuck with them.
   function paintCategoryRules() {
-    document.getElementById('catstyle').textContent = cueCats
-      .map((c) => `.cue[data-colour="${c.key}"] { border-left-color: ${c.swatch}; }\n`
-                + `mark.trig[data-colour="${c.key}"] { border-bottom-color: ${c.swatch}; }`)
+    // Scoped by sheet, because two lists may use the same key for different colours —
+    // that is what independence means, and an unscoped rule would let the lighting
+    // list repaint the sound list's cards.
+    document.getElementById('catstyle').textContent = sheets
+      .flatMap((sh) => (sh.categories || []).map((c) =>
+        `.cue[data-sheet="${sh.id}"][data-colour="${c.key}"] { border-left-color: ${c.swatch}; }\n`
+        + `mark.trig[data-sheet="${sh.id}"][data-colour="${c.key}"] { border-bottom-color: ${c.swatch}; }`))
       .join('\n');
   }
 
@@ -943,7 +981,7 @@
     // — and `cueEditing` would be left pointing at a card that no longer exists,
     // freezing the layout for good. Commit it first.
     if (openCue) openCue();
-    document.body.dataset.rail = cues.length ? 'on' : 'off';
+    document.body.dataset.rail = shown.length ? 'on' : 'off';
     // Only one mark per line: two cues on the same line would fight over the text,
     // and the second leader can point at the first one's mark perfectly well.
     // The union of before and after, not just after.
@@ -952,13 +990,15 @@
     // lost its last one untouched — so the underline stays under words that no longer
     // fire anything, which is a lie the page keeps telling until something else
     // happens to redraw that line.
+    shown = mine();
     const had = new Set(triggerOf.keys());
     triggerOf = new Map();
-    for (const c of cues) {
+    for (const c of shown) {
       if (!c.triggerText) continue;
       if (!triggerOf.has(c.lineIndex)) triggerOf.set(c.lineIndex, []);
       triggerOf.get(c.lineIndex).push({
-        id: c.id, text: c.triggerText, colour: c.colour, nth: c.triggerNth || 0,
+        id: c.id, text: c.triggerText, colour: c.colour, sheet: c.sheet,
+        nth: c.triggerNth || 0,
       });
     }
     for (const i of new Set([...had, ...triggerOf.keys()])) {
@@ -967,10 +1007,12 @@
     lineTops = null;
     $rail.textContent = '';
     cueAway = [];
-    cueEls = cues.map((c) => {
+    cueEls = shown.map((c) => {
       const el = document.createElement('div');
-      el.className = 'cue' + (c.needsReview ? ' review' : '');
+      el.className = 'cue' + (c.needsReview ? ' review' : '')
+        + (c.firedBy === 'auto' ? ' auto' : '');
       if (c.colour) el.dataset.colour = c.colour;
+      el.dataset.sheet = c.sheet;
       el.dataset.trigger = c.trigger;
       const means = document.createElement('span');
       means.className = 'means';
@@ -984,6 +1026,16 @@
       what.className = 'what';
       what.textContent = c.cue;
       el.append(means, what);
+      // A machine fires this one and the operator is on standby. It keeps its place in
+      // the rail and its lookahead slot — knowing it is coming is the whole point of
+      // standing by — but it is drawn as something to watch rather than something to
+      // press, and it says what fires it.
+      if (c.firedBy === 'auto') {
+        const by = document.createElement('span');
+        by.className = 'standby';
+        by.textContent = c.via ? `standby — ${c.via}` : 'standby — fires itself';
+        el.appendChild(by);
+      }
       $rail.appendChild(el);
       cueAway.push(away);
       return el;
@@ -1003,7 +1055,7 @@
   const LOOKAHEAD = 2;
 
   function layoutCues() {
-    if (!cues.length) return;
+    if (!shown.length) return;
     // Frozen while a cue is open.
     //
     // Two faults, one cause. The card grows when it becomes an editor, so every
@@ -1029,8 +1081,8 @@
     // Split first, place second. Which band a cue belongs to is a fact about the
     // script and the scroll; where it is drawn is a consequence.
     const gone = [], here = [], ahead = [];
-    for (let k = 0; k < cues.length; k++) {
-      const c = cues[k];
+    for (let k = 0; k < shown.length; k++) {
+      const c = shown[k];
       if (!els[c.lineIndex]) { gone.push(k); continue; }
       const y = lineTops[c.lineIndex] + linesTop - top;
       // Gone by: its line has left the top of the window. Cues do not linger — the
@@ -1061,13 +1113,13 @@
       el.classList.remove('ahead');
       el.classList.add('here');
       if (cueAway[k].textContent) cueAway[k].textContent = '';
-      el.classList.toggle('now', cues[k].lineIndex === current);
+      el.classList.toggle('now', shown[k].lineIndex === current);
       floor = want + h + CUE_GAP;
     }
 
     // The lookahead, stacked at the foot, with how far off each one is. "What" is on
     // the card already; the only thing missing is "when".
-    const from = current >= 0 ? current : (here.length ? cues[here[0][0]].lineIndex : 0);
+    const from = current >= 0 ? current : (here.length ? shown[here[0][0]].lineIndex : 0);
     let y = railH - reserved + CUE_GAP;
     for (const [k] of queued) {
       if (frozen) break;
@@ -1076,7 +1128,7 @@
       el.style.transform = `translateY(${Math.round(y)}px)`;
       el.classList.add('ahead');
       el.classList.remove('here', 'now');
-      const away = cues[k].lineIndex - from;
+      const away = shown[k].lineIndex - from;
       cueAway[k].textContent = away > 0 ? `in ${away} line${away === 1 ? '' : 's'} · ` : '';
       y += h + CUE_GAP;
     }
@@ -1102,9 +1154,29 @@
   // Filled from the cue list rather than written here. See CueList in live.rs: a
   // lighting sheet means an Eos by the same marks this sound sheet means QLab by, and
   // neither of them is the page's business to know.
+  // Every list this show carries, and which one this screen is showing.
+  //
+  // The lists are independent documents — one operator's notation is not another's —
+  // so a screen shows exactly one, or "everything" for a stage manager who is watching
+  // the whole board. The choice is this device's: a URL wins so a fixed install can be
+  // set once and cannot be changed by somebody walking past it, otherwise the picker,
+  // remembered here.
+  let sheets = [];
+  let viewing = new URLSearchParams(location.search).get('list')
+    || localStorage.getItem('choufleur.list')
+    || null;
+  const deviceId = (() => {
+    let d = localStorage.getItem('choufleur.device');
+    if (!d) { d = crypto.randomUUID(); localStorage.setItem('choufleur.device', d); }
+    return d;
+  })();
+  const sheetOf = (id) => sheets.find((s) => s.id === id);
+  // The categories in force are the showing list's. With "everything" selected there is
+  // no single vocabulary, so every list's categories are pooled — ids are per-list and
+  // may repeat, which is exactly why a cue is painted from *its own* sheet's set.
+  const catFor = (cue) => (sheetOf(cue.sheet)?.categories || []).find((c) => c.key === cue.colour);
+  const CUE_STROKE = (cue) => catFor(cue)?.swatch || '';
   let cueCats = [];
-  const catOf = (key) => cueCats.find((c) => c.key === key);
-  const CUE_STROKE = (key) => catOf(key)?.swatch || '';
 
   // Where the rendered text of a line stops, as opposed to where its box stops.
   // Only ever called for the handful of cues in view.
@@ -1134,14 +1206,14 @@
     for (const [k] of here) {
       const card = cueEls[k];
       if (card.style.display === 'none') continue;
-      const line = els[cues[k].lineIndex];
+      const line = els[shown[k].lineIndex];
       if (!line) continue;
       // The *last* rect, not the bounding box. A phrase that wraps spans two rows, and
       // their union is a box whose right edge belongs to one row and whose bottom
       // belongs to the other — so the tendril would leave from a corner where there is
       // no text at all. The cue fires when the phrase finishes, so the end of the last
       // row is both the correct anchor and the honest one.
-      const mark = line.querySelector(`mark.trig[data-cue="${cues[k].id}"]`);
+      const mark = line.querySelector(`mark.trig[data-cue="${shown[k].id}"]`);
       const rects = mark ? mark.getClientRects() : null;
       const t = rects && rects.length ? rects[rects.length - 1] : endOfText(line);
       if (!t || t.bottom < stage.top || t.top > stage.bottom) continue;
@@ -1200,9 +1272,40 @@
       // The cue's own colour, so several tendrils leaving one paragraph are told apart
       // by the same code as their cards — and so a line running under a sentence is
       // read as belonging to the rail rather than as part of the typography.
-      path.style.stroke = CUE_STROKE(cues[j.k].colour);
-      path.classList.toggle('now', cues[j.k].lineIndex === current);
+      path.style.stroke = CUE_STROKE(shown[j.k]);
+      path.classList.toggle('now', shown[j.k].lineIndex === current);
     });
+  }
+
+  // The list picker. Hidden when a show has only one list, because a control with a
+  // single option is furniture.
+  const $picker = document.getElementById('picker');
+  function paintPicker() {
+    $picker.textContent = '';
+    $picker.classList.toggle('single', sheets.length < 2);
+    if (sheets.length < 2) return;
+    const choose = (id) => {
+      viewing = id;
+      localStorage.setItem('choufleur.list', id);
+      paintPicker();
+      paintCategoryRules();
+      renderRail();
+      replace();
+    };
+    for (const sh of sheets) {
+      const b = document.createElement('button');
+      b.textContent = sh.name;
+      b.classList.toggle('on', viewing === sh.id);
+      b.onclick = () => choose(sh.id);
+      $picker.appendChild(b);
+    }
+    // Everything at once: the stage manager's view, and how you check that two lists
+    // do not disagree about where a moment sits.
+    const all = document.createElement('button');
+    all.textContent = 'all';
+    all.classList.toggle('on', viewing === '*');
+    all.onclick = () => choose('*');
+    $picker.appendChild(all);
   }
 
   // ---- the targets a cue list drives ------------------------------------------
@@ -1229,7 +1332,13 @@
     s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
       .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
+  // The list whose vocabulary the targets panel edits: the one being shown, or the
+  // first when showing everything — "all" is a view, not a list, and has no categories
+  // of its own to edit.
+  const targetSheet = () => (viewing === '*' ? (sheets[0]?.id || '') : viewing);
+
   function openTargets() {
+    cueCats = sheetOf(targetSheet())?.categories || [];
     draft = cueCats.map((c) => ({ ...c }));
     document.body.dataset.palette = 'on';
     $targets.classList.add('on');
@@ -1307,7 +1416,9 @@
           taken.add(key);
           return { key, label: c.label.trim() || key, swatch: c.swatch };
         });
-      ws.send(JSON.stringify({ type: 'edit_categories', categories: cats }));
+      ws.send(JSON.stringify({
+        type: 'edit_categories', sheet: targetSheet(), categories: cats,
+      }));
       closeTargets();
     };
     foot.append(add, cancel, save);
@@ -1411,7 +1522,7 @@
     // regardless, and one pass taken while the card is halfway to being an editor
     // places everything below it wrongly.
     cueEditing = k;
-    const el = cueEls[k], c = cues[k];
+    const el = cueEls[k], c = shown[k];
     const before = el.innerHTML;
     el.classList.add('editing');
     el.innerHTML = '';
@@ -1425,6 +1536,8 @@
     let trigger = c.trigger, colour = c.colour || '', triggerText = c.triggerText || '';
     let moveTo = c.lineIndex;
     let triggerNth = c.triggerNth || 0;
+    let firedBy = c.firedBy === 'auto' ? 'auto' : 'operator';
+    let via = c.via || '';
     const ctl = document.createElement('div');
     ctl.className = 'ctl';
     const mk = (label, isOn, onClick) => {
@@ -1481,7 +1594,7 @@
       e.preventDefault();
       if (!armed) { armed = true; kill.textContent = 'delete cue?'; kill.classList.add('armed'); return; }
       close(false);
-      ws.send(JSON.stringify({ type: 'delete_cue', id: c.id }));
+      ws.send(JSON.stringify({ type: 'delete_cue', sheet: c.sheet, id: c.id }));
     };
     ctl.append(bText, bVis, ...catBtns, bTrig, bWhole, bClear);
 
@@ -1507,10 +1620,27 @@
         hint.textContent = triggerText ? `on “${triggerText}”` : 'fires on the whole line';
       }
       bClear.classList.toggle('on', !triggerText);
+      bMe.classList.toggle('on', firedBy === 'operator');
+      bAuto.classList.toggle('on', firedBy === 'auto');
+      // Only meaningful for a machine-fired cue, so only shown for one.
+      viaField.style.display = firedBy === 'auto' ? '' : 'none';
     };
     // Two rows: what the cue *is* on the first, what to do with it on the second.
     // Six controls wrapping in one row put `delete` in a different place depending on
     // the width of the card, which is not where a destructive button belongs.
+    // Who actually presses it. The default is a person; the exception is worth one
+    // control, because a cue that fires itself and a cue waiting to be pressed look
+    // identical on a rail and are opposite responsibilities.
+    const who = document.createElement('div');
+    who.className = 'ctl';
+    const bMe = mk('I press it', 'never', () => { firedBy = 'operator'; });
+    const bAuto = mk('a machine fires it', 'never', () => { firedBy = 'auto'; });
+    const viaField = document.createElement('input');
+    viaField.placeholder = 'how — e.g. OSC from QLab';
+    viaField.value = via;
+    viaField.oninput = () => { via = viaField.value; };
+    who.append(bMe, bAuto);
+
     const actions = document.createElement('div');
     actions.className = 'ctl actions';
     const bAdd = document.createElement('button');
@@ -1520,10 +1650,12 @@
       e.preventDefault();
       pendingCueFor = lines[c.lineIndex].id;
       close(true);
-      ws.send(JSON.stringify({ type: 'insert_cue', lineId: lines[c.lineIndex].id }));
+      ws.send(JSON.stringify({
+        type: 'insert_cue', sheet: c.sheet, lineId: lines[c.lineIndex].id,
+      }));
     };
     actions.append(bAdd, kill);
-    el.append(what, ctl, actions, hint, keys);
+    el.append(what, ctl, who, viaField, actions, hint, keys);
     repaint();
     fit();
     what.focus();
@@ -1555,8 +1687,8 @@
       el.classList.remove('editing');
       if (commit) {
         ws.send(JSON.stringify({
-          type: 'edit_cue', id: c.id, cue: what.value.trim(),
-          trigger, colour, triggerText, triggerNth,
+          type: 'edit_cue', sheet: c.sheet, id: c.id, cue: what.value.trim(),
+          trigger, colour, triggerText, triggerNth, firedBy, via,
           lineId: lines[moveTo].id,
         }));
       }
@@ -1791,7 +1923,9 @@
     bAddCue.onclick = (e) => {
       e.preventDefault();
       pendingCueFor = lines[i].id;
-      ws.send(JSON.stringify({ type: 'insert_cue', lineId: lines[i].id }));
+      ws.send(JSON.stringify({
+        type: 'insert_cue', sheet: targetSheet(), lineId: lines[i].id,
+      }));
       done(true);
     };
     row.appendChild(bAddCue);
@@ -1960,7 +2094,7 @@
         // The nth occurrence, not the first.
         let at = l.text.indexOf(t.text);
         for (let n = 0; n < (t.nth || 0) && at >= 0; n++) at = l.text.indexOf(t.text, at + 1);
-        return { id: t.id, colour: t.colour, at, len: t.text.length };
+        return { id: t.id, colour: t.colour, sheet: t.sheet, at, len: t.text.length };
       })
       .filter((x) => x.at >= 0)
       .sort((a, b) => a.at - b.at);
@@ -1971,6 +2105,7 @@
       const m = document.createElement('mark');
       m.className = 'trig';
       m.dataset.cue = x.id;
+      if (x.sheet) m.dataset.sheet = x.sheet;
       if (x.colour) m.dataset.colour = x.colour;
       m.textContent = l.text.slice(x.at, x.at + x.len);
       el.appendChild(m);
@@ -2124,7 +2259,7 @@
   window.addEventListener('resize', () => { lineTops = null; replace(); });
 
   // What this page was written against. See PROTOCOL_VERSION in live.rs.
-  const PROTOCOL = 5;
+  const PROTOCOL = 6;
   // Whether this is a reconnection rather than the first join.
   let joined = false;
 
@@ -2141,6 +2276,7 @@
         }
         if (m.title) document.title = m.title + (m.prep ? ' — prep' : ' — live');
         if (m.prep) { document.body.dataset.prep = 'on'; setEditing(true); }
+        if (m.sheets) { sheets = m.sheets; paintCategoryRules(); paintPicker(); }
         // Re-read the script on every *re*-connect, never only at startup.
         //
         // The page keeps its own copy of every line and writes the whole line back
@@ -2171,15 +2307,22 @@
         replace();
       } else if (m.type === 'cues_changed') {
         cues = m.cues;
-        if (m.list) { cueCats = m.list.categories || []; paintCategoryRules(); }
+        if (m.list) {
+          // Replace that sheet's meta in the roster, leaving every other list alone —
+          // an edit to the lighting list is not news to the sound operator.
+          const at = sheets.findIndex((sh) => sh.id === m.list.id);
+          if (at >= 0) sheets[at] = m.list; else sheets.push(m.list);
+          paintCategoryRules();
+          paintPicker();
+        }
         renderRail();
         // A cue added from a line opens straight away: an empty card in the rail is
         // not a cue, it is a promise to type one, and it should not be possible to
         // walk away having made it by accident.
         if (pendingCueFor) {
-          const k = cues.findIndex((c) => c.lineId === pendingCueFor && !c.cue);
+          const k = shown.findIndex((c) => c.lineId === pendingCueFor && !c.cue);
           pendingCueFor = null;
-          if (k >= 0) requestAnimationFrame(() => { goTo(cues[k].lineIndex, true); editCue(k); });
+          if (k >= 0) requestAnimationFrame(() => { goTo(shown[k].lineIndex, true); editCue(k); });
         }
       } else if (m.type === 'line_flagged') {
         lines[m.lineIndex].flag = m.flag;
