@@ -159,6 +159,17 @@ pub struct TrackerConfig {
     /// Left equal to `margin`, and left as a knob so the next attempt starts from a
     /// measurement rather than from this paragraph.
     pub lost_margin: f64,
+    /// Score a match must reach to move the position *backwards*, while not lost.
+    ///
+    /// Deliberately far above `accept_threshold`. Not applied when lost, because then
+    /// there is no position to preserve and every direction is equally unknown.
+    pub backward_threshold: f64,
+    /// How close two candidates must be before they stop counting as rivals.
+    ///
+    /// The ambiguity margin protects against landing in the wrong *place*. Within a
+    /// few lines there is no wrong place — it is the same page — so the rule only
+    /// costs the position it was meant to protect.
+    pub rival_min_gap: usize,
     /// Whether two lines carrying identical text should silence each other.
     ///
     /// `false` — the default — means they do not: see `is_rival`. Left switchable
@@ -295,6 +306,8 @@ impl Default for TrackerConfig {
             accept_threshold: 0.62,
             word_threshold: 0.88,
             margin: 0.06,
+            backward_threshold: 0.88,
+            rival_min_gap: 4,
             phonetic_similarity: true,
             phonetic_similarity_trust: 0.78,
             char_similarity: true,
@@ -474,6 +487,24 @@ impl<'a> Tracker<'a> {
             return events;
         };
         let (best, runner_up) = best;
+
+        // Going backwards costs much more evidence than going forwards.
+        //
+        // A show runs one way. Backwards happens — a restart, a retake, a company
+        // going round again — but it is rare, while the *reasons to mistakenly think*
+        // we should go back are everywhere: a repeated passage, a running gag, a
+        // stock phrase. Judging both directions on one threshold treats the rare and
+        // the routine as equally likely, and a wrong backward jump is the most
+        // expensive error the tracker makes: it re-reads ground the show has left, so
+        // every subsequent line disagrees and it stays wrong until it is lost.
+        //
+        // Forward mistakes self-correct — the show walks into them.
+        let going_back = best.span.last() < self.position;
+        let move_threshold = if going_back && !matches!(self.confidence, Confidence::Lost) {
+            move_threshold.max(self.cfg.backward_threshold)
+        } else {
+            move_threshold
+        };
 
         if best.score < move_threshold {
             events.push(TrackerEvent::Rejected {
@@ -858,6 +889,30 @@ impl<'a> Tracker<'a> {
     /// Picking the nearer copy is a line or two of error. Freezing costs the scene.
     fn is_rival(&self, a: usize, b: usize) -> bool {
         if a == b {
+            return false;
+        }
+        // Two candidates a few lines apart are not competing answers, they are the
+        // same answer at different precision — the operator reads a page, and both
+        // land on it.
+        //
+        // This is what a company riffing costs. Reported from a live run: the tracker
+        // struggles through
+        //
+        //     L0111  C'est très mystérieux…
+        //     L0113  C'est un peu étrange.
+        //     L0114  C'est étrange et symbolique.
+        //     L0115  Mais plus étrange que symbolique.
+        //     L0148  …Symbolique. Mais un peu étrange.
+        //
+        // Five near-identical lines in one scene. Each tie is rejected for ambiguity,
+        // the rejections decay confidence to lost, and *then* the whole-script search
+        // relocates to somewhere unrelated — which is why the jump landed in a section
+        // containing none of these words. The ambiguity never chose wrongly; it
+        // refused to choose, and being lost is what did the damage.
+        //
+        // Choosing the better of two neighbours risks a line or two. Refusing risks
+        // the scene.
+        if a.abs_diff(b) <= self.cfg.rival_min_gap {
             return false;
         }
         if !self.cfg.equivalent_text_competes {
