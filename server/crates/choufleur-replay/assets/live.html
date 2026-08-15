@@ -373,6 +373,8 @@
   let els = [];
   let current = -1;
   let following = true;
+  // The list is being torn down and rebuilt; scroll events during it are ours.
+  let rebuilding = false;
 
 
   const fmt = (s) => {
@@ -386,6 +388,15 @@
   // key off index — patching three structures in step is how you get a page whose
   // second half is quietly one line out.
   function build() {
+    // Where we were, because rebuilding loses it in two separate ways.
+    const wasAt = current, wasConf = document.body.dataset.conf;
+    // Emptying #lines collapses the scroll height to nothing, and the browser fires a
+    // scroll event for it. The follower tells its own motion from a finger by recency
+    // alone — it has to, since it writes scrollTop on almost every frame — so an
+    // unmarked rebuild reads as the operator scrolling away, and following is switched
+    // off and stays off. That is how autoscrolling vanished mid-run after a reconnect,
+    // with nothing on screen to explain it.
+    rebuilding = true;
     els.length = 0;
     $lines.textContent = '';
     const frag = document.createDocumentFragment();
@@ -405,6 +416,17 @@
       els[i] = p;
     });
     $lines.appendChild(frag);
+    // Every element is new, so none carries `.now` and none is anchored. Left stale,
+    // `current` makes the next update for the same line look like no change at all —
+    // so the highlight is never re-applied and the page never re-anchors, which reads
+    // as the tracking having quietly stopped.
+    current = -1;
+    scrolledTo = -1;
+    // Two frames: the collapse-and-refill scroll event lands before the first.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      rebuilding = false;
+      if (wasAt >= 0) show(wasAt, wasConf || 'block');
+    }));
   }
 
   async function loadScript() {
@@ -565,6 +587,7 @@
   }
 
   $scroller.addEventListener('scroll', () => {
+    if (rebuilding) return;
     // The follower writes scrollTop on almost every frame, so a counter with timeouts
     // cannot tell its own motion from a finger. Recency can: anything within a couple
     // of frames of our last write was us.
@@ -869,6 +892,10 @@
 
   function decorate(el, l) {
     const stage = l.kind === 'stage';
+    // Carried over rather than rebuilt: `now` and `past` say where the *show* is,
+    // which has nothing to do with what the line says. Writing className wholesale
+    // dropped them, so correcting the line being spoken made its highlight disappear.
+    const state = ['now', 'past', 'placed'].filter((c) => el.classList.contains(c));
     el.className = 'line'
       + (l.cut ? ' cut' : '')
       + (stage ? ' stage' : '')
@@ -886,6 +913,7 @@
     who.textContent = (l.character || '').replace(/^char-/, '').replace(/-/g, ' ');
     el.appendChild(who);
     el.appendChild(document.createTextNode(l.text));
+    el.classList.add(...state);
   }
 
   function render(i) {
