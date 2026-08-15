@@ -100,6 +100,25 @@
   /* The cue rail. A column of its own on the right, never overlapping the text: an
      operator reading a cue and an operator reading the line it fires on are doing two
      different things at once, and a cue laid over the script makes both harder. */
+  /* The leader lines. Drawn under the cards and over the text, so a line reaches the
+     word without the word being obscured by it. */
+  #leads {
+    position: absolute; inset: 0; z-index: 1; pointer-events: none; overflow: visible;
+  }
+  #leads path { fill: none; stroke: var(--dimmer); stroke-width: 1; }
+  #leads path.now { stroke: var(--now); stroke-width: 1.5; }
+  #leads circle { fill: var(--dimmer); }
+  #leads circle.now { fill: var(--now); }
+
+  /* The word the cue fires on. Underlined rather than filled: a block of colour in
+     the middle of a speech is read as emphasis by the actor, which is somebody else's
+     instruction. */
+  mark.trig {
+    background: none; color: inherit;
+    border-bottom: 1.5px solid var(--dimmer); padding-bottom: .04em;
+  }
+  .line.now mark.trig { border-bottom-color: var(--now); }
+
   #rail {
     position: absolute; top: 0; right: 0; bottom: 0; width: 19em;
     pointer-events: none; z-index: 2; overflow: hidden;
@@ -417,6 +436,7 @@
   <div id="stale">this page is newer than the server — restart it to pick up the changes</div>
   <div id="lost">position lost — waiting to recognise the text</div>
   <div id="heard"><div class="head">heard<button id="copy">copy</button></div><div id="heardlog"></div></div>
+  <svg id="leads"></svg>
   <div id="rail"></div>
   <div id="view">
       <div id="hint">tap the line being spoken to put it back on track</div>
@@ -761,6 +781,8 @@
   // queues; as it scrolls in, its natural height drops below the clamp and it rises to
   // meet its line of its own accord. Nothing switches modes.
   const $rail = document.getElementById('rail');
+  const $leads = document.getElementById('leads');
+  let leadEls = [];
   let cues = [];
   let cueEls = [];
   let cueAway = [];
@@ -793,6 +815,14 @@
       cues = await r.json();
     } catch { return; }
     document.body.dataset.rail = cues.length ? 'on' : 'off';
+    // Only one mark per line: two cues on the same line would fight over the text,
+    // and the second leader can point at the first one's mark perfectly well.
+    triggerOf = new Map();
+    for (const c of cues) {
+      if (c.triggerText && !triggerOf.has(c.lineIndex)) triggerOf.set(c.lineIndex, c.triggerText);
+    }
+    for (const i of triggerOf.keys()) if (els[i]) decorate(els[i], lines[i]);
+    lineTops = null;
     $rail.textContent = '';
     cueAway = [];
     cueEls = cues.map((c) => {
@@ -888,6 +918,58 @@
       y += h + CUE_GAP;
     }
     for (let i = LOOKAHEAD; i < ahead.length; i++) cueEls[ahead[i][0]].style.display = 'none';
+    drawLeads(here);
+  }
+
+  // A line from the cue to the thing that fires it.
+  //
+  // A card on the right and a word on the left are two halves of one instruction, and
+  // an operator should not have to work out which pairs with which — on a page with
+  // three cues in view, matching them by eye is exactly the kind of small tax that
+  // costs a cue at the wrong moment.
+  //
+  // Drawn only for cues whose line is on screen. `getBoundingClientRect` on the mark
+  // is unavoidable — an inline span's position is not derivable from anything cached —
+  // but there are at most a handful in view, unlike the 133 cards.
+  const NS = 'http://www.w3.org/2000/svg';
+  function drawLeads(here) {
+    const stage = $leads.getBoundingClientRect();
+    const want = here.length;
+    while (leadEls.length < want) {
+      const path = document.createElementNS(NS, 'path');
+      const dot = document.createElementNS(NS, 'circle');
+      dot.setAttribute('r', '2.5');
+      $leads.append(path, dot);
+      leadEls.push([path, dot]);
+    }
+    for (let n = want; n < leadEls.length; n++) {
+      leadEls[n][0].setAttribute('d', '');
+      leadEls[n][1].setAttribute('r', '0');
+    }
+    here.forEach(([k], n) => {
+      const [path, dot] = leadEls[n];
+      const card = cueEls[k];
+      if (card.style.display === 'none') { path.setAttribute('d', ''); dot.setAttribute('r','0'); return; }
+      const line = els[cues[k].lineIndex];
+      // The marked phrase if the line has one, otherwise the line itself: a cue with
+      // no highlighted trigger points at where it happens, which is the truth.
+      const target = line.querySelector('mark.trig') || line;
+      const t = target.getBoundingClientRect();
+      const c = card.getBoundingClientRect();
+      if (t.bottom < stage.top || t.top > stage.bottom) { path.setAttribute('d',''); dot.setAttribute('r','0'); return; }
+      const x1 = t.right - stage.left + 4;
+      const y1 = t.top - stage.top + Math.min(t.height, 22) / 2;
+      const x2 = c.left - stage.left - 4;
+      const y2 = c.top - stage.top + 14;
+      const bend = Math.max(24, (x2 - x1) * 0.4);
+      path.setAttribute('d', `M${x1.toFixed(1)},${y1.toFixed(1)} C${(x1+bend).toFixed(1)},${y1.toFixed(1)} ${(x2-bend).toFixed(1)},${y2.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)}`);
+      dot.setAttribute('r', '2.5');
+      dot.setAttribute('cx', x1.toFixed(1));
+      dot.setAttribute('cy', y1.toFixed(1));
+      const isNow = cues[k].lineIndex === current;
+      path.classList.toggle('now', isNow);
+      dot.classList.toggle('now', isNow);
+    });
   }
 
   // ---- flags ----------------------------------------------------------------
@@ -1193,6 +1275,10 @@
 
   const HOLD_LABEL = { music: 'music', silence: 'silence', adlib: 'ad lib' };
 
+  // lineIndex -> the phrase within that line which fires a cue. Consulted by
+  // decorate(), so a line rebuilt for any reason keeps its mark.
+  let triggerOf = new Map();
+
   function decorate(el, l) {
     const stage = l.kind === 'stage';
     // Carried over rather than rebuilt: `now` and `past` say where the *show* is,
@@ -1216,7 +1302,22 @@
     who.className = 'who';
     who.textContent = (l.character || '').replace(/^char-/, '').replace(/-/g, ' ');
     el.appendChild(who);
-    el.appendChild(document.createTextNode(l.text));
+    // Split around the phrase the cue fires on, so a leader line has something exact
+    // to point at. Falls back to plain text whenever the phrase is not found — the
+    // script is edited from this page, and a trigger extracted this morning may
+    // simply no longer be in the line.
+    const trig = triggerOf.get(Number(el.dataset.i));
+    const at = trig ? l.text.indexOf(trig) : -1;
+    if (at < 0) {
+      el.appendChild(document.createTextNode(l.text));
+    } else {
+      el.appendChild(document.createTextNode(l.text.slice(0, at)));
+      const m = document.createElement('mark');
+      m.className = 'trig';
+      m.textContent = trig;
+      el.appendChild(m);
+      el.appendChild(document.createTextNode(l.text.slice(at + trig.length)));
+    }
     el.classList.add(...state);
   }
 
@@ -1359,7 +1460,7 @@
   window.addEventListener('resize', () => { lineTops = null; replace(); });
 
   // What this page was written against. See PROTOCOL_VERSION in live.rs.
-  const PROTOCOL = 2;
+  const PROTOCOL = 3;
   // Whether this is a reconnection rather than the first join.
   let joined = false;
 

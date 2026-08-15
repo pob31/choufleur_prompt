@@ -52,6 +52,98 @@ const ASSET_PATH: &str = concat!(
     "/assets/live.html"
 );
 
+/// Fold for comparison, keeping a way back to the original.
+///
+/// The cue sheet's `evidence` is text lifted off the PDF around a highlight, so it
+/// carries the source's accents, punctuation and spacing while the script carries the
+/// playwright's. Comparing them needs folding; *showing* the result needs the original
+/// characters, so the fold records where each of its characters came from.
+fn fold_with_map(s: &str) -> (Vec<char>, Vec<usize>) {
+    let mut out = Vec::new();
+    let mut from = Vec::new();
+    let mut space = false;
+    for (i, ch) in s.chars().enumerate() {
+        let lower: Vec<char> = ch.to_lowercase().collect();
+        let c = lower.first().copied().unwrap_or(ch);
+        let c = match c {
+            'à' | 'â' | 'ä' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'î' | 'ï' => 'i',
+            'ô' | 'ö' => 'o',
+            'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            other => other,
+        };
+        if c.is_alphanumeric() {
+            out.push(c);
+            from.push(i);
+            space = false;
+        } else if !space && !out.is_empty() {
+            out.push(' ');
+            from.push(i);
+            space = true;
+        }
+    }
+    while out.last() == Some(&' ') {
+        out.pop();
+        from.pop();
+    }
+    (out, from)
+}
+
+/// Longest run of characters common to both, as `(start_in_b, len)`.
+///
+/// The plain dynamic-programming version. The inputs are a phrase and a line, so this
+/// is a few thousand cell updates per cue and runs once at load.
+fn longest_common(a: &[char], b: &[char]) -> Option<(usize, usize)> {
+    if a.is_empty() || b.is_empty() {
+        return None;
+    }
+    let mut prev = vec![0usize; b.len() + 1];
+    let mut cur = vec![0usize; b.len() + 1];
+    let (mut best, mut end_b) = (0usize, 0usize);
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            cur[j] = if a[i - 1] == b[j - 1] { prev[j - 1] + 1 } else { 0 };
+            if cur[j] > best {
+                best = cur[j];
+                end_b = j;
+            }
+        }
+        std::mem::swap(&mut prev, &mut cur);
+        cur.iter_mut().for_each(|c| *c = 0);
+    }
+    (best > 0).then(|| (end_b - best, best))
+}
+
+/// The phrase in `line` that the cue's `evidence` points at, if any.
+///
+/// A cue fires on a word, not on a line — "on «Polymestor entre»" is what an operator
+/// writes in a margin, and it is what they are listening for. Only 37 of Hécube's 133
+/// cues yield one: the rest were extracted from page-level marks with no highlighted
+/// phrase behind them, and for those the honest answer is the line itself rather than a
+/// guessed fragment of it.
+fn trigger_phrase(evidence: &str, line: &str) -> Option<String> {
+    const MIN: usize = 10;
+    let (a, _) = fold_with_map(evidence);
+    let (b, map) = fold_with_map(line);
+    let (start, len) = longest_common(&a, &b)?;
+    if len < MIN {
+        return None;
+    }
+    // Back to original characters, so the page can find it in the text it is showing.
+    let first = *map.get(start)?;
+    let last = *map.get(start + len - 1)?;
+    let phrase: String = line
+        .chars()
+        .skip(first)
+        .take(last - first + 1)
+        .collect::<String>()
+        .trim()
+        .to_string();
+    (phrase.chars().count() >= MIN).then_some(phrase)
+}
+
 /// Read the cue sheet beside the script and resolve its anchors to line positions.
 ///
 /// Missing file, unreadable file, unknown anchors: none of them stop the show. A cue
@@ -96,10 +188,15 @@ fn load_cues(path: &Path, lines: &[LineView]) -> Vec<CueView> {
             .get("noteColour")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        let trigger_text = c
+            .get("evidence")
+            .and_then(|v| v.as_str())
+            .and_then(|ev| trigger_phrase(ev, &lines[line_index].text));
         out.push(CueView {
             line_index,
             line_id: id.to_string(),
             cue: text,
+            trigger_text,
             trigger: c
                 .get("trigger")
                 .and_then(|v| v.as_str())
@@ -967,4 +1064,45 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
             .await?;
         Ok::<(), anyhow::Error>(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_highlighted_phrase_is_found_in_the_line_it_belongs_to() {
+        // The evidence is text lifted off the PDF around the highlight, so it carries
+        // the source's accents and punctuation while the script carries the
+        // playwright's — and it usually overruns into whatever was printed alongside.
+        let line = "« Arrive, par la droite, Agamemnon. »";
+        // The phrase ends at the last character that folds to something: trailing
+        // punctuation is not evidence of anything and would only make the highlight
+        // on the page reach past the word the operator is listening for.
+        assert_eq!(
+            trigger_phrase("droite, Agamemnon. » 4 musique pulsation", line).as_deref(),
+            Some("droite, Agamemnon")
+        );
+        // Case and accents fold; the phrase comes back in the line's own characters,
+        // because that is what the page has to find in the text it is showing.
+        assert_eq!(
+            trigger_phrase("BAILLONNEZ-MOI, J AI DIT", "« Bâillonnez-moi. J’ai dit ce qu’il fallait. »")
+                .as_deref(),
+            Some("Bâillonnez-moi. J’ai dit")
+        );
+    }
+
+    #[test]
+    fn a_page_level_mark_yields_no_phrase_rather_than_a_guess() {
+        // 96 of Hécube's 133 cues come from marks with no highlighted phrase behind
+        // them. Pointing at an incidental scrap of shared text would be worse than
+        // pointing at the line: it would look like knowledge.
+        assert_eq!(
+            trigger_phrase("CONDUITE SON", "Nous avons lu la scène où Polyxène affronte son destin."),
+            None
+        );
+        assert_eq!(trigger_phrase("", "Silence, mes amies."), None);
+        // Common short words must not qualify — "des " is a run of four.
+        assert_eq!(trigger_phrase("des", "Il faut des figurants ?"), None);
+    }
 }

@@ -35,7 +35,7 @@ use crate::formats::SegmentRecord;
 ///
 /// So the page carries the version it was written against and says so on screen when
 /// they disagree. A silent no-op is the one failure mode worth spending a field on.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// One script line, as the client needs it. Sent once, in bulk.
 #[derive(Clone, Serialize)]
@@ -84,6 +84,11 @@ pub struct CueView {
     pub colour: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub means: Option<String>,
+    /// The exact phrase in the line that fires this cue, when the sheet's highlight
+    /// identifies one. Absent for cues extracted from a page-level mark, where the
+    /// honest answer is the whole line rather than a guessed fragment of it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger_text: Option<String>,
     /// Placed by the re-anchoring tool but not confidently. Shown as such.
     pub needs_review: bool,
 }
