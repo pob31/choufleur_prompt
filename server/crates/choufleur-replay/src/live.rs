@@ -91,6 +91,13 @@ pub struct CueView {
     /// honest answer is the whole line rather than a guessed fragment of it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trigger_text: Option<String>,
+    /// Which occurrence of that phrase within the line — 0 for the first.
+    ///
+    /// A play repeats itself: "Comme ça." three times in one speech, and a cue on the
+    /// third is not a cue on the first. Carried as a count rather than a character
+    /// offset so it survives an edit elsewhere in the line, and so the two sides need
+    /// not agree on what an index into a string means.
+    pub trigger_nth: usize,
     /// Placed by the re-anchoring tool but not confidently. Shown as such.
     pub needs_review: bool,
 }

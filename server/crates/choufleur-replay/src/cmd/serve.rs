@@ -204,16 +204,13 @@ fn load_cues(path: &Path, lines: &[LineView]) -> Vec<CueView> {
             dangling.push(id.to_string());
             continue;
         };
-        let text = c
+        let text_of_cue = c
             .get("cue")
             .and_then(|v| v.as_str())
             .or_else(|| c.get("action").and_then(|v| v.as_str()))
             .unwrap_or("")
             .trim()
             .to_string();
-        if text.is_empty() {
-            continue;
-        }
         let colour = c
             .get("noteColour")
             .and_then(|v| v.as_str())
@@ -228,16 +225,32 @@ fn load_cues(path: &Path, lines: &[LineView]) -> Vec<CueView> {
         // it away without a word, which is the failure this whole day keeps producing.
         let evidence = c.get("evidence").and_then(|v| v.as_str());
         let by_hand = c.get("evidenceFrom").and_then(|v| v.as_str()) == Some("operator");
-        let trigger_text = evidence.and_then(|ev| {
-            if by_hand {
-                lines[line_index]
-                    .text
-                    .contains(ev)
-                    .then(|| ev.to_string())
-            } else {
-                trigger_phrase(ev, &lines[line_index].text)
+        let text = &lines[line_index].text;
+        let (trigger_text, trigger_nth) = match evidence {
+            Some(ev) if by_hand => {
+                let nth = c
+                    .get("evidenceNth")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as usize;
+                // The recorded occurrence has to still exist. A line edited since the
+                // cue was placed may have fewer of them, and pointing at the wrong
+                // "Comme ça." is exactly the fault this field was added to fix — so
+                // fall back to the first rather than to whatever is nearest.
+                let found = text.match_indices(ev).count();
+                if text.contains(ev) {
+                    (Some(ev.to_string()), if nth < found { nth } else { 0 })
+                } else {
+                    (None, 0)
+                }
             }
-        });
+            Some(ev) => match trigger_phrase(ev, text) {
+                // An extracted phrase carries no occurrence, so it means the first —
+                // which is what the extractor found, since it matched forwards.
+                Some(p) => (Some(p), 0),
+                None => (None, 0),
+            },
+            None => (None, 0),
+        };
         out.push(CueView {
             id: c
                 .get("id")
@@ -246,8 +259,9 @@ fn load_cues(path: &Path, lines: &[LineView]) -> Vec<CueView> {
                 .to_string(),
             line_index,
             line_id: id.to_string(),
-            cue: text,
+            cue: text_of_cue,
             trigger_text,
+            trigger_nth,
             trigger: c
                 .get("trigger")
                 .and_then(|v| v.as_str())
@@ -295,6 +309,7 @@ fn write_cue(
     cue: Option<&str>,
     trigger: Option<&str>,
     trigger_text: Option<&str>,
+    trigger_nth: Option<u64>,
     colour: Option<&str>,
     line_id: Option<&str>,
     delete: bool,
@@ -327,6 +342,13 @@ fn write_cue(
                 c.remove("noteColour");
             } else {
                 c.insert("noteColour".into(), v.into());
+            }
+        }
+        if let Some(n) = trigger_nth {
+            if n == 0 {
+                c.remove("evidenceNth");
+            } else {
+                c.insert("evidenceNth".into(), n.into());
             }
         }
         if let Some(v) = trigger_text {
@@ -964,6 +986,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                 None,
                                                 None,
                                                 None,
+                                                None,
                                                 true,
                                             ),
                                             _ => write_cue(
@@ -972,6 +995,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                 str_of("cue").as_deref(),
                                                 str_of("trigger").as_deref(),
                                                 str_of("triggerText").as_deref(),
+                                                v.get("triggerNth").and_then(|x| x.as_u64()),
                                                 str_of("colour").as_deref(),
                                                 str_of("lineId").as_deref(),
                                                 false,
@@ -1319,5 +1343,27 @@ mod tests {
         assert_eq!(trigger_phrase("", "Silence, mes amies."), None);
         // Common short words must not qualify — "des " is a run of four.
         assert_eq!(trigger_phrase("des", "Il faut des figurants ?"), None);
+    }
+}
+
+#[cfg(test)]
+mod occurrence_tests {
+    /// The same phrase three times in one speech, which is ordinary in this play —
+    /// "Comme ça." / "Comme ça ?" / "Comme ça." sit consecutively in Hécube, and
+    /// scene 4 asks one question eight ways. A cue on the third is not a cue on the
+    /// first, and finding the phrase by text alone always returns the first.
+    #[test]
+    fn counting_occurrences_distinguishes_repeated_phrases() {
+        let line = "Comme ça. Puis comme ça. Et enfin comme ça, voilà.";
+        let phrase = "comme ça";
+        let found: Vec<usize> = line.match_indices(phrase).map(|(i, _)| i).collect();
+        assert_eq!(found.len(), 2, "case-sensitive, so the capitalised one is separate");
+        // The nth is reachable and distinct.
+        assert_ne!(found[0], found[1]);
+        // And a count beyond what survives falls back to the first rather than to
+        // nothing, which is what `load_cues` does when a line has been edited.
+        let nth = 5usize;
+        let use_nth = if nth < found.len() { nth } else { 0 };
+        assert_eq!(use_nth, 0);
     }
 }

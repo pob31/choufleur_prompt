@@ -875,7 +875,9 @@
     for (const c of cues) {
       if (!c.triggerText) continue;
       if (!triggerOf.has(c.lineIndex)) triggerOf.set(c.lineIndex, []);
-      triggerOf.get(c.lineIndex).push({ id: c.id, text: c.triggerText, colour: c.colour });
+      triggerOf.get(c.lineIndex).push({
+        id: c.id, text: c.triggerText, colour: c.colour, nth: c.triggerNth || 0,
+      });
     }
     for (const i of triggerOf.keys()) if (els[i]) decorate(els[i], lines[i]);
     lineTops = null;
@@ -1145,18 +1147,49 @@
     const index = Number(el.dataset.i);
     const line = lines[index];
     if (!line) return null;
-    let text = String(sel).replace(/\s+/g, ' ').trim();
-    // Strip whatever the page put in front of the words: the speaker's name, and on
-    // a stage direction the hold badge. Both are block-level inside the paragraph, so
-    // dragging from the visual start of a line picks them up.
-    for (const sel of ['.tag', '.who']) {
-      const lead = el.querySelector(sel)?.textContent?.trim();
-      if (lead && text.toLowerCase().startsWith(lead.toLowerCase())) {
-        text = text.slice(lead.length).trim();
+    // Which characters, not just which characters *look like* these.
+    //
+    // Taking the selection as a string and finding it with indexOf always returns the
+    // first occurrence, so selecting the third "Comme ça." in a speech marked the
+    // first one. A play repeats itself constantly — that is half of what today's
+    // tracking work has been about — so the position has to be carried, not inferred.
+    //
+    // Carried as an occurrence count rather than a character offset: it survives an
+    // edit elsewhere in the line, and it sidesteps the two sides disagreeing about
+    // what an index means, since each counts occurrences in its own string.
+    const range = sel.getRangeAt(0);
+    const start = textOffset(el, range.startContainer, range.startOffset);
+    const stop = textOffset(el, range.endContainer, range.endOffset);
+    if (stop === null) return null;
+    let at = start === null ? 0 : start;
+    const raw = line.text.slice(at, stop);
+    at += raw.length - raw.trimStart().length;
+    const text = raw.trim();
+    if (!text) return null;
+    // How many identical phrases precede it.
+    let nth = 0;
+    for (let p = line.text.indexOf(text); p >= 0 && p < at; p = line.text.indexOf(text, p + 1)) nth++;
+    return { index, text, nth };
+  }
+
+  // Where a DOM position sits within the line's *script text*, ignoring the speaker
+  // chip and the hold badge — which are inside the same paragraph but are not part of
+  // what the playwright wrote. Null when the position is inside one of them.
+  function textOffset(lineEl, node, offset) {
+    let acc = 0, done = false;
+    const walk = (n) => {
+      if (done) return;
+      if (n === node) {
+        acc += n.nodeType === 3 ? offset : 0;
+        done = true;
+        return;
       }
-    }
-    if (!text || !line.text.includes(text)) return null;
-    return { index, text };
+      if (n.nodeType === 3) { acc += n.textContent.length; return; }
+      if (n.classList && (n.classList.contains('who') || n.classList.contains('tag'))) return;
+      for (const c of n.childNodes) walk(c);
+    };
+    for (const c of lineEl.childNodes) walk(c);
+    return done ? acc : null;
   }
 
   let openCue = null;
@@ -1185,6 +1218,7 @@
 
     let trigger = c.trigger, colour = c.colour || '', triggerText = c.triggerText || '';
     let moveTo = c.lineIndex;
+    let triggerNth = c.triggerNth || 0;
     const ctl = document.createElement('div');
     ctl.className = 'ctl';
     const mk = (label, isOn, onClick) => {
@@ -1211,12 +1245,13 @@
       // what fired when the selection reached back over the speaker's name — which
       // is the natural thing to do when you drag from the start of a line.
       triggerText = picked.text;
+      triggerNth = picked.nth;
       moveTo = picked.index;
       hint.textContent = picked.index === c.lineIndex
         ? ''
         : `will move to ${lines[picked.index].id}`;
     });
-    const bClear = mk('no trigger word', 'never', () => { triggerText = ''; hint.textContent = ''; });
+    const bClear = mk('no trigger word', 'never', () => { triggerText = ''; triggerNth = 0; hint.textContent = ''; });
     // For a stage direction there is usually no word to point at — the whole thing is
     // the reference, and "Chorégraphie sur la musique d'Otis Redding" is the cue.
     // Select any part of it and this moves the cue there with no trigger phrase.
@@ -1224,6 +1259,7 @@
       const picked = selectionInScript();
       if (!picked) { hint.textContent = 'select any part of the line you want'; return; }
       triggerText = '';
+      triggerNth = 0;
       moveTo = picked.index;
       const l = lines[picked.index];
       hint.textContent = `fires on all of ${l.id}${l.kind === 'stage' ? ' (stage direction)' : ''}`;
@@ -1290,7 +1326,7 @@
       if (commit) {
         ws.send(JSON.stringify({
           type: 'edit_cue', id: c.id, cue: what.value.trim(),
-          trigger, colour, triggerText,
+          trigger, colour, triggerText, triggerNth,
           lineId: lines[moveTo].id,
         }));
       }
@@ -1687,7 +1723,12 @@
     // script is edited from this page, and a trigger extracted this morning may
     // simply no longer be in the line.
     const specs = (triggerOf.get(Number(el.dataset.i)) || [])
-      .map((t) => ({ id: t.id, colour: t.colour, at: l.text.indexOf(t.text), len: t.text.length }))
+      .map((t) => {
+        // The nth occurrence, not the first.
+        let at = l.text.indexOf(t.text);
+        for (let n = 0; n < (t.nth || 0) && at >= 0; n++) at = l.text.indexOf(t.text, at + 1);
+        return { id: t.id, colour: t.colour, at, len: t.text.length };
+      })
       .filter((x) => x.at >= 0)
       .sort((a, b) => a.at - b.at);
     let cursor = 0;
