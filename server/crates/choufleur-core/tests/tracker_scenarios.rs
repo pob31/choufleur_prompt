@@ -712,3 +712,168 @@ fn one_wrong_word_in_a_proper_noun_is_absorbed() {
         "should resume normally"
     );
 }
+
+/// A long script of unmistakable lines, for the questions that only appear at
+/// distance. The toy script above is sixteen lines — every relocation in it is a
+/// short one, so it cannot say anything about what a *long* one should cost.
+fn long_script(n: usize) -> Script {
+    // Every word of every line is invented and used exactly once in the whole script,
+    // so two lines share nothing at all. Anything less — even a shared connective
+    // skeleton like "traverse la place et rejoint" — scores every line against every
+    // other at nearly 1.0, and the test ends up measuring the ambiguity margin
+    // instead of the distance rule. (Observed: the first attempt matched all 320
+    // lines to line 0 at score 1.09.)
+    const CONS: &[&str] = &["b", "d", "f", "g", "k", "l", "m", "n", "p", "r", "s", "t", "v", "z"];
+    const VOWS: &[&str] = &["a", "e", "i", "o", "ou", "u"];
+    const PER_LINE: usize = 6;
+    let word = |k: usize| {
+        format!(
+            "{}{}{}{}n",
+            CONS[k % 14],
+            VOWS[(k / 14) % 6],
+            CONS[(k / 84) % 14],
+            VOWS[(k / 1176) % 6]
+        )
+    };
+    assert!(n * PER_LINE <= 14 * 6 * 14 * 6, "fixture would repeat a word");
+    let lines: Vec<ScriptLine> = (0..n)
+        .map(|i| ScriptLine {
+            cut: false,
+            id: format!("L-{:04}", i + 1),
+            act: "act-1".into(),
+            scene: "sc-1".into(),
+            character: A.into(),
+            text: (0..PER_LINE)
+                .map(|j| word(i * PER_LINE + j))
+                .collect::<Vec<_>>()
+                .join(" "),
+            lang: None,
+            landmark: 0,
+            alternates: Vec::new(),
+        })
+        .collect();
+    Script {
+        format: "choufleur-script".into(),
+        format_version: "0.1".into(),
+        title: Some("Long".into()),
+        default_lang: vec![LangCode::new("fr")],
+        acts: vec![],
+        scenes: vec![],
+        characters: vec![Character {
+            id: A.into(),
+            name: "MARIE".into(),
+            lang: None,
+            channels: vec![1],
+        }],
+        lines,
+    }
+}
+
+/// Confirming segments the challenger needs before it may move the show to `target`.
+///
+/// The tracker is settled on the opening lines first, deliberately: from a standing
+/// start it sits at `Scene` confidence and searches the whole script on the *ordinary*
+/// path, which reaches any line in two sightings and never consults the challenger at
+/// all. Only once a position is held does a distant claim have to go through the
+/// challenger — which is exactly the situation this rule governs.
+fn segments_to_relocate(script: &Script, cfg: TrackerConfig, target: usize) -> Option<usize> {
+    let prepared = prepared(script);
+    let mut tracker = Tracker::new(&prepared, cfg);
+    let mut segs = SegBuilder::new();
+    for i in 0..3 {
+        tracker.update(&segs.say(Some(A), &script.lines[i].text, 3.0));
+    }
+    assert_eq!(tracker.position(), 2, "settled on the opening");
+    assert!(tracker.confidence() >= Confidence::Line, "and sure of it");
+
+    for k in 0..16 {
+        let text = script.lines[target + k].text.clone();
+        let events = tracker.update(&segs.say(Some(A), &text, 3.0));
+        if tracker.position() >= target {
+            assert_eq!(
+                position_of(&events).map(|(.., c)| c),
+                Some(PositionCause::Reanchor),
+                "the challenger is what adopted it"
+            );
+            return Some(k + 1);
+        }
+    }
+    None
+}
+
+#[test]
+fn a_longer_relocation_needs_more_confirming_segments() {
+    let script = long_script(320);
+    let cfg = TrackerConfig::default();
+    assert_eq!(cfg.challenger_extra_hit_lines, 20, "the rule is switched on");
+
+    let near = segments_to_relocate(&script, cfg.clone(), 40).expect("near relocation happens");
+    let far = segments_to_relocate(&script, cfg.clone(), 300).expect("far relocation happens");
+
+    // Both must still be reachable — this charges evidence, it does not wall off the
+    // far half of the script.
+    assert!(
+        far > near,
+        "300 lines away should cost more than 40: near {near}, far {far}"
+    );
+    // Segments consumed, not sightings collected — a few early ones are spent
+    // decaying the incumbent before any rival can out-argue it — so this only checks
+    // that the ceiling keeps a distant relocation to a bounded wait rather than
+    // walling it off.
+    assert!(
+        far <= cfg.challenger_max_hits + 3,
+        "a far relocation must stay reachable: {far} segments"
+    );
+}
+
+#[test]
+fn switching_the_distance_scaling_off_charges_every_relocation_the_same() {
+    let script = long_script(320);
+    let cfg = TrackerConfig {
+        challenger_extra_hit_lines: 0,
+        ..TrackerConfig::default()
+    };
+    let near = segments_to_relocate(&script, cfg.clone(), 40).expect("near relocation happens");
+    let far = segments_to_relocate(&script, cfg, 300).expect("far relocation happens");
+    assert_eq!(
+        near, far,
+        "with the rule off, distance is free — which is what let a coincidence \
+         three hundred lines away move the show on the same evidence as its neighbour"
+    );
+}
+
+#[test]
+fn audio_nothing_in_the_script_explains_can_be_made_to_cost_the_position_nothing() {
+    // `noise_floor` is off by default (it was measured and did not pay), so this
+    // pins the mechanism rather than the default: with it raised, a burst of
+    // gibberish leaves confidence exactly where it was.
+    let script = toy_script();
+    let prepared = prepared(&script);
+    let quiet = TrackerConfig {
+        noise_floor: 0.5,
+        ..TrackerConfig::default()
+    };
+    for (cfg, expect_decay) in [(TrackerConfig::default(), true), (quiet, false)] {
+        let mut tracker = Tracker::new(&prepared, cfg);
+        let mut segs = SegBuilder::new();
+        tracker.update(&segs.say(Some(A), "Tu ne devrais pas être ici.", 2.0));
+        let before = tracker.confidence();
+        assert!(before >= Confidence::Line, "placed to begin with");
+        for _ in 0..12 {
+            tracker.update(&segs.say(
+                Some(A),
+                "brrrraaah wooooo tchak tchak nnnngh aaaaah ouille",
+                3.0,
+            ));
+        }
+        let after = tracker.confidence();
+        if expect_decay {
+            assert!(after < before, "today: grunting counts against the position");
+        } else {
+            assert_eq!(
+                after, before,
+                "raised floor: absence of evidence is not evidence of absence"
+            );
+        }
+    }
+}

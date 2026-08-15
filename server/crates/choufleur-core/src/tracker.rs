@@ -271,6 +271,42 @@ pub struct TrackerConfig {
     /// Generous, because a monologue legitimately holds one line for a long time —
     /// the La Reprise documentary monologue has 25-second lines.
     pub stall_to_lost_s: f64,
+    /// **[sweep]** Below this, the best explanation anywhere in the script is not an
+    /// explanation, and the segment is treated as saying nothing about where we are.
+    ///
+    /// A show is not two hours of the script being spoken. It is also music, laughter,
+    /// coughing, a held silence the recogniser fills in, a company improvising round a
+    /// line, an actor grunting through a fight. All of it arrives as apparent speech
+    /// and none of it is evidence about position — yet without this every second of it
+    /// counted *against* the current position, because `on_unmatched` decays the
+    /// incumbent's evidence and runs the timers towards `Lost`.
+    ///
+    /// That is what manufactures long jumps. Measured on both Hécube nights, a move of
+    /// fifteen lines or more is preceded by twice the unmatched speech of a normal move
+    /// (median 16 unplaceable segments in the previous 30 s against 7). The incumbent's
+    /// evidence collapses, the whole-script challenger then only has to clear its
+    /// absolute floor, and a coincidence four hundred lines away wins by default.
+    ///
+    /// So the existing rule — "silence never demotes", `on_unmatched` line 1 — looked
+    /// right and too narrow: it exempts *quiet*, when what seemed to need exempting is
+    /// **anything that isn't the script being spoken**.
+    ///
+    /// **Measured, and off by default.** On both nights it changes nothing that
+    /// matters. At 0.25 and 0.35: identical window accuracy, identical jump counts,
+    /// lost time within ten seconds of the baseline. At 0.45 lost time falls sharply
+    /// (310 s → 208 s, 277 s → 184 s) with window accuracy *unchanged to the point* —
+    /// which is the tell. Nothing was found sooner; the tracker merely stopped
+    /// admitting it was lost. Buying a better-looking lost figure by suppressing the
+    /// admission is the confidently-wrong failure the whole ladder exists to prevent.
+    ///
+    /// The diagnosis was right and the remedy was in the wrong place. The damage from
+    /// unplaceable audio flows through the *challenger* — a collapsed incumbent lets a
+    /// coincidence anywhere in the script clear the bar — so it is fixed there, by
+    /// `challenger_extra_hit_lines`, which does work. Kept as a knob because the
+    /// reasoning may yet hold on a corpus with more music than this one.
+    ///
+    /// 0 disables the rule.
+    pub noise_floor: f64,
     /// Keep a second hypothesis over the whole script at all times, and adopt it
     /// when it explains recent speech clearly better than the current position.
     ///
@@ -299,6 +335,78 @@ pub struct TrackerConfig {
     pub challenger_min_evidence: f64,
     /// Segments the challenger must explain before it may be adopted.
     pub challenger_min_hits: usize,
+    /// **[sweep]** One extra confirming segment is required per this many lines of
+    /// travel. 0 disables the scaling and every move costs `challenger_min_hits`.
+    ///
+    /// A relocation of twenty lines and a relocation of nine hundred are not the same
+    /// claim, and until now they cost the same: three agreeing segments over four
+    /// seconds. Twenty lines is an ordinary consequence of a cut or a dropped
+    /// exchange; nine hundred says the show is somewhere else entirely, which in a
+    /// continuous performance is close to impossible. Reported from the chair: "long
+    /// jumps should take a few more matches to confirm rather than jump too soon."
+    ///
+    /// Note this charges *confirmations*, not score — the lesson of the rejected
+    /// forward-jump toll (see `jump_threshold`) is that raising the bar on a single
+    /// segment stops the tracker keeping up. Asking for more evidence over more time
+    /// costs nothing when the move is real; the show keeps talking, and the
+    /// challenger keeps being right. That distinction is the whole result: the same
+    /// intuition failed as a score toll and succeeds as a confirmation count.
+    ///
+    /// Swept over 20/30/40/60/80/100/150/250 on both Hécube nights, and monotone
+    /// down to 20. At 20 — so a 20-line move wants four agreeing segments, a 100-line
+    /// move eight, and anything past 120 hits the ceiling:
+    ///
+    /// | | night 16 | night 17 |
+    /// |---|---|---|
+    /// | moves ≥ 100 lines | 14 → **0** | 15 → **0** |
+    /// | moves ≥ 15 lines | 29 → 14 | 18 → 5 |
+    /// | of those, backwards | 13 → 6 | 8 → 2 |
+    /// | 6-line window accuracy | 90 % → 91 % | 92 % → 93 % |
+    /// | p90 position error | 4 → 3 lines | 2 → 1 lines |
+    /// | time lost | 310 s → 261 s | 277 s → 305 s |
+    ///
+    /// The long jump is not merely rarer, it is *gone*, and the position is more
+    /// accurate rather than less — the cost is 28 s of extra lost time on one night,
+    /// which is the honest trade: the tracker now says "recalculating" where it used
+    /// to say, confidently, "act four".
+    pub challenger_extra_hit_lines: usize,
+    /// Ceiling on the scaled requirement, so a distant relocation stays *possible*.
+    ///
+    /// Swept at 4, 5, 6 and 9 with both doors guarded, and 9 is best on every count —
+    /// lowest lost time (398 s against 475–495 s on night 16) *and* no jump over a
+    /// hundred lines. Lowering it does not make the tracker more careful, it makes it
+    /// relocate on less evidence, land wrong, and get lost again.
+    pub challenger_max_hits: usize,
+    /// **[sweep]** Lines per extra sighting on the *jump* path specifically.
+    ///
+    /// Separate from `challenger_extra_hit_lines` because the two doors carry very
+    /// different traffic. The challenger only ever proposes somewhere outside the
+    /// window, so charging it from the first line costs nothing. The jump path handles
+    /// every ordinary overshoot as well — a cut, a dropped exchange, a company running
+    /// fast — and charging those at the same rate buys a couple of avoided jumps for
+    /// two extra minutes of "recalculating" across a two-hour show, which is the wrong
+    /// way round for an operator who complained about being lost, not about drifting.
+    ///
+    /// So the jump path is charged coarsely: short overshoots stay at two sightings,
+    /// and only a genuinely long relocation has to keep proving itself. 0 falls back
+    /// to `challenger_extra_hit_lines`.
+    pub jump_extra_sighting_lines: usize,
+    /// **[sweep]** Exempt a lost tracker from the distance scaling.
+    ///
+    /// The reasoning was the backward-threshold exemption's: distance is expensive
+    /// because it contradicts a position we believe, and while lost there is no such
+    /// position to contradict, so charging for it would only lengthen the relocation
+    /// the challenger exists to perform.
+    ///
+    /// **Measured false, and off.** It buys 34 s of lost time on night 16 and brings
+    /// back two jumps of over a hundred lines on *each* night, with window accuracy
+    /// falling back to 90 % and p90 error to 4 lines. The analogy does not hold: the
+    /// backward threshold governs the ordinary path, which while lost has an
+    /// alternative, whereas the challenger *is* the relocation mechanism — and being
+    /// lost is exactly the state in which a coincidence four hundred lines away has
+    /// nothing to beat. Distance is expensive because the show is continuous, and the
+    /// show goes on being continuous while we are lost.
+    pub challenger_scale_skips_lost: bool,
     /// Seconds the challenger must sustain its advantage.
     pub challenger_min_seconds: f64,
     /// Weight of the newest observation in either side's running average.
@@ -352,10 +460,15 @@ impl Default for TrackerConfig {
             short_accept_threshold: 0.80,
             jump_pending_ttl_s: 8.0,
             stall_to_lost_s: 90.0,
+            noise_floor: 0.0,
             challenger_enabled: true,
             challenger_margin: 0.18,
             challenger_min_evidence: 0.62,
             challenger_min_hits: 3,
+            challenger_extra_hit_lines: 20,
+            challenger_max_hits: 9,
+            jump_extra_sighting_lines: 60,
+            challenger_scale_skips_lost: false,
             challenger_min_seconds: 4.0,
             challenger_smoothing: 0.4,
             lost_search_all: true,
@@ -379,6 +492,8 @@ struct Candidate {
 struct PendingJump {
     index: usize,
     unmatched_at: f64,
+    /// How many times this same distant place has now been seen.
+    sightings: usize,
 }
 
 /// A rival explanation of what is being said, maintained alongside the position.
@@ -408,6 +523,10 @@ pub struct Tracker<'a> {
     /// Running average of how well the *current* position explains recent speech,
     /// on the same scale as a challenger's, so the two are directly comparable.
     incumbent_evidence: f64,
+    /// Best score anywhere in the script for the segment being handled, so that a
+    /// segment nothing can explain is recognised as noise rather than as divergence.
+    /// See `noise_floor`.
+    best_anywhere: f64,
     // Scratch buffers, reused across updates to keep the hot path allocation-free.
     spans: Vec<Span>,
     landmark_spans: Vec<Span>,
@@ -428,6 +547,7 @@ impl<'a> Tracker<'a> {
             pending_jump: None,
             challenger: None,
             incumbent_evidence: 0.0,
+            best_anywhere: 0.0,
             spans: Vec::new(),
             landmark_spans: Vec::new(),
             seg_by_lang: Vec::new(),
@@ -473,6 +593,7 @@ impl<'a> Tracker<'a> {
             return events;
         }
         let weak = token_count < self.cfg.min_segment_tokens;
+        self.best_anywhere = 0.0;
         // Weak evidence keeps its higher bar; everything else may move the
         // position on `follow_threshold` and report the lower confidence honestly.
         let move_threshold = if weak {
@@ -501,7 +622,7 @@ impl<'a> Tracker<'a> {
                 best_index: None,
             });
             if !weak {
-                self.on_unmatched(seg, &mut events);
+                self.on_unmatched(seg, 0.0, &mut events);
             }
             return events;
         };
@@ -557,7 +678,7 @@ impl<'a> Tracker<'a> {
                 best_index: Some(best.span.first()),
             });
             if !weak {
-                self.on_unmatched(seg, &mut events);
+                self.on_unmatched(seg, best.score, &mut events);
             }
             return events;
         }
@@ -588,7 +709,7 @@ impl<'a> Tracker<'a> {
                 best_index: Some(best.span.first()),
             });
             if !weak {
-                self.on_unmatched(seg, &mut events);
+                self.on_unmatched(seg, best.score, &mut events);
             }
             return events;
         }
@@ -605,28 +726,38 @@ impl<'a> Tracker<'a> {
             // protect, and refusing to move is how a run stays lost for an act.
             PositionCause::Reanchor
         } else {
-            // A big unanchored jump. Believe it only on the second sighting.
-            match self.pending_jump.take() {
-                Some(p) if best.span.first().abs_diff(p.index) <= 1 => PositionCause::Jump,
-                _ => {
-                    self.pending_jump = Some(PendingJump {
-                        index: best.span.first(),
-                        unmatched_at: self.unmatched_speech_s,
-                    });
-                    events.push(TrackerEvent::Rejected {
-                        reason: RejectReason::JumpPending,
-                        best_score: best.score,
-                        best_index: Some(best.span.first()),
-                    });
-                    // Refusing to follow a single distant match is right; going on
-                    // *asserting* the old position is not. Something convincing was
-                    // heard somewhere else, so what we hold is now stale — say so
-                    // immediately rather than after the decay timer. This is where
-                    // confident-wrong events come from otherwise.
-                    self.demote(Confidence::Block, &mut events);
-                    self.on_unmatched(seg, &mut events);
-                    return events;
-                }
+            // A big unanchored jump. Believe it only once it has been seen enough
+            // times — and how many times *that* is depends on how far it is asking us
+            // to go. See `challenger_extra_hit_lines`; this is the same rule guarding
+            // the other door into a long move, and it has to be, because a tracker
+            // that has decayed to `Lost` reaches this path with the whole script in
+            // view and would otherwise relocate three hundred lines on two sightings.
+            let distance = best.span.first().abs_diff(self.position);
+            let seen = match self.pending_jump.take() {
+                Some(p) if best.span.first().abs_diff(p.index) <= 1 => p.sightings + 1,
+                _ => 1,
+            };
+            if seen >= self.jump_sightings_needed(distance) {
+                PositionCause::Jump
+            } else {
+                self.pending_jump = Some(PendingJump {
+                    index: best.span.first(),
+                    unmatched_at: self.unmatched_speech_s,
+                    sightings: seen,
+                });
+                events.push(TrackerEvent::Rejected {
+                    reason: RejectReason::JumpPending,
+                    best_score: best.score,
+                    best_index: Some(best.span.first()),
+                });
+                // Refusing to follow a single distant match is right; going on
+                // *asserting* the old position is not. Something convincing was heard
+                // somewhere else, so what we hold is now stale — say so immediately
+                // rather than after the decay timer. This is where confident-wrong
+                // events come from otherwise.
+                self.demote(Confidence::Block, &mut events);
+                self.on_unmatched(seg, best.score, &mut events);
+                return events;
             }
         };
 
@@ -699,7 +830,20 @@ impl<'a> Tracker<'a> {
 
     /// Confidence decays on *speech* the tracker could not place. A long pause is
     /// not evidence of anything, so silence never demotes.
-    fn on_unmatched(&mut self, seg: &TranscriptSegment, events: &mut Vec<TrackerEvent>) {
+    fn on_unmatched(
+        &mut self,
+        seg: &TranscriptSegment,
+        best_local: f64,
+        events: &mut Vec<TrackerEvent>,
+    ) {
+        // Nothing in the script explains this at all: music, laughter, a cough, a
+        // grunt, an improvised aside, or a stretch of hallucination over silence. It
+        // is not the show diverging from the script — it is not the show speaking the
+        // script at all, and the position we hold is no less likely than it was a
+        // moment ago. See `noise_floor`.
+        if self.cfg.noise_floor > 0.0 && best_local.max(self.best_anywhere) < self.cfg.noise_floor {
+            return;
+        }
         let dt = speech_seconds(seg);
         self.unmatched_speech_s += dt;
         self.stalled_speech_s += dt;
@@ -737,12 +881,47 @@ impl<'a> Tracker<'a> {
         }
     }
 
+    /// How many agreeing sightings a move of `distance` lines must collect before it
+    /// is believed, starting from `base` for a move of no distance at all.
+    ///
+    /// One rule, two doors. A long relocation can arrive either through the challenger
+    /// or, once the tracker has decayed to `Lost` and the whole script comes into
+    /// view, through the ordinary jump path — and charging only one of them just moves
+    /// the traffic to the other. Measured: with the challenger alone guarded, a
+    /// three-hundred-line move still went through in two sightings.
+    fn confirmations_needed(&self, base: usize, distance: usize) -> usize {
+        if self.cfg.challenger_extra_hit_lines == 0 {
+            return base;
+        }
+        (base + distance / self.cfg.challenger_extra_hit_lines)
+            .min(self.cfg.challenger_max_hits.max(base))
+    }
+
+    /// Agreeing sightings a jump of `distance` lines must collect. See
+    /// `jump_extra_sighting_lines`.
+    fn jump_sightings_needed(&self, distance: usize) -> usize {
+        let per = if self.cfg.jump_extra_sighting_lines > 0 {
+            self.cfg.jump_extra_sighting_lines
+        } else {
+            self.cfg.challenger_extra_hit_lines
+        };
+        if per == 0 {
+            return 2;
+        }
+        (2 + distance / per).min(self.cfg.challenger_max_hits.max(2))
+    }
+
     /// Maintain the rival hypothesis, and adopt it if it has earned the position.
     ///
     /// Returns a `Position` event when the switch happens, in which case the
     /// caller must not also run the ordinary incumbent update for this segment.
     fn run_challenger(&mut self, seg: &TranscriptSegment) -> Option<TrackerEvent> {
-        let best = self.scan_whole_script(seg)?;
+        // Recorded even when no candidate survives, because "nothing anywhere explains
+        // this" is exactly the fact `on_unmatched` needs in order to leave the
+        // incumbent alone.
+        let best = self.scan_whole_script(seg);
+        self.best_anywhere = best.as_ref().map_or(0.0, |b| b.score);
+        let best = best?;
         let target = best.span.last();
         let near_incumbent = target >= self.position
             && target.saturating_sub(self.position) <= self.cfg.window_ahead;
@@ -779,7 +958,19 @@ impl<'a> Tracker<'a> {
         }
 
         let c = self.challenger.as_ref()?;
-        let earned = c.hits >= self.cfg.challenger_min_hits
+        // The further the claim, the more of it we ask to see. See
+        // `challenger_extra_hit_lines`.
+        let need_hits = if self.cfg.challenger_scale_skips_lost
+            && self.confidence == Confidence::Lost
+        {
+            self.cfg.challenger_min_hits
+        } else {
+            self.confirmations_needed(
+                self.cfg.challenger_min_hits,
+                c.position.abs_diff(self.position),
+            )
+        };
+        let earned = c.hits >= need_hits
             && c.last_t - c.first_t >= self.cfg.challenger_min_seconds
             && c.evidence >= self.cfg.challenger_min_evidence
             && c.evidence >= self.incumbent_evidence + self.cfg.challenger_margin;

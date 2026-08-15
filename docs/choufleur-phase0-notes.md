@@ -1402,3 +1402,75 @@ Night 17 loses 110 lines of coverage and eight times the lost time. Skipping ahe
 travel stops the tracker keeping up with the show, while the identical toll backwards
 costs nothing because going back is genuinely rare. **Distance is not what makes a move
 suspicious; direction is.** Reverted, with the knob and the numbers kept.
+
+### AB. Long jumps: the right diagnosis, the wrong door, and the operator's fix
+
+Marked-for-tomorrow item 2 said a large jump should cost more evidence in both
+directions. Yesterday's attempt charged *score* for forward travel and was rejected —
+night 17 lost 110 lines of coverage and eight times the lost time. The operator's
+restatement over breakfast was the correction: **"long jumps should take a few more
+matches to confirm rather than jump too soon."** Confirmations, not score. The same
+intuition, priced differently, and the difference is everything.
+
+**Where long jumps actually come from.** Not the jump path, which is gated, and not
+`Lost`, which accounts for only 4 % and 24 % of them. It is the **challenger** — the
+whole-script rival hypothesis — and the door it comes through is `incumbent_evidence`.
+Every unplaceable segment blends the incumbent's evidence towards zero at smoothing
+0.4, so three of them cut it to a fifth, and the challenger then only has to clear its
+absolute floor of 0.62. A coincidence four hundred lines away wins by default.
+
+Measured on both nights, and the signal is clean: a move of fifteen lines or more is
+preceded by **twice** the unplaceable speech of an ordinary move — median 16
+unmatched-or-filtered segments in the previous 30 s against 7, on both nights
+independently. Which is exactly the operator's other observation, arrived at from the
+chair rather than the trace: *"silence, music and adlib/improv, grunting seems to
+expand the detection and may cause issues."*
+
+**The fix that worked.** `challenger_extra_hit_lines: 20` — one extra agreeing segment
+per twenty lines of travel, capped at nine. Swept over 20/30/40/60/80/100/150/250 and
+monotone down to 20:
+
+| | night 16 | night 17 |
+|---|---|---|
+| moves ≥ 100 lines | 14 → **0** | 15 → **0** |
+| moves ≥ 15 lines | 29 → 14 | 18 → 5 |
+| of those, backwards | 13 → 6 | 8 → 2 |
+| 6-line window accuracy | 90 % → 91 % | 92 % → 93 % |
+| p90 position error | 4 → 3 lines | 2 → 1 lines |
+| time lost | 310 s → 261 s | 277 s → 305 s |
+
+The long jump is not rarer, it is **gone**, and the position is *more* accurate rather
+than less. That is the tell that this is a real fix and not a trade: charging evidence
+over time costs nothing when the move is genuine, because the show keeps talking.
+
+**Two doors, and a unit test that found the second one.** A scenario test written to
+pin the rule instead exposed a bypass: at 300 lines the tracker never consults the
+challenger at all. It decays to `Lost`, `lost_search_all` puts the whole script in
+view, and the *ordinary* jump path relocates on two sightings. Guarding one door only
+moves the traffic to the other, so `jump_extra_sighting_lines` (60, coarser — the jump
+path also carries every ordinary overshoot) now scales that path too. On this corpus it
+changes nothing but 17 s of lost time; it is a correctness guard for a demonstrated
+hole, not a tuning win, and it is recorded as such.
+
+**Rejected, with numbers.**
+
+- **`noise_floor`** — my own idea, and the diagnosis was right while the remedy was in
+  the wrong place. Exempting the incumbent from decay on audio nothing can explain
+  changes nothing at 0.25 or 0.35, and at 0.45 lost time falls sharply (310→208,
+  277→184) with window accuracy *unchanged to the point*. Nothing was found sooner; the
+  tracker merely stopped admitting it was lost. Kept as a knob, defaulted off.
+- **Exempting a lost tracker from the scaling** — reasoned by analogy with the backward
+  threshold, and false. It brings back two 100-line jumps on *each* night and returns
+  night 16 to 90 % / p90 4. The analogy fails because the challenger *is* the
+  relocation mechanism: being lost is precisely when a distant coincidence has nothing
+  to beat. The show goes on being continuous while we are lost.
+- **A lower confirmation ceiling** (4, 5, 6 against 9) — worse on every count, lost
+  time included. A lower cap does not make the tracker careful, it makes it relocate on
+  less evidence, land wrong, and get lost again.
+
+**Whisper's repetition loops are already handled** — checked because the operator asked
+whether repeated lines inside a 5 s block were a problem. They are 1.4 % / 1.6 % / 2.3 %
+of finals on Hécube 16, 17 and Lazzi, and the `RepetitionLoop` filter catches all but
+one per night; the survivor is Hécube's genuinely repeated "la douleur qui succède à la
+douleur". Lazzi's are the interesting ones — "La la la", "Ha ha ha", "toux toux toux",
+"Duh-duh-duh" — non-speech being written down, all filtered.
