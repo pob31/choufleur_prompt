@@ -275,6 +275,9 @@
      holds a script built once for the whole run. */
   .editor button.insert { display: none; margin-left: auto; }
   body[data-prep="on"] .editor button.insert { display: inline-block; }
+  .editor button.danger { display: none; }
+  body[data-prep="on"] .editor button.danger { display: inline-block; }
+  .editor button.danger.armed { border-color: var(--lost); color: var(--lost); }
   .editor .row .sep { width: 1px; align-self: stretch; background: var(--edge); margin: 0 .2em; }
   .editor .row .label {
     font: 400 .6em/1.4 ui-sans-serif, system-ui, sans-serif;
@@ -741,6 +744,38 @@
     };
     row.append(sep(), bStage, bSpoken, sep(), label('hold'), ...holdBtns);
     repaint();
+    // Delete, not cut, and the two must not look alike. A cut is a decision about
+    // tonight and the text stays on the page struck through; a delete says the line
+    // was never in the play — the importer reading the next actor's name as something
+    // the previous one says. Filing a typo as a decision leaves the operator reading
+    // around rubbish for the run of the show.
+    //
+    // Two clicks, because it cannot be undone from here. Not a modal: a dialogue box
+    // in the middle of table work is answered without being read.
+    const bDelete = document.createElement('button');
+    bDelete.className = 'danger';
+    let armed = false;
+    bDelete.textContent = 'delete';
+    bDelete.onclick = (e) => {
+      e.preventDefault();
+      if (!armed) {
+        armed = true;
+        bDelete.textContent = 'delete for good?';
+        bDelete.classList.add('armed');
+        setTimeout(() => {
+          if (!armed) return;
+          armed = false;
+          bDelete.textContent = 'delete';
+          bDelete.classList.remove('armed');
+        }, 4000);
+        return;
+      }
+      openEditor = null;          // nothing to commit; the line is going
+      box.replaceWith(el);
+      ws.send(JSON.stringify({ type: 'delete_line', lineIndex: i }));
+    };
+    row.appendChild(bDelete);
+
     const bInsert = document.createElement('button');
     bInsert.className = 'insert';
     bInsert.textContent = 'insert line below';
@@ -1003,6 +1038,10 @@
         lines[m.lineIndex].spoken = m.spoken;
         lines[m.lineIndex].hold = m.hold ?? null;
         render(m.lineIndex);
+        replace();
+      } else if (m.type === 'line_deleted') {
+        lines.splice(m.lineIndex, 1);
+        build();
         replace();
       } else if (m.type === 'line_inserted') {
         lines.splice(m.lineIndex, 0, m.line);

@@ -122,6 +122,9 @@ pub enum Update {
         line_index: usize,
         line: LineView,
     },
+    /// A line was removed for good — an import artefact, not an editing choice. Like
+    /// an insert, every later index has moved, so the client rebuilds.
+    LineDeleted { line_index: usize },
     /// What the recogniser actually heard, and what became of it.
     ///
     /// Asked for by the operator on seeing the tracker lost: *"is it possible to

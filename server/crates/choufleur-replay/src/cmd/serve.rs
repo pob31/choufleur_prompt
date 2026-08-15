@@ -424,6 +424,53 @@ fn write_line_insert(path: &Path, after: usize, line: &LineView) -> Result<()> {
     Ok(())
 }
 
+/// Remove a line from the script for good, keeping a copy where it can be found.
+///
+/// Distinct from `cut`, and the operator drew the line exactly right: *"a cut line is
+/// an editing choice"* — the play contains it, tonight's production does not, and the
+/// page must go on showing it struck through because a silently missing line is how
+/// you lose your place. A mistake is not a choice. The importer turning the next
+/// actor's name into something the previous one says produces text that was never in
+/// the play at all, and leaving it on the page as a cut would be filing a typo as a
+/// decision.
+///
+/// It still goes to a sidecar rather than into the void. The notation spec's
+/// no-silent-data-loss rule is about not being able to *find out* what happened, not
+/// about keeping rubbish on the page — and a deletion made at eleven at night is
+/// exactly the one somebody will want to inspect at the next rehearsal.
+fn write_line_delete(path: &Path, index: usize) -> Result<()> {
+    let raw = std::fs::read_to_string(path)?;
+    let mut doc: serde_json::Value = serde_json::from_str(&raw)?;
+    let lines = doc
+        .get_mut("lines")
+        .and_then(|l| l.as_array_mut())
+        .context("script has no lines")?;
+    anyhow::ensure!(index < lines.len(), "no such line in the script");
+    let removed = lines.remove(index);
+
+    // Recorded with the id it followed, not with its index: indices move with every
+    // later edit, and an index is the one piece of information that will be wrong by
+    // the time anybody reads this file.
+    let after = index
+        .checked_sub(1)
+        .and_then(|i| lines.get(i))
+        .and_then(|l| l.get("id"))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let sidecar = path.with_extension("removed.json");
+    let mut log: Vec<serde_json::Value> = std::fs::read_to_string(&sidecar)
+        .ok()
+        .and_then(|r| serde_json::from_str(&r).ok())
+        .unwrap_or_default();
+    log.push(serde_json::json!({ "wasAfter": after, "line": removed }));
+    std::fs::write(&sidecar, serde_json::to_string_pretty(&log)? + "\n")?;
+
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
 /// An id unique in the whole script, derived from the line it follows.
 fn insert_id(lines: &[LineView], after: usize) -> String {
     let base = lines
@@ -585,6 +632,34 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                 line_index: i + 1,
                                                 line,
                                             });
+                                        }
+                                        // Prep only, for the same reason as the
+                                        // insert: it moves every index after it.
+                                        Some("delete_line") if inbound.prep => {
+                                            let gone = {
+                                                let mut lines = inbound.lines.lock().unwrap();
+                                                // The last line has to stay: an empty
+                                                // script is a state with no way back
+                                                // through this interface.
+                                                if lines.len() <= 1 {
+                                                    continue;
+                                                }
+                                                lines.remove(i)
+                                            };
+                                            if let Err(e) =
+                                                write_line_delete(&inbound.script_path, i)
+                                            {
+                                                eprintln!("could not delete the line: {e:#}");
+                                            } else {
+                                                println!(
+                                                    "deleted {} — {:?}",
+                                                    gone.id,
+                                                    gone.text.chars().take(48).collect::<String>()
+                                                );
+                                            }
+                                            let _ = inbound
+                                                .tx
+                                                .send(Update::LineDeleted { line_index: i });
                                         }
                                         Some("position_jump") => {
                                             inbound.steer.lock().unwrap().push(i);
