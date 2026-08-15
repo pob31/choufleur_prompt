@@ -115,6 +115,13 @@ pub enum Update {
         spoken: bool,
         hold: Option<String>,
     },
+    /// A line was added. Every index at or after `line_index` has moved by one, so
+    /// the client rebuilds rather than patching — an off-by-one here puts the whole
+    /// second half of the page on the wrong text.
+    LineInserted {
+        line_index: usize,
+        line: LineView,
+    },
     /// What the recogniser actually heard, and what became of it.
     ///
     /// Asked for by the operator on seeing the tracker lost: *"is it possible to

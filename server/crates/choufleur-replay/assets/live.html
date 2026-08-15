@@ -271,6 +271,10 @@
   }
   .editor button.struck { border-color: var(--lost); color: var(--lost); }
   .editor button.on { border-color: var(--now); color: var(--now); }
+  /* Inserting is prep-only: it moves every index below it, and the running tracker
+     holds a script built once for the whole run. */
+  .editor button.insert { display: none; margin-left: auto; }
+  body[data-prep="on"] .editor button.insert { display: inline-block; }
   .editor .row .sep { width: 1px; align-self: stretch; background: var(--edge); margin: 0 .2em; }
   .editor .row .label {
     font: 400 .6em/1.4 ui-sans-serif, system-ui, sans-serif;
@@ -374,8 +378,13 @@
     return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(ss).padStart(2, '0');
   };
 
-  async function loadScript() {
-    lines = await (await fetch('script.json')).json();
+  // Rebuilt wholesale after an insert rather than patched. Every index at or after
+  // the new line has moved, and `els`, the scene headers and the karaoke pointers all
+  // key off index — patching three structures in step is how you get a page whose
+  // second half is quietly one line out.
+  function build() {
+    els.length = 0;
+    $lines.textContent = '';
     const frag = document.createDocumentFragment();
     let scene = null;
     lines.forEach((l, i) => {
@@ -393,6 +402,11 @@
       els[i] = p;
     });
     $lines.appendChild(frag);
+  }
+
+  async function loadScript() {
+    lines = await (await fetch('script.json')).json();
+    build();
   }
 
   // ---- scrolling ------------------------------------------------------------
@@ -618,6 +632,9 @@
   });
 
   let openEditor = null;
+  // Set when this client asked for the insert, so it — and only it — opens the editor
+  // on the new line. Every other screen just redraws.
+  let pendingInsert = null;
   /// Where in the line the operator actually clicked.
   ///
   /// A speech runs to several visual lines, and dropping the caret at the end means
@@ -703,11 +720,14 @@
     const sep = () => { const d = document.createElement('div'); d.className = 'sep'; return d; };
     const label = (t) => { const d = document.createElement('span'); d.className = 'label'; d.textContent = t; return d; };
 
+    // The kind toggle does *not* touch `spoken`, though an earlier version did on the
+    // reasoning that a line becoming a direction stops being voiced. That reasoning is
+    // fine for a new line and wrong for an existing one: toggling the button twice —
+    // to check what it did — silently cleared the voicing, and eight directions marked
+    // as read aloud came back unvoiced with nothing on screen to say so. Defaults
+    // belong at creation, never on an edit.
     const bStage = mk('stage direction', () => kind === 'stage', () => {
       kind = kind === 'stage' ? 'dialogue' : 'stage';
-      // Changing the kind moves the default underneath `spoken`, so carry it: a line
-      // becoming a direction stops being voiced unless it is put back deliberately.
-      spoken = kind === 'dialogue';
     });
     const bSpoken = mk('read aloud', () => spoken, () => { spoken = !spoken; });
     const holdBtns = [['—', null], ['silence', 'silence'], ['music', 'music'], ['ad lib', 'adlib']]
@@ -721,6 +741,19 @@
     };
     row.append(sep(), bStage, bSpoken, sep(), label('hold'), ...holdBtns);
     repaint();
+    const bInsert = document.createElement('button');
+    bInsert.className = 'insert';
+    bInsert.textContent = 'insert line below';
+    bInsert.onclick = (e) => {
+      e.preventDefault();
+      // Save this line first: the insert renumbers everything below it, so an edit
+      // still sitting in the box would be written back against the wrong index.
+      done(true);
+      pendingInsert = i + 1;
+      ws.send(JSON.stringify({ type: 'insert_line', lineIndex: i, text: '', kind: 'dialogue' }));
+    };
+    row.appendChild(bInsert);
+
     const keys = document.createElement('div');
     keys.className = 'keys';
     keys.textContent = 'enter to save · esc to cancel · tab between fields';
@@ -933,6 +966,9 @@
   };
   window.addEventListener('resize', replace);
 
+  // Whether this is a reconnection rather than the first join.
+  let joined = false;
+
   function connect() {
     ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
     ws.onmessage = (ev) => {
@@ -940,6 +976,16 @@
       if (m.type === 'hello') {
         if (m.title) document.title = m.title + (m.prep ? ' — prep' : ' — live');
         if (m.prep) { document.body.dataset.prep = 'on'; setEditing(true); }
+        // Re-read the script on every *re*-connect, never only at startup.
+        //
+        // The page keeps its own copy of every line and writes the whole line back
+        // when one is edited. A tab that was open across a server restart therefore
+        // holds a script that may have moved on underneath it, and the next edit
+        // anywhere near a changed line silently restores the old text. That is not
+        // hypothetical: it is how a line corrected on disk came back wrong, and the
+        // damage is invisible because the page looks exactly as it did before.
+        if (joined) loadScript().then(replace);
+        joined = true;
         if (m.position) { show(m.position.lineIndex, m.position.confidence); $clock.textContent = fmt(m.position.tAudio); }
       } else if (m.type === 'position_update') {
         if (m.lane === 'b') {
@@ -958,6 +1004,15 @@
         lines[m.lineIndex].hold = m.hold ?? null;
         render(m.lineIndex);
         replace();
+      } else if (m.type === 'line_inserted') {
+        lines.splice(m.lineIndex, 0, m.line);
+        build();
+        replace();
+        if (pendingInsert === m.lineIndex) {
+          pendingInsert = null;
+          goTo(m.lineIndex, true);
+          beginEdit(els[m.lineIndex], null);
+        }
       } else if (m.type === 'heard') {
         heard(m);
       } else if (m.type === 'run_state') {

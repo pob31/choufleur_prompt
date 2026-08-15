@@ -382,6 +382,61 @@ fn write_line_edit(path: &Path, index: usize, edit: &LineEdit) -> Result<()> {
     Ok(())
 }
 
+/// Add a line to the script, after `after`, and give it an id of its own.
+///
+/// Ids carry a number for legibility but order comes from position in the array, so an
+/// inserted line only needs to be *unique* — and must not renumber its neighbours,
+/// because every cue, note and annotation in the show is anchored to an id. Renumbering
+/// to keep them tidy is precisely this morning's cue-sheet drift, performed
+/// deliberately. So an insert after `L-0075` becomes `L-0075-1`, then `L-0075-2`.
+fn write_line_insert(path: &Path, after: usize, line: &LineView) -> Result<()> {
+    let raw = std::fs::read_to_string(path)?;
+    let mut doc: serde_json::Value = serde_json::from_str(&raw)?;
+    let lines = doc
+        .get_mut("lines")
+        .and_then(|l| l.as_array_mut())
+        .context("script has no lines")?;
+    let at = (after + 1).min(lines.len());
+    let mut new = serde_json::Map::new();
+    new.insert("id".into(), line.id.clone().into());
+    // Act and scene are inherited from the neighbour rather than asked for: an
+    // inserted line is always inside a scene that already exists, and making the
+    // operator restate it would only be a chance to get it wrong.
+    for key in ["act", "scene"] {
+        let inherited = lines
+            .get(after.min(lines.len().saturating_sub(1)))
+            .and_then(|l| l.get(key))
+            .cloned()
+            .unwrap_or(serde_json::Value::String(String::new()));
+        new.insert(key.into(), inherited);
+    }
+    new.insert("character".into(), line.character.clone().into());
+    new.insert("text".into(), line.text.clone().into());
+    new.insert("kind".into(), line.kind.clone().into());
+    new.insert("spoken".into(), line.spoken.into());
+    if let Some(h) = &line.hold {
+        new.insert("hold".into(), h.clone().into());
+    }
+    lines.insert(at, serde_json::Value::Object(new));
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// An id unique in the whole script, derived from the line it follows.
+fn insert_id(lines: &[LineView], after: usize) -> String {
+    let base = lines
+        .get(after)
+        .map(|l| l.id.clone())
+        .unwrap_or_else(|| "L-0000".into());
+    let taken: std::collections::HashSet<&str> = lines.iter().map(|l| l.id.as_str()).collect();
+    (1..)
+        .map(|n| format!("{base}-{n}"))
+        .find(|id| !taken.contains(id.as_str()))
+        .expect("an unused suffix always exists")
+}
+
 /// One line's worth of correction, as it arrives from the page.
 struct LineEdit {
     text: String,
@@ -458,6 +513,79 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                         continue;
                                     };
                                     match kind {
+                                        // Prep only, and not out of caution. An insert
+                                        // moves every index after it, while the running
+                                        // tracker holds a `PreparedScript` built once
+                                        // for the whole run — so mid-show it would put
+                                        // the page's second half on the wrong text
+                                        // while reporting perfect confidence. Editing a
+                                        // line's words is safe because indices do not
+                                        // move; adding one is not.
+                                        Some("insert_line") if inbound.prep => {
+                                            let line = {
+                                                let mut lines = inbound.lines.lock().unwrap();
+                                                let after = i.min(lines.len().saturating_sub(1));
+                                                let neighbour = &lines[after];
+                                                let line = LineView {
+                                                    id: insert_id(&lines, after),
+                                                    character: v
+                                                        .get("character")
+                                                        .and_then(|c| c.as_str())
+                                                        .unwrap_or(&neighbour.character)
+                                                        .to_string(),
+                                                    text: v
+                                                        .get("text")
+                                                        .and_then(|t| t.as_str())
+                                                        .unwrap_or("")
+                                                        .to_string(),
+                                                    scene: neighbour.scene.clone(),
+                                                    cut: false,
+                                                    kind: v
+                                                        .get("kind")
+                                                        .and_then(|k| k.as_str())
+                                                        .filter(|k| *k == "stage")
+                                                        .unwrap_or("dialogue")
+                                                        .to_string(),
+                                                    // A new stage direction is unvoiced
+                                                    // until said otherwise. This is the
+                                                    // one place that default belongs —
+                                                    // at creation, never on an edit.
+                                                    spoken: v
+                                                        .get("spoken")
+                                                        .and_then(|b| b.as_bool())
+                                                        .unwrap_or(
+                                                            v.get("kind")
+                                                                .and_then(|k| k.as_str())
+                                                                != Some("stage"),
+                                                        ),
+                                                    hold: v
+                                                        .get("hold")
+                                                        .and_then(|h| h.as_str())
+                                                        .filter(|h| {
+                                                            matches!(
+                                                                *h,
+                                                                "silence" | "music" | "adlib"
+                                                            )
+                                                        })
+                                                        .map(str::to_string),
+                                                };
+                                                lines.insert(after + 1, line.clone());
+                                                line
+                                            };
+                                            if let Err(e) = write_line_insert(
+                                                &inbound.script_path,
+                                                i,
+                                                &line,
+                                            ) {
+                                                eprintln!("could not save the new line: {e:#}");
+                                            } else {
+                                                println!("inserted {} after line {}", line.id, i + 1);
+                                            }
+                                            let _ = inbound.tx.send(Update::LineInserted {
+                                                line_index: i + 1,
+                                                line,
+                                            });
+                                        }
                                         Some("position_jump") => {
                                             inbound.steer.lock().unwrap().push(i);
                                         }
