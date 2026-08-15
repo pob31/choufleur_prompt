@@ -35,7 +35,7 @@ use crate::formats::SegmentRecord;
 ///
 /// So the page carries the version it was written against and says so on screen when
 /// they disagree. A silent no-op is the one failure mode worth spending a field on.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// One script line, as the client needs it. Sent once, in bulk.
 #[derive(Clone, Serialize)]
@@ -56,6 +56,36 @@ pub struct LineView {
     pub hold: Option<String>,
     /// Bookmarked by the operator. See `ScriptLine::flag`.
     pub flag: bool,
+}
+
+/// One cue, as the rail needs it.
+///
+/// A projection of the cue sheet, not the sheet itself: the page needs to know where a
+/// cue sits, what it says and how to colour it, and nothing else. Provenance — which
+/// page of the PDF it came from, what evidence placed it there, how confident the
+/// extraction was — stays on disk where an argument about a misplaced cue can be
+/// settled, and off a screen somebody is reading at a desk in the dark.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CueView {
+    /// Position in the script. Cues arrive sorted by it.
+    pub line_index: usize,
+    pub line_id: String,
+    /// What the operator has to do.
+    pub cue: String,
+    /// `"text"` — fires on a line being reached — or `"visual"`, which the system
+    /// cannot detect and the operator must watch for. The distinction matters more
+    /// than any other on this rail: one is a prompt, the other is a responsibility.
+    pub trigger: String,
+    /// The operator's own colour, and their own meaning for it. This production reads
+    /// blue as QLab and purple as the console; another will not, so the meanings ride
+    /// along with the sheet rather than being built in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub colour: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub means: Option<String>,
+    /// Placed by the re-anchoring tool but not confidently. Shown as such.
+    pub needs_review: bool,
 }
 
 /// Where the show is. `None` before the first fix.
@@ -209,6 +239,8 @@ pub struct LiveState {
     /// A queue rather than a direct call because the tracker belongs to the engine
     /// thread, which must never be interrupted mid-decode.
     pub steer: Mutex<Vec<usize>>,
+    /// The cue sheet, projected for the rail. Empty when there is none.
+    pub cues: Vec<CueView>,
     /// Prep mode: the script is served for editing and nothing is running.
     ///
     /// Everything the operator has to set — which lines are cut, which are stage
@@ -369,6 +401,7 @@ mod tests {
             tx,
             audible_until: Mutex::new(f64::INFINITY),
             steer: Mutex::new(Vec::new()),
+            cues: Vec::new(),
             prep: false,
         };
         let s = serde_json::to_string(&state.hello()).unwrap();

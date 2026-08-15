@@ -31,7 +31,7 @@ use choufleur_core::prompt::{proper_nouns, static_prompt_with, BiasMode, PromptC
 use choufleur_core::tracker::Tracker;
 
 use crate::engine::{Engine, EngineConfig};
-use crate::live::{Broadcast, LineView, LiveState, Update};
+use crate::live::{Broadcast, CueView, LineView, LiveState, Update};
 use crate::manifest::Corpus;
 use crate::monitor::Monitor;
 
@@ -51,6 +51,86 @@ const ASSET_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/live.html"
 );
+
+/// Read the cue sheet beside the script and resolve its anchors to line positions.
+///
+/// Missing file, unreadable file, unknown anchors: none of them stop the show. A cue
+/// sheet is an aid, and a display that refuses to start because one cue points at a
+/// line that was deleted this afternoon would be worse than no cue sheet at all — so
+/// the dangling ones are counted, named on the console, and dropped.
+fn load_cues(path: &Path, lines: &[LineView]) -> Vec<CueView> {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(doc) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        eprintln!("cues: {} could not be parsed; carrying on without", path.display());
+        return Vec::new();
+    };
+    let index: std::collections::HashMap<&str, usize> = lines
+        .iter()
+        .enumerate()
+        .map(|(i, l)| (l.id.as_str(), i))
+        .collect();
+    let means = doc.get("colourMeans").cloned().unwrap_or_default();
+    let mut out = Vec::new();
+    let mut dangling: Vec<String> = Vec::new();
+    for c in doc.get("cues").and_then(|c| c.as_array()).unwrap_or(&Vec::new()) {
+        let Some(id) = c.get("lineId").and_then(|v| v.as_str()) else {
+            continue; // a page-level note with no anchor; nothing to place it against
+        };
+        let Some(&line_index) = index.get(id) else {
+            dangling.push(id.to_string());
+            continue;
+        };
+        let text = c
+            .get("cue")
+            .and_then(|v| v.as_str())
+            .or_else(|| c.get("action").and_then(|v| v.as_str()))
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if text.is_empty() {
+            continue;
+        }
+        let colour = c
+            .get("noteColour")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        out.push(CueView {
+            line_index,
+            line_id: id.to_string(),
+            cue: text,
+            trigger: c
+                .get("trigger")
+                .and_then(|v| v.as_str())
+                .unwrap_or("text")
+                .to_string(),
+            means: colour
+                .as_deref()
+                .and_then(|c| means.get(c))
+                .and_then(|m| m.as_str())
+                .map(str::to_string),
+            colour,
+            needs_review: c
+                .get("needsReview")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        });
+    }
+    // Script order, because the rail walks forward through them and the sheet is in
+    // page order, which is not the same thing once a cue has been re-anchored.
+    out.sort_by_key(|c| c.line_index);
+    if !dangling.is_empty() {
+        dangling.sort();
+        dangling.dedup();
+        eprintln!(
+            "cues: {} anchored to lines that no longer exist, dropped: {}",
+            dangling.len(),
+            dangling.join(", ")
+        );
+    }
+    out
+}
 
 /// Play a file to the monitor, on a thread that does nothing else.
 ///
@@ -127,6 +207,7 @@ pub fn run(
     buffer_ms: u32,
     trace_out: Option<PathBuf>,
     prep: bool,
+    cues_path: Option<&Path>,
 ) -> Result<()> {
     let corpus = Corpus::load(corpus_path, audio_root)?;
     let (script, prepared) = super::load_script(&corpus.script_path())?;
@@ -158,6 +239,17 @@ pub fn run(
         })
         .collect();
 
+    // Beside the script unless told otherwise, because that is where it lives for
+    // every show that has one and asking for a path each time is friction with no
+    // decision behind it.
+    let cue_path = cues_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| corpus.script_path().with_file_name("cues.json"));
+    let cues = load_cues(&cue_path, &lines);
+    if !cues.is_empty() {
+        println!("cues:    {} from {}", cues.len(), cue_path.display());
+    }
+
     let (tx, _rx) = tokio::sync::broadcast::channel(256);
     let state = Arc::new(LiveState {
         title: script.title.clone(),
@@ -169,6 +261,7 @@ pub fn run(
         tx,
         audible_until: Mutex::new(if monitor { 0.0 } else { f64::INFINITY }),
         steer: Mutex::new(Vec::new()),
+        cues,
         prep,
     });
 
@@ -569,6 +662,10 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                 get(|State(s): State<Arc<LiveState>>| async move {
                     axum::Json(s.lines.lock().unwrap().clone())
                 }),
+            )
+            .route(
+                "/cues.json",
+                get(|State(s): State<Arc<LiveState>>| async move { axum::Json(s.cues.clone()) }),
             )
             .route(
                 "/ws",

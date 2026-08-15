@@ -97,6 +97,44 @@
      seemed like it would help the eye find the position and did not: the current line
      is already the only bright thing on a dim page, so the strip added glare without
      adding information. Removed on the operator's word after watching it in a booth. */
+  /* The cue rail. A column of its own on the right, never overlapping the text: an
+     operator reading a cue and an operator reading the line it fires on are doing two
+     different things at once, and a cue laid over the script makes both harder. */
+  #rail {
+    position: absolute; top: 0; right: 0; bottom: 0; width: 19em;
+    pointer-events: none; z-index: 2; overflow: hidden;
+  }
+  body[data-rail="off"] #rail { display: none; }
+  body[data-rail="on"] #scroller { padding-right: 21em; }
+  .cue {
+    position: absolute; right: 1.2em; width: 16.5em;
+    padding: .4em .7em .45em; border-radius: 3px;
+    background: #16181d; border-left: 3px solid var(--dimmer);
+    font: 400 .78em/1.35 ui-sans-serif, system-ui, sans-serif;
+    color: var(--dim); transition: transform .18s ease-out, opacity .25s, color .25s;
+    will-change: transform;
+  }
+  .cue .what { display: block; }
+  /* The operator's own colours, with the sheet's own meanings. */
+  .cue[data-colour="blue"]   { border-left-color: #6ea8dc; }
+  .cue[data-colour="purple"] { border-left-color: #b48ee8; }
+  .cue .means {
+    display: block; font-size: .74em; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--dimmer); margin-bottom: .12em;
+  }
+  /* A visual cue is not a prompt, it is a responsibility: nothing in the audio will
+     ever fire it, and the operator has to be watching the stage. Marked as such. */
+  .cue[data-trigger="visual"] { border-left-style: dashed; }
+  .cue[data-trigger="visual"] .means::after { content: ' · watch'; color: var(--now); }
+  /* Queued below the fold: the next thing coming, before its line is on screen. */
+  .cue.ahead { opacity: .5; }
+  /* Its line is on screen, so it sits beside it. */
+  .cue.here { color: var(--fg); background: #1b1f26; }
+  /* Its line is the one being spoken. */
+  .cue.now { color: var(--now); border-left-color: var(--now); background: #221d12; }
+  .cue.review { border-left-style: dotted; }
+  .cue.review .means::after { content: ' · check'; color: var(--lost); }
+
   #scroller {
     position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden;
     scrollbar-width: none; padding: 34vh 6vw 66vh;
@@ -376,6 +414,7 @@
   <div id="stale">this page is newer than the server — restart it to pick up the changes</div>
   <div id="lost">position lost — waiting to recognise the text</div>
   <div id="heard"><div class="head">heard<button id="copy">copy</button></div><div id="heardlog"></div></div>
+  <div id="rail"></div>
   <div id="view">
       <div id="hint">tap the line being spoken to put it back on track</div>
     <div id="scroller"><div id="lines"></div></div>
@@ -462,6 +501,7 @@
     // as the tracking having quietly stopped.
     current = -1;
     scrolledTo = -1;
+    lineTops = null;
     // Two frames: the collapse-and-refill scroll event lands before the first.
     requestAnimationFrame(() => requestAnimationFrame(() => {
       rebuilding = false;
@@ -498,6 +538,7 @@
   let lastFrame = 0;
 
   function follow(now) {
+    layoutCues();
     requestAnimationFrame(follow);
     const dt = Math.min(0.05, lastFrame ? (now - lastFrame) / 1000 : 0);
     lastFrame = now;
@@ -700,6 +741,106 @@
     goTo(hits[hitAt], true);
   });
 
+  // ---- the cue rail -----------------------------------------------------------
+  //
+  // Two behaviours the operator asked for, and they turn out to be one rule.
+  //
+  //   "have the next visible one displayed as soon as the previous is gone by, even
+  //    if the linked text block is visible already or not. Then once the relevant
+  //    block is displayed follow its position and as soon as possible display the
+  //    next below it"
+  //
+  // So a cue whose line is on screen sits beside that line; a cue whose line is still
+  // below the fold waits at the bottom of the rail rather than being invisible, because
+  // the whole value of a cue list is knowing what is *coming*. Both fall out of one
+  // clamp: put the cue at its line's height, but never above the cue before it, and
+  // never past the bottom of the rail. A line below the fold clamps to the bottom and
+  // queues; as it scrolls in, its natural height drops below the clamp and it rises to
+  // meet its line of its own accord. Nothing switches modes.
+  const $rail = document.getElementById('rail');
+  let cues = [];
+  let cueEls = [];
+  // Line offsets, cached: this runs every animation frame, and asking the browser for
+  // 133 bounding rectangles per frame would cost more than everything else on the page
+  // put together. Invalidated whenever the list is rebuilt or the window resizes.
+  let lineTops = null, lineHeights = null, cueHeights = null, railH = 0, linesTop = 0;
+
+  // One pass, then read from arrays. Every `offsetTop` or `offsetHeight` inside the
+  // frame loop forces the browser to settle layout before answering, and there are
+  // 133 cues: asking each of them twice per frame is a few hundred forced reflows a
+  // frame, which is a page that stutters rather than scrolls.
+  function measure() {
+    lineTops = new Float64Array(els.length);
+    lineHeights = new Float64Array(els.length);
+    for (let i = 0; i < els.length; i++) {
+      if (!els[i]) continue;
+      lineTops[i] = els[i].offsetTop;
+      lineHeights[i] = els[i].offsetHeight;
+    }
+    cueHeights = cueEls.map((el) => el.offsetHeight || 44);
+    railH = $rail.clientHeight;
+    linesTop = $lines.offsetTop;
+  }
+
+  async function loadCues() {
+    try {
+      const r = await fetch('cues.json');
+      if (!r.ok) return;
+      cues = await r.json();
+    } catch { return; }
+    document.body.dataset.rail = cues.length ? 'on' : 'off';
+    $rail.textContent = '';
+    cueEls = cues.map((c) => {
+      const el = document.createElement('div');
+      el.className = 'cue' + (c.needsReview ? ' review' : '');
+      if (c.colour) el.dataset.colour = c.colour;
+      el.dataset.trigger = c.trigger;
+      const means = document.createElement('span');
+      means.className = 'means';
+      means.textContent = c.means || c.trigger;
+      const what = document.createElement('span');
+      what.className = 'what';
+      what.textContent = c.cue;
+      el.append(means, what);
+      $rail.appendChild(el);
+      return el;
+    });
+    requestAnimationFrame(() => { lineTops = null; layoutCues(); });
+  }
+
+  const CUE_GAP = 6;
+
+  function layoutCues() {
+    if (!cues.length) return;
+    if (!lineTops) measure();
+    const top = $scroller.scrollTop;
+    let floor = 0;            // nothing may be placed above this
+    for (let k = 0; k < cues.length; k++) {
+      const el = cueEls[k], c = cues[k];
+      const line = els[c.lineIndex];
+      if (!line) { el.style.display = 'none'; continue; }
+      const lineY = lineTops[c.lineIndex] + linesTop - top;
+      const h = cueHeights[k] || 44;
+      // Gone by: its line has left the top of the window. Cues do not linger — the
+      // operator has either taken it or missed it, and a stale cue on screen is worse
+      // than none because it competes with the one that is next.
+      if (lineY + lineHeights[c.lineIndex] < 0) { el.style.display = 'none'; continue; }
+      const want = Math.max(floor, Math.min(lineY, railH - h));
+      if (want > railH - h && floor > 0) { el.style.display = 'none'; continue; }
+      el.style.display = '';
+      el.style.transform = `translateY(${Math.round(want)}px)`;
+      el.classList.toggle('ahead', lineY > railH - h);
+      el.classList.toggle('here', lineY <= railH - h);
+      el.classList.toggle('now', c.lineIndex === current);
+      floor = want + h + CUE_GAP;
+      if (floor > railH) {
+        // Everything after this is off the bottom.
+        for (let j = k + 1; j < cueEls.length; j++) cueEls[j].style.display = 'none';
+        break;
+      }
+    }
+  }
+
   // ---- flags ----------------------------------------------------------------
   //
   // A bookmark, and the one correction that has to work *during* a show: the moment
@@ -787,6 +928,8 @@
     const wasWho = lines[i].character || '';
     const wasText = lines[i].text;
 
+    // Opening the editor changes every offset below it too.
+    lineTops = null;
     const box = document.createElement('div');
     box.className = 'editor';
     const who = document.createElement('input');
@@ -979,6 +1122,7 @@
       render(i);
       // The editor was taller than the line it replaced, so every offset below it
       // moved; the marks have to be put back where they now belong.
+      lineTops = null;
       replace();
     };
     openEditor = done;
@@ -1163,10 +1307,10 @@
   const replace = () => {
     if (raceOn) { movePointer('a', posA); movePointer('b', posB); }
   };
-  window.addEventListener('resize', replace);
+  window.addEventListener('resize', () => { lineTops = null; replace(); });
 
   // What this page was written against. See PROTOCOL_VERSION in live.rs.
-  const PROTOCOL = 1;
+  const PROTOCOL = 2;
   // Whether this is a reconnection rather than the first join.
   let joined = false;
 
@@ -1219,6 +1363,7 @@
         if (els[m.lineIndex]?.isConnected) render(m.lineIndex);
         if (repaintOpenFlag) repaintOpenFlag();
         paintFlags();
+        lineTops = null;
       } else if (m.type === 'line_deleted') {
         lines.splice(m.lineIndex, 1);
         build();
@@ -1243,7 +1388,7 @@
     ws.onclose = () => setTimeout(connect, 1000);
   }
 
-  loadScript().then(connect);
+  loadScript().then(loadCues).then(connect);
 })();
 </script>
 </body>

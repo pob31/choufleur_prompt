@@ -147,6 +147,9 @@ enum Command {
         /// playback to reach the passage you want to fix makes it work nobody does.
         #[arg(long)]
         prep: bool,
+        /// Cue sheet to display. Defaults to `cues.json` beside the script.
+        #[arg(long)]
+        cues: Option<std::path::PathBuf>,
         /// Output device to play through; substring match. Default device otherwise.
         #[arg(long)]
         output_device: Option<String>,
@@ -276,6 +279,7 @@ fn main() -> Result<()> {
             buffer_ms,
             out,
             prep,
+            cues,
         } => cmd::serve::run(
             &corpus,
             tracker_config.as_deref(),
@@ -296,6 +300,7 @@ fn main() -> Result<()> {
             buffer_ms,
             out,
             prep,
+            cues.as_deref(),
         ),
         Command::Track {
             corpus,
