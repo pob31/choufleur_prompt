@@ -114,9 +114,12 @@
     width: 100%; height: 100%;
   }
   #leads path { fill: none; stroke: var(--dimmer); stroke-width: 1; }
-  #leads path.now { stroke: var(--now); stroke-width: 1.5; }
+  /* Quiet under the text. The line has to be followable without competing with the
+     words it passes beneath — an operator reads the script far more often than they
+     trace a tendril. */
+  #leads path { stroke-opacity: .62; }
+  #leads path.now { stroke: var(--now) !important; stroke-width: 1.5; stroke-opacity: 1; }
   #leads circle { fill: var(--dimmer); }
-  #leads circle.now { fill: var(--now); }
 
   /* The word the cue fires on. Underlined rather than filled: a block of colour in
      the middle of a speech is read as emphasis by the actor, which is somebody else's
@@ -125,6 +128,8 @@
     background: none; color: inherit;
     border-bottom: 1.5px solid var(--dimmer); padding-bottom: .04em;
   }
+  mark.trig[data-colour="blue"]   { border-bottom-color: #4d7ea8; }
+  mark.trig[data-colour="purple"] { border-bottom-color: #8566ad; }
   .line.now mark.trig { border-bottom-color: var(--now); }
 
   #rail {
@@ -870,7 +875,7 @@
     for (const c of cues) {
       if (!c.triggerText) continue;
       if (!triggerOf.has(c.lineIndex)) triggerOf.set(c.lineIndex, []);
-      triggerOf.get(c.lineIndex).push({ id: c.id, text: c.triggerText });
+      triggerOf.get(c.lineIndex).push({ id: c.id, text: c.triggerText, colour: c.colour });
     }
     for (const i of triggerOf.keys()) if (els[i]) decorate(els[i], lines[i]);
     lineTops = null;
@@ -1008,6 +1013,7 @@
   // is unavoidable — an inline span's position is not derivable from anything cached —
   // but there are at most a handful in view, unlike the 133 cards.
   const NS = 'http://www.w3.org/2000/svg';
+  const CUE_STROKE = { blue: '#4d7ea8', purple: '#8566ad' };
 
   // Where the rendered text of a line stops, as opposed to where its box stops.
   // Only ever called for the handful of cues in view.
@@ -1054,32 +1060,45 @@
       // This cue's own mark, not merely the line's first: a block with three cues has
       // three marks and three tendrils, and crossing them would be worse than none.
       const mark = line.querySelector(`mark.trig[data-cue="${cues[k].id}"]`);
-      const t = mark ? mark.getBoundingClientRect() : endOfText(line);
+      // The *last* rect, not the bounding box. A phrase that wraps spans two rows, and
+      // their union is a box whose right edge belongs to one row and whose bottom
+      // belongs to the other — so the tendril would leave from a corner where there is
+      // no text at all. The cue fires when the phrase finishes, so the end of the last
+      // row is both the correct anchor and the honest one.
+      const rects = mark ? mark.getClientRects() : null;
+      const t = rects && rects.length ? rects[rects.length - 1] : endOfText(line);
       if (!t) { path.setAttribute('d',''); dot.setAttribute('r','0'); return; }
       const c = card.getBoundingClientRect();
       if (t.bottom < stage.top || t.top > stage.bottom) { path.setAttribute('d',''); dot.setAttribute('r','0'); return; }
-      // Leave from the edge of the column, at the height of the phrase.
+      // The underline continues into the tendril.
       //
-      // Starting at the end of the trigger itself was precise and unreadable: a cue
-      // fires halfway along a speech, so the curve set off through the middle of the
-      // line and struck out every word after it. Reported as the tendril barring the
-      // text to its right. Which *words* is already said by the underline, and which
-      // *row* is said by the height it leaves at — so the horizontal start carries no
-      // information and can be given up to keep the text clear. Taken from the
-      // container rather than each line so every tendril departs from the same column,
-      // instead of jittering with the length of whatever paragraph it belongs to.
-      const x1 = colRight - stage.left + 4;
-      const y1 = t.top - stage.top + Math.min(t.height, 22) / 2;
+      // Leaving from the column edge kept the text clear and gave up the one thing
+      // that mattered: which phrase. Leaving from the end of the phrase at its
+      // *middle* struck the words out. So it leaves from the end of the phrase at the
+      // underline's own height and runs along under the text — descender level, not
+      // through the letters — before turning for the card. It reads as the underline
+      // growing a tail, which is exactly what it is.
+      const x1 = t.right - stage.left;
+      const y1 = t.bottom - stage.top + 1;
+      const turn = colRight - stage.left + 4;
       const x2 = c.left - stage.left - 4;
       const y2 = c.top - stage.top + 14;
-      const bend = Math.max(24, (x2 - x1) * 0.4);
-      path.setAttribute('d', `M${x1.toFixed(1)},${y1.toFixed(1)} C${(x1+bend).toFixed(1)},${y1.toFixed(1)} ${(x2-bend).toFixed(1)},${y2.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)}`);
-      dot.setAttribute('r', '2.5');
-      dot.setAttribute('cx', x1.toFixed(1));
-      dot.setAttribute('cy', y1.toFixed(1));
+      // Straight under the remaining words to the edge of the column, then a curve.
+      // A bezier from the word directly would sweep up through the line above it.
+      const from = Math.max(turn, x1);
+      const bend = Math.max(24, (x2 - from) * 0.4);
+      path.setAttribute('d',
+        `M${x1.toFixed(1)},${y1.toFixed(1)} H${from.toFixed(1)} `
+        + `C${(from+bend).toFixed(1)},${y1.toFixed(1)} ${(x2-bend).toFixed(1)},${y2.toFixed(1)} `
+        + `${x2.toFixed(1)},${y2.toFixed(1)}`);
+      dot.setAttribute('r', '0');
+      // The cue's own colour, so three tendrils leaving one paragraph are told apart
+      // by the same code as their cards — and so a line running under a sentence is
+      // read as belonging to the rail rather than as part of the typography.
+      const stroke = CUE_STROKE[cues[k].colour] || '';
+      path.style.stroke = stroke;
       const isNow = cues[k].lineIndex === current;
       path.classList.toggle('now', isNow);
-      dot.classList.toggle('now', isNow);
     });
   }
 
@@ -1636,7 +1655,7 @@
     // script is edited from this page, and a trigger extracted this morning may
     // simply no longer be in the line.
     const specs = (triggerOf.get(Number(el.dataset.i)) || [])
-      .map((t) => ({ id: t.id, at: l.text.indexOf(t.text), len: t.text.length }))
+      .map((t) => ({ id: t.id, colour: t.colour, at: l.text.indexOf(t.text), len: t.text.length }))
       .filter((x) => x.at >= 0)
       .sort((a, b) => a.at - b.at);
     let cursor = 0;
@@ -1646,6 +1665,7 @@
       const m = document.createElement('mark');
       m.className = 'trig';
       m.dataset.cue = x.id;
+      if (x.colour) m.dataset.colour = x.colour;
       m.textContent = l.text.slice(x.at, x.at + x.len);
       el.appendChild(m);
       cursor = x.at + x.len;
