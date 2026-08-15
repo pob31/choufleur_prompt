@@ -1011,6 +1011,7 @@
   }
   function drawLeads(here) {
     const stage = $leads.getBoundingClientRect();
+    const colRight = $lines.getBoundingClientRect().right;
     const want = here.length;
     while (leadEls.length < want) {
       const path = document.createElementNS(NS, 'path');
@@ -1044,7 +1045,17 @@
       if (!t) { path.setAttribute('d',''); dot.setAttribute('r','0'); return; }
       const c = card.getBoundingClientRect();
       if (t.bottom < stage.top || t.top > stage.bottom) { path.setAttribute('d',''); dot.setAttribute('r','0'); return; }
-      const x1 = t.right - stage.left + 4;
+      // Leave from the edge of the column, at the height of the phrase.
+      //
+      // Starting at the end of the trigger itself was precise and unreadable: a cue
+      // fires halfway along a speech, so the curve set off through the middle of the
+      // line and struck out every word after it. Reported as the tendril barring the
+      // text to its right. Which *words* is already said by the underline, and which
+      // *row* is said by the height it leaves at — so the horizontal start carries no
+      // information and can be given up to keep the text clear. Taken from the
+      // container rather than each line so every tendril departs from the same column,
+      // instead of jittering with the length of whatever paragraph it belongs to.
+      const x1 = colRight - stage.left + 4;
       const y1 = t.top - stage.top + Math.min(t.height, 22) / 2;
       const x2 = c.left - stage.left - 4;
       const y2 = c.top - stage.top + 14;
