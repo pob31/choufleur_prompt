@@ -218,10 +218,26 @@ fn load_cues(path: &Path, lines: &[LineView]) -> Vec<CueView> {
             .get("noteColour")
             .and_then(|v| v.as_str())
             .map(str::to_string);
-        let trigger_text = c
-            .get("evidence")
-            .and_then(|v| v.as_str())
-            .and_then(|ev| trigger_phrase(ev, &lines[line_index].text));
+        // A phrase the operator picked is taken at its word.
+        //
+        // `trigger_phrase` exists to dig a trigger out of text scraped off a PDF, so
+        // it fuzzy-matches and insists on ten characters — below that a common run
+        // means nothing. Neither applies to a phrase somebody selected in the script:
+        // it is already exact, and "Silence" is seven characters and a perfectly good
+        // cue. Putting a hand-picked trigger through the extractor's rules would throw
+        // it away without a word, which is the failure this whole day keeps producing.
+        let evidence = c.get("evidence").and_then(|v| v.as_str());
+        let by_hand = c.get("evidenceFrom").and_then(|v| v.as_str()) == Some("operator");
+        let trigger_text = evidence.and_then(|ev| {
+            if by_hand {
+                lines[line_index]
+                    .text
+                    .contains(ev)
+                    .then(|| ev.to_string())
+            } else {
+                trigger_phrase(ev, &lines[line_index].text)
+            }
+        });
         out.push(CueView {
             id: c
                 .get("id")

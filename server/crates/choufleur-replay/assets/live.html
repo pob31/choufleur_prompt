@@ -860,7 +860,9 @@
     // and the second leader can point at the first one's mark perfectly well.
     triggerOf = new Map();
     for (const c of cues) {
-      if (c.triggerText && !triggerOf.has(c.lineIndex)) triggerOf.set(c.lineIndex, c.triggerText);
+      if (!c.triggerText) continue;
+      if (!triggerOf.has(c.lineIndex)) triggerOf.set(c.lineIndex, []);
+      triggerOf.get(c.lineIndex).push({ id: c.id, text: c.triggerText });
     }
     for (const i of triggerOf.keys()) if (els[i]) decorate(els[i], lines[i]);
     lineTops = null;
@@ -985,6 +987,20 @@
   // is unavoidable — an inline span's position is not derivable from anything cached —
   // but there are at most a handful in view, unlike the 133 cards.
   const NS = 'http://www.w3.org/2000/svg';
+
+  // Where the rendered text of a line stops, as opposed to where its box stops.
+  // Only ever called for the handful of cues in view.
+  const measureRange = document.createRange();
+  function endOfText(line) {
+    const nodes = [...line.childNodes].filter(
+      (n) => (n.nodeType === 3 && n.textContent.trim()) || n.nodeName === 'MARK'
+    );
+    const last = nodes[nodes.length - 1];
+    if (!last) return null;
+    measureRange.selectNodeContents(last);
+    const rects = measureRange.getClientRects();
+    return rects.length ? rects[rects.length - 1] : null;
+  }
   function drawLeads(here) {
     const stage = $leads.getBoundingClientRect();
     const want = here.length;
@@ -1004,10 +1020,20 @@
       const card = cueEls[k];
       if (card.style.display === 'none') { path.setAttribute('d', ''); dot.setAttribute('r','0'); return; }
       const line = els[cues[k].lineIndex];
-      // The marked phrase if the line has one, otherwise the line itself: a cue with
-      // no highlighted trigger points at where it happens, which is the truth.
-      const target = line.querySelector('mark.trig') || line;
-      const t = target.getBoundingClientRect();
+      // The marked phrase if the line has one, otherwise where its text actually
+      // *ends*.
+      //
+      // Using the line element itself looked right and drew nothing: a paragraph is a
+      // block, so its right edge is the right edge of the column, which sits hard
+      // against the rail — the curve had no length to be seen in. Only the 35 cues
+      // with a marked phrase had a visible tendril, which is what "not always visible"
+      // was. A Range over the text gives the end of the last rendered line instead,
+      // and that is also the point the cue actually fires on.
+      // This cue's own mark, not merely the line's first: a block with three cues has
+      // three marks and three tendrils, and crossing them would be worse than none.
+      const mark = line.querySelector(`mark.trig[data-cue="${cues[k].id}"]`);
+      const t = mark ? mark.getBoundingClientRect() : endOfText(line);
+      if (!t) { path.setAttribute('d',''); dot.setAttribute('r','0'); return; }
       const c = card.getBoundingClientRect();
       if (t.bottom < stage.top || t.top > stage.bottom) { path.setAttribute('d',''); dot.setAttribute('r','0'); return; }
       const x1 = t.right - stage.left + 4;
@@ -1036,6 +1062,40 @@
   // exactly cannot be marked — so the operator would be debugging their own spelling
   // against somebody else's punctuation. Selecting is also how you would say it out
   // loud: point at the words.
+  // What the operator has selected in the script, as a phrase that really occurs in
+  // one line's text.
+  //
+  // `getSelection().toString()` is not that. The speaker sits in a block-level span
+  // inside the same paragraph, so dragging from the visual start of a line — the
+  // obvious gesture — picks up the character's name and a newline, and the result
+  // matches nothing. So the name is stripped when the selection begins with it, and
+  // whitespace is collapsed, before asking whether the phrase is really in the line.
+  function selectionInScript() {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.anchorNode) return null;
+    const node = sel.anchorNode.nodeType === 3 ? sel.anchorNode.parentElement : sel.anchorNode;
+    const el = node && node.closest ? node.closest('.line') : null;
+    if (!el) return null;
+    // One line only: a phrase spanning two of them is not a trigger, it is a mistake.
+    const end = sel.focusNode?.nodeType === 3 ? sel.focusNode.parentElement : sel.focusNode;
+    if (end && end.closest && end.closest('.line') !== el) return null;
+    const index = Number(el.dataset.i);
+    const line = lines[index];
+    if (!line) return null;
+    let text = String(sel).replace(/\s+/g, ' ').trim();
+    // Strip whatever the page put in front of the words: the speaker's name, and on
+    // a stage direction the hold badge. Both are block-level inside the paragraph, so
+    // dragging from the visual start of a line picks them up.
+    for (const sel of ['.tag', '.who']) {
+      const lead = el.querySelector(sel)?.textContent?.trim();
+      if (lead && text.toLowerCase().startsWith(lead.toLowerCase())) {
+        text = text.slice(lead.length).trim();
+      }
+    }
+    if (!text || !line.text.includes(text)) return null;
+    return { index, text };
+  }
+
   let openCue = null;
   // Which card is currently an editor, or -1. Separate from `openCue` because the
   // layout has to know from the first instant, before the closure exists.
@@ -1061,6 +1121,7 @@
     what.addEventListener('input', fit);
 
     let trigger = c.trigger, colour = c.colour || '', triggerText = c.triggerText || '';
+    let moveTo = c.lineIndex;
     const ctl = document.createElement('div');
     ctl.className = 'ctl';
     const mk = (label, isOn, onClick) => {
@@ -1076,17 +1137,34 @@
     const bQLab = mk('QLab', 'colour:blue', () => { colour = colour === 'blue' ? '' : 'blue'; });
     const bDesk = mk('console', 'colour:purple', () => { colour = colour === 'purple' ? '' : 'purple'; });
     const bTrig = mk('use selection', 'never', () => {
-      const sel = String(window.getSelection() || '').trim();
-      if (!sel) { hint.textContent = 'select the words in the script first, then press this'; return; }
-      const line = lines[c.lineIndex];
-      if (!line.text.includes(sel)) {
-        hint.textContent = 'that selection is not inside this cue’s line';
+      const picked = selectionInScript();
+      if (!picked) {
+        hint.textContent = 'select some words in the script, within one line';
         return;
       }
-      triggerText = sel;
-      hint.textContent = '';
+      // A new reference replaces the old one *and* moves the cue to the line it is
+      // in. Requiring the selection to be inside the cue's current line was the wrong
+      // rule twice over: it made re-anchoring impossible from the page, and it was
+      // what fired when the selection reached back over the speaker's name — which
+      // is the natural thing to do when you drag from the start of a line.
+      triggerText = picked.text;
+      moveTo = picked.index;
+      hint.textContent = picked.index === c.lineIndex
+        ? ''
+        : `will move to ${lines[picked.index].id}`;
     });
-    const bClear = mk('no trigger word', 'never', () => { triggerText = ''; });
+    const bClear = mk('no trigger word', 'never', () => { triggerText = ''; hint.textContent = ''; });
+    // For a stage direction there is usually no word to point at — the whole thing is
+    // the reference, and "Chorégraphie sur la musique d'Otis Redding" is the cue.
+    // Select any part of it and this moves the cue there with no trigger phrase.
+    const bWhole = mk('use whole line', 'never', () => {
+      const picked = selectionInScript();
+      if (!picked) { hint.textContent = 'select any part of the line you want'; return; }
+      triggerText = '';
+      moveTo = picked.index;
+      const l = lines[picked.index];
+      hint.textContent = `fires on all of ${l.id}${l.kind === 'stage' ? ' (stage direction)' : ''}`;
+    });
     const kill = document.createElement('button');
     kill.className = 'kill';
     kill.textContent = 'delete';
@@ -1098,7 +1176,7 @@
       close(false);
       ws.send(JSON.stringify({ type: 'delete_cue', id: c.id }));
     };
-    ctl.append(bText, bVis, bQLab, bDesk, bTrig, bClear);
+    ctl.append(bText, bVis, bQLab, bDesk, bTrig, bWhole, bClear);
 
     const hint = document.createElement('div');
     hint.className = 'hintline';
@@ -1112,6 +1190,7 @@
       if (!hint.textContent) {
         hint.textContent = triggerText ? `on “${triggerText}”` : 'fires on the whole line';
       }
+      bClear.classList.toggle('on', !triggerText);
     };
     // Two rows: what the cue *is* on the first, what to do with it on the second.
     // Six controls wrapping in one row put `delete` in a different place depending on
@@ -1141,6 +1220,7 @@
         ws.send(JSON.stringify({
           type: 'edit_cue', id: c.id, cue: what.value.trim(),
           trigger, colour, triggerText,
+          lineId: lines[moveTo].id,
         }));
       }
       el.innerHTML = before;
@@ -1484,8 +1564,16 @@
 
   const HOLD_LABEL = { music: 'music', silence: 'silence', adlib: 'ad lib' };
 
-  // lineIndex -> the phrase within that line which fires a cue. Consulted by
-  // decorate(), so a line rebuilt for any reason keeps its mark.
+  // lineIndex -> every phrase in that line which fires a cue, each tagged with the id
+  // of the cue it belongs to. Consulted by decorate(), so a line rebuilt for any
+  // reason keeps its marks.
+  //
+  // A list rather than one entry per line. The first version kept a single trigger,
+  // on the reasoning that two cues on one line would fight over the text — but a long
+  // speech legitimately carries several cues at different points, and collapsing them
+  // meant every cue after the first pointed at the end of the block instead of at the
+  // words that fire it. Overlaps are dropped rather than nested, since a phrase inside
+  // another phrase cannot be marked twice.
   let triggerOf = new Map();
 
   function decorate(el, l) {
@@ -1515,18 +1603,22 @@
     // to point at. Falls back to plain text whenever the phrase is not found — the
     // script is edited from this page, and a trigger extracted this morning may
     // simply no longer be in the line.
-    const trig = triggerOf.get(Number(el.dataset.i));
-    const at = trig ? l.text.indexOf(trig) : -1;
-    if (at < 0) {
-      el.appendChild(document.createTextNode(l.text));
-    } else {
-      el.appendChild(document.createTextNode(l.text.slice(0, at)));
+    const specs = (triggerOf.get(Number(el.dataset.i)) || [])
+      .map((t) => ({ id: t.id, at: l.text.indexOf(t.text), len: t.text.length }))
+      .filter((x) => x.at >= 0)
+      .sort((a, b) => a.at - b.at);
+    let cursor = 0;
+    for (const x of specs) {
+      if (x.at < cursor) continue;                 // overlaps the one before it
+      el.appendChild(document.createTextNode(l.text.slice(cursor, x.at)));
       const m = document.createElement('mark');
       m.className = 'trig';
-      m.textContent = trig;
+      m.dataset.cue = x.id;
+      m.textContent = l.text.slice(x.at, x.at + x.len);
       el.appendChild(m);
-      el.appendChild(document.createTextNode(l.text.slice(at + trig.length)));
+      cursor = x.at + x.len;
     }
+    el.appendChild(document.createTextNode(l.text.slice(cursor)));
     el.classList.add(...state);
   }
 
@@ -1538,6 +1630,11 @@
   $lines.addEventListener('click', (ev) => {
     const el = ev.target.closest('.line');
     if (!el || !ws || ws.readyState !== 1) return;
+    // While a cue is open, the script is something to point at, not something to
+    // edit. Every click here otherwise opened the line editor — which replaces the
+    // line with a textarea and destroys the very selection the operator was making,
+    // so "use selection" could not work at all in prep, where editing is always on.
+    if (cueEditing >= 0) return;
     // Alt-click flags, in either mode and without opening anything. Checked before
     // the edit branch so it works while editing is on, which is when you are most
     // likely to be triaging rather than typing.
