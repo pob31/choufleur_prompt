@@ -1139,8 +1139,11 @@ fn reload_cues(state: &Arc<LiveState>, changed: &str) -> (Vec<CueView>, CueSheet
     let lines = state.lines.lock().unwrap();
     let mut cues: Vec<CueView> = Vec::new();
     let mut sheets: Vec<CueSheet> = Vec::new();
-    // Every sheet, not only the one that changed: the client is sent the whole set and
-    // replaces its copy wholesale, which is a few kilobytes and cannot go stale.
+    // Every sheet is re-read so the server's own copy stays whole, but only the changed
+    // one goes on the wire — see the return. A real board is a dozen lists: sound,
+    // lights, video, three followspots, two stage managers, flys, surtitles,
+    // automation. Measured at 766 cues that is 156 kB, which is nothing to serve once
+    // and wasteful to re-send on every keystroke-sized edit over a phone tether.
     for sheet in state.sheets.lock().unwrap().iter() {
         let Some(path) = state.sheet_paths.get(&sheet.id) else {
             continue;
@@ -1158,9 +1161,10 @@ fn reload_cues(state: &Arc<LiveState>, changed: &str) -> (Vec<CueView>, CueSheet
             name: changed.to_string(),
             categories: Vec::new(),
         });
-    *state.cues.lock().unwrap() = cues.clone();
+    let just_changed: Vec<CueView> = cues.iter().filter(|c| c.sheet == changed).cloned().collect();
+    *state.cues.lock().unwrap() = cues;
     *state.sheets.lock().unwrap() = sheets;
-    (cues, mine)
+    (just_changed, mine)
 }
 
 /// The HTTP side: the page, the script, and the position stream.

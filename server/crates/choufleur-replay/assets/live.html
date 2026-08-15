@@ -461,6 +461,11 @@
     border-radius: 999px; padding: .3em .8em; font: inherit; cursor: pointer;
   }
   #picker button.on { border-color: var(--now); color: var(--now); }
+  #picker select {
+    border: 1px solid var(--dimmer); background: #16181d; color: var(--dim);
+    border-radius: 999px; padding: .3em .8em; font: inherit; cursor: pointer;
+  }
+  #picker select:focus { outline: none; border-color: var(--now); }
   #picker.single { display: none; }
 
   #targets { display: none; margin-left: .6em; }
@@ -1292,20 +1297,33 @@
       renderRail();
       replace();
     };
-    for (const sh of sheets) {
-      const b = document.createElement('button');
-      b.textContent = sh.name;
-      b.classList.toggle('on', viewing === sh.id);
-      b.onclick = () => choose(sh.id);
-      $picker.appendChild(b);
-    }
-    // Everything at once: the stage manager's view, and how you check that two lists
+    // Everything at once is the stage manager's view, and how you check that two lists
     // do not disagree about where a moment sits.
-    const all = document.createElement('button');
-    all.textContent = 'all';
-    all.classList.toggle('on', viewing === '*');
-    all.onclick = () => choose('*');
-    $picker.appendChild(all);
+    const options = [...sheets.map((sh) => [sh.id, sh.name]), ['*', 'all']];
+    // Buttons while they fit, a menu once they do not. A real board runs to a dozen
+    // lists — three followspots, two stage managers, flys, surtitles — and a dozen
+    // buttons in a footer wrap into two rows and push the clock off the end. Below
+    // that, buttons are the better target on a touch screen in the dark.
+    if (options.length <= 5) {
+      for (const [id, name] of options) {
+        const b = document.createElement('button');
+        b.textContent = name;
+        b.classList.toggle('on', viewing === id);
+        b.onclick = () => choose(id);
+        $picker.appendChild(b);
+      }
+      return;
+    }
+    const sel = document.createElement('select');
+    for (const [id, name] of options) {
+      const o = document.createElement('option');
+      o.value = id;
+      o.textContent = name;
+      o.selected = viewing === id;
+      sel.appendChild(o);
+    }
+    sel.onchange = () => choose(sel.value);
+    $picker.appendChild(sel);
   }
 
   // ---- the targets a cue list drives ------------------------------------------
@@ -2306,7 +2324,11 @@
         render(m.lineIndex);
         replace();
       } else if (m.type === 'cues_changed') {
-        cues = m.cues;
+        // A delta for one list: drop that sheet's cues and splice the new set in.
+        // The server sends only the sheet that changed, because a full board is a
+        // dozen lists and re-sending all of them on every edit is bytes nobody reads.
+        cues = cues.filter((c) => c.sheet !== m.sheet).concat(m.cues);
+        cues.sort((a, b) => a.lineIndex - b.lineIndex);
         if (m.list) {
           // Replace that sheet's meta in the roster, leaving every other list alone —
           // an edit to the lighting list is not news to the sound operator.
