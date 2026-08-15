@@ -126,8 +126,11 @@
      ever fire it, and the operator has to be watching the stage. Marked as such. */
   .cue[data-trigger="visual"] { border-left-style: dashed; }
   .cue[data-trigger="visual"] .means::after { content: ' · watch'; color: var(--now); }
-  /* Queued below the fold: the next thing coming, before its line is on screen. */
-  .cue.ahead { opacity: .5; }
+  /* Queued at the foot: the next thing coming, before its line is on screen. Kept
+     legible rather than merely present — this is the one an operator glances at while
+     doing something else. */
+  .cue.ahead { opacity: .72; background: #131519; }
+  .cue .away { color: var(--speaker); }
   /* Its line is on screen, so it sits beside it. */
   .cue.here { color: var(--fg); background: #1b1f26; }
   /* Its line is the one being spoken. */
@@ -760,6 +763,7 @@
   const $rail = document.getElementById('rail');
   let cues = [];
   let cueEls = [];
+  let cueAway = [];
   // Line offsets, cached: this runs every animation frame, and asking the browser for
   // 133 bounding rectangles per frame would cost more than everything else on the page
   // put together. Invalidated whenever the list is rebuilt or the window resizes.
@@ -790,6 +794,7 @@
     } catch { return; }
     document.body.dataset.rail = cues.length ? 'on' : 'off';
     $rail.textContent = '';
+    cueAway = [];
     cueEls = cues.map((c) => {
       const el = document.createElement('div');
       el.className = 'cue' + (c.needsReview ? ' review' : '');
@@ -797,48 +802,92 @@
       el.dataset.trigger = c.trigger;
       const means = document.createElement('span');
       means.className = 'means';
-      means.textContent = c.means || c.trigger;
+      // Written in JS rather than through `content: attr(...)`: attr() reads from the
+      // element the pseudo-element belongs to, not from its parent, so a data attribute
+      // set on the card would have rendered as nothing at all.
+      const away = document.createElement('span');
+      away.className = 'away';
+      means.append(away, document.createTextNode(c.means || c.trigger));
       const what = document.createElement('span');
       what.className = 'what';
       what.textContent = c.cue;
       el.append(means, what);
       $rail.appendChild(el);
+      cueAway.push(away);
       return el;
     });
     requestAnimationFrame(() => { lineTops = null; layoutCues(); });
   }
 
   const CUE_GAP = 6;
+  // How many cues wait at the foot of the rail before their lines arrive.
+  //
+  // The first version reserved nothing, and the queued cue was simply the next one
+  // that happened to fit. That works on a quiet stretch and fails exactly when it
+  // matters: on a busy page the cues anchored to visible lines fill the rail, the
+  // lookahead is pushed off the bottom, and the operator loses sight of what is coming
+  // at the moment there is most to keep track of. So the foot of the rail is reserved
+  // for them and the anchored cues get what is left.
+  const LOOKAHEAD = 2;
 
   function layoutCues() {
     if (!cues.length) return;
     if (!lineTops) measure();
     const top = $scroller.scrollTop;
-    let floor = 0;            // nothing may be placed above this
+    const fold = railH;                 // below this, a line is not on screen yet
+
+    // Split first, place second. Which band a cue belongs to is a fact about the
+    // script and the scroll; where it is drawn is a consequence.
+    const gone = [], here = [], ahead = [];
     for (let k = 0; k < cues.length; k++) {
-      const el = cueEls[k], c = cues[k];
-      const line = els[c.lineIndex];
-      if (!line) { el.style.display = 'none'; continue; }
-      const lineY = lineTops[c.lineIndex] + linesTop - top;
-      const h = cueHeights[k] || 44;
+      const c = cues[k];
+      if (!els[c.lineIndex]) { gone.push(k); continue; }
+      const y = lineTops[c.lineIndex] + linesTop - top;
       // Gone by: its line has left the top of the window. Cues do not linger — the
-      // operator has either taken it or missed it, and a stale cue on screen is worse
-      // than none because it competes with the one that is next.
-      if (lineY + lineHeights[c.lineIndex] < 0) { el.style.display = 'none'; continue; }
-      const want = Math.max(floor, Math.min(lineY, railH - h));
-      if (want > railH - h && floor > 0) { el.style.display = 'none'; continue; }
+      // operator has either taken it or missed it, and a spent cue on screen competes
+      // with the one that is next.
+      if (y + lineHeights[c.lineIndex] < 0) gone.push(k);
+      else if (y < fold) here.push([k, y]);
+      else ahead.push([k, y]);
+    }
+    for (const k of gone) cueEls[k].style.display = 'none';
+
+    // Reserve the foot for the lookahead, then fill upwards from the top with the
+    // cues whose lines are actually on screen.
+    const queued = ahead.slice(0, LOOKAHEAD);
+    let reserved = 0;
+    for (const [k] of queued) reserved += (cueHeights[k] || 44) + CUE_GAP;
+    const ceiling = Math.max(0, railH - reserved);
+
+    let floor = 0;
+    for (const [k, y] of here) {
+      const el = cueEls[k], h = cueHeights[k] || 44;
+      const want = Math.max(floor, Math.min(y, ceiling - h));
+      if (want + h > ceiling && floor > 0) { el.style.display = 'none'; continue; }
       el.style.display = '';
       el.style.transform = `translateY(${Math.round(want)}px)`;
-      el.classList.toggle('ahead', lineY > railH - h);
-      el.classList.toggle('here', lineY <= railH - h);
-      el.classList.toggle('now', c.lineIndex === current);
+      el.classList.remove('ahead');
+      el.classList.add('here');
+      if (cueAway[k].textContent) cueAway[k].textContent = '';
+      el.classList.toggle('now', cues[k].lineIndex === current);
       floor = want + h + CUE_GAP;
-      if (floor > railH) {
-        // Everything after this is off the bottom.
-        for (let j = k + 1; j < cueEls.length; j++) cueEls[j].style.display = 'none';
-        break;
-      }
     }
+
+    // The lookahead, stacked at the foot, with how far off each one is. "What" is on
+    // the card already; the only thing missing is "when".
+    const from = current >= 0 ? current : (here.length ? cues[here[0][0]].lineIndex : 0);
+    let y = railH - reserved + CUE_GAP;
+    for (const [k] of queued) {
+      const el = cueEls[k], h = cueHeights[k] || 44;
+      el.style.display = '';
+      el.style.transform = `translateY(${Math.round(y)}px)`;
+      el.classList.add('ahead');
+      el.classList.remove('here', 'now');
+      const away = cues[k].lineIndex - from;
+      cueAway[k].textContent = away > 0 ? `in ${away} line${away === 1 ? '' : 's'} · ` : '';
+      y += h + CUE_GAP;
+    }
+    for (let i = LOOKAHEAD; i < ahead.length; i++) cueEls[ahead[i][0]].style.display = 'none';
   }
 
   // ---- flags ----------------------------------------------------------------
