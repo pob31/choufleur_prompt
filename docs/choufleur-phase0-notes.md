@@ -1723,3 +1723,48 @@ One caveat on the test set itself: `window_accuracy`'s anchors are derived from 
 recording, so they under-sample exactly the passages where recognition is worst. A model
 that helps only in the mush would be invisible here. Two nights of a second show would
 settle it; the accent-heavy La Reprise scenes are the obvious candidates.
+
+### AH. The model question needs a corpus neither show provides
+
+Hécube said `medium` writes a better transcript and tracks no better (finding AG). The
+obvious objection was that Hécube is too easy to show a difference — its anchors come
+from the recording, so they under-sample exactly the passages where recognition is
+worst. La Reprise is the hard case: *"French with heavy Flemish and Liège accents"*,
+*"some adlib in gibberish"*.
+
+**First, the operator named a confound I had missed.** *"Hécube files are mixed, after
+compression. La Reprise is straight from the preamps."* Measured, the gap is 25–34 dB:
+Hécube's loud speech sits at −33.6 dBFS, Sara's at **−67.4** — about eight bits of a
+sixteen-bit file. Dynamic range above the noise floor is comparable (28–39 dB against
+31), so the information is there; it is recorded very quietly. The AGC was built for
+precisely this and its own docs cite a −66.8 dBFS channel, but note the ceiling:
+`max_gain_db` is 40 and Sara needs 47 to reach the −20 target, so she arrives at −27
+with the limiter engaged.
+
+**Second, `medium` really is better here, and coverage cannot see it.**
+
+| | small | medium |
+| --- | --- | --- |
+| `C'est le conducteur de Clark ?` | `C'on est le tour de Clark.` | **correct** |
+| a whole sentence at t=40 s | `Le carrelau.` | **`Quand je me suis fait mal au dos, j'ai arrêté et j'ai passé mon…`** |
+| mean agreement with the script | 0.601 | 0.601 |
+| **mean avgLogprob** | **−0.642** | **−0.524** |
+
+Mean agreement is *identical to three decimals* while whole sentences are recovered,
+because **the ceiling on this material is the script, not the recogniser**. The La
+Reprise script is deliberately stale relative to these takes, so words the actors really
+said are not in it, and a metric that asks "how much of the script is findable" is blind
+to them. The model's own confidence is not: −0.64 → −0.52 on the accented scene, against
+−0.319 → −0.314 on Hécube, where the two models are indistinguishable.
+
+**So neither corpus can settle it.** Hécube has an accurate script and audio too easy to
+separate the models. La Reprise has audio hard enough and a script too stale to measure
+against. The decisive test needs both at once, and it is cheap: the operator prepped
+Hécube's 940-line script today in an afternoon, and saraFabian_3 is **44 lines**.
+Re-prepping one La Reprise scene against its recordings would convert a suggestive
+confidence difference into a tracking number.
+
+Until then the honest position is: **`small` stays the default** — proven sufficient on
+a clean processed feed — and there is real evidence, not yet conclusive, that raw
+preamp feeds with heavy accents want `medium`. Which argues for the model being a
+per-show setting rather than a global one, and it is already a flag.
