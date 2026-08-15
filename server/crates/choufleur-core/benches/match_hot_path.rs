@@ -20,6 +20,7 @@ const LINES: &[&str] = &[
 fn build_script(n: usize) -> Script {
     let lines = (0..n)
         .map(|i| ScriptLine {
+            spoken: None,
             kind: Default::default(),
             hold: None,
             hold_seconds: None,

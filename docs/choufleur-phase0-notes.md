@@ -1566,3 +1566,66 @@ Redding and house noise before line 1, all of it transcribed as dialogue. There 
 line to hang a marker on, because the script has not started. That is not a marker
 problem but a run-control one — the operator's own "live processing that can be
 manually suspended and restarted".
+
+### AE. A play within a play: two sets of didascalies, and only one of them is heard
+
+The operator, on seeing the stage directions typed: *"This show is a bit complex with
+the didascalies, because they are staging a play within the play. Some of the
+directions are from Hécube by Euripides, some are in Hécube pas Hécube, the actual play
+by Tiago Rodrigues."* And then, decisively: *"The didascalie read from Euripides are
+actually spoken out loud."*
+
+So one script carries two kinds of stage direction that behave **oppositely**:
+
+- **Rodrigues'** — `Nadia enfile son manteau`, `Hécube apparaît.`, `Pause.` — describe
+  what the company does. Nobody voices them.
+- **Euripides'**, quoted in guillemets — `« Polymestor s'avance. »`, `« Arrive, par la
+  droite, Agamemnon. »` — are read aloud by Séphora, whose entry in the cast list is
+  literally `SÉPHORA, lit les didascalies`.
+
+Checked against both recordings before believing it: the quoted directions score a mean
+0.47 against the audio and the unquoted ones about 0.30, with `Hécube apparaît.` the one
+clean never-heard at 0.08 and 0.00. Consistent with the guillemet rule and nowhere near
+decisive — which is precisely the argument for a `spoken` field the operator sets rather
+than a heuristic that guesses. The guillemets propose; the human disposes. Of 21
+directions: 8 read aloud, 13 unvoiced.
+
+**One predicate, two long-standing problems.** `matchable = !cut && spoken` finally
+retires the pending item "cut lines still compete in the matcher". A cut line and an
+unvoiced stage direction are the same situation seen twice: text on the operator's page
+that will never come out of a loudspeaker, and every moment the matcher spends offering
+it as a candidate is a moment it can be wrong for free. Spans now step over both, which
+is also physically right — nobody paused while the direction went unread.
+
+**Holds need somewhere to stand.** An unvoiced line is never matched, so the position
+steps over it and a hold on it could never fire. Fixed by parking: when the line just
+heard is followed by an unvoiced hold, move onto it. The line before the music was
+heard, so the music is *now*.
+
+**The pre-show.** *"The opening music actually went on for much longer, as soon as we
+opened doors and until the play started with 'Silence !'"* — so the script gets a line
+before its first line, `L-0000`, `kind: stage`, `hold: music`. Numbered zero so every
+existing id keeps its meaning, which is this morning's cue-drift lesson applied. Night
+16 then holds through the whole overture and takes its first fix at 95.5 s on
+`Silence, mes amies` — **zero losses in the first 200 seconds**, and 47 s of lost time
+saved across the run.
+
+Night 17 first went wrong here in an instructive way: pre-show music moved the position
+57 lines on two sightings and held it wrong for twenty seconds. The jump path is charged
+coarsely on purpose, because it also carries ordinary overshoots — but *during a hold
+there are no ordinary overshoots*. The script has declared that what is coming out of
+the speakers is not the play, so any proposal to move is a claim about somewhere else
+and is charged at the finer rate. One conditional, no new knob, and night 17's first fix
+becomes line 1.
+
+**Where the day ends,** on the operator's prepped script with every guard in place:
+
+| | night 16 | night 17 |
+|---|---|---|
+| 6-line window accuracy | **93 %** | **96 %** |
+| p90 position error | 2 lines | 1 line |
+| jumps ≥ 100 lines | 0 | 0 |
+| time lost | 241 s | 288 s |
+
+Yesterday morning, on the raw import: 90 % and 92 %, p90 4 and 2 lines, **14 and 15**
+jumps over a hundred lines, 310 s and 277 s lost.

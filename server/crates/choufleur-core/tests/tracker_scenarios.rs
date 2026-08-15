@@ -78,6 +78,7 @@ fn toy_script() -> Script {
             .iter()
             .enumerate()
             .map(|(i, (scene, ch, text, lm))| ScriptLine {
+                spoken: None,
                 cut: false,
                 kind: LineKind::Dialogue,
                 hold: None,
@@ -742,6 +743,7 @@ fn long_script(n: usize) -> Script {
     assert!(n * PER_LINE <= 14 * 6 * 14 * 6, "fixture would repeat a word");
     let lines: Vec<ScriptLine> = (0..n)
         .map(|i| ScriptLine {
+            spoken: None,
             cut: false,
             kind: LineKind::Dialogue,
             hold: None,
@@ -941,5 +943,64 @@ fn without_the_marker_the_same_music_loses_the_show() {
     assert!(
         tracker.confidence() < before,
         "unmarked, the music is read as the show having left us behind"
+    );
+}
+
+#[test]
+fn a_stage_direction_nobody_says_is_never_offered_as_a_match() {
+    // *Hécube, pas Hécube* stages a play within a play, so its didascalies come from
+    // two works and behave oppositely: Rodrigues' own are never voiced, while
+    // Euripides' — quoted in guillemets — are read aloud by Séphora as part of the
+    // performance. One flag, both directions, stated per line.
+    let mut script = toy_script();
+    script.lines[2].kind = LineKind::Stage;
+    script.lines[2].text = "Nadia enfile son manteau, aidée par d'autres comédiens.".into();
+    script.lines[2].spoken = Some(false);
+    script.lines[6].kind = LineKind::Stage;
+    script.lines[6].spoken = Some(true); // read aloud, so still matchable
+    // Line 3 is "Oui." in the toy script, and a one-word segment is weak evidence that
+    // may only confirm the very next line — which would make this test measure that
+    // rule instead of this one.
+    script.lines[3].text = "Oui, je comprends très bien ce que tu veux dire.".into();
+    let prepared = prepared(&script);
+
+    assert!(!prepared.lines[2].matchable, "unvoiced direction is invisible to the matcher");
+    assert!(prepared.lines[6].matchable, "a direction that is read aloud is not");
+
+    let mut tracker = Tracker::new(&prepared, TrackerConfig::default());
+    let mut segs = SegBuilder::new();
+    tracker.update(&segs.say(Some(A), &script.lines[0].text, 3.0));
+    tracker.update(&segs.say(Some(B), &script.lines[1].text, 3.0));
+    // The company goes straight from line 1 to line 3 — nobody reads the direction out.
+    let events = tracker.update(&segs.say(Some(B), &script.lines[3].text, 2.0));
+    assert_eq!(
+        position_of(&events).map(|(i, ..)| i),
+        Some(3),
+        "the span steps over the direction rather than stalling on it"
+    );
+
+    // And it can never be *reached*, however much the text happens to resemble it.
+    let events = tracker.update(&segs.say(Some(A), &script.lines[2].text, 3.0));
+    assert_ne!(position_of(&events).map(|(i, ..)| i), Some(2));
+}
+
+#[test]
+fn a_cut_line_no_longer_competes_for_the_match() {
+    // Marked, still shown to the operator, and struck from the production. Until now
+    // it was also still a candidate — text the audience will never hear, offered to
+    // the matcher for the whole run.
+    let mut script = toy_script();
+    script.lines[2].cut = true;
+    let prepared = prepared(&script);
+    assert!(!prepared.lines[2].matchable);
+
+    let mut tracker = Tracker::new(&prepared, TrackerConfig::default());
+    let mut segs = SegBuilder::new();
+    tracker.update(&segs.say(Some(A), &script.lines[0].text, 3.0));
+    let events = tracker.update(&segs.say(Some(A), &script.lines[2].text, 3.0));
+    assert_ne!(
+        position_of(&events).map(|(i, ..)| i),
+        Some(2),
+        "a cut line cannot be matched even when its exact text is heard"
     );
 }

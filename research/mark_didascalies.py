@@ -129,7 +129,7 @@ def main() -> None:
         print(f"{len(italics)} italic paragraphs are stage directions "
               f"({len(italic_paragraphs(args.docx)) - len(italics)} were speaker attributions)")
 
-    stage = holds = 0
+    stage = holds = spoken = 0
     report: list[tuple] = []
     for line in lines:
         folded = fold(line["text"])
@@ -141,18 +141,32 @@ def main() -> None:
             continue
         line["kind"] = "stage"
         stage += 1
+        # Whose stage direction is it? *Hécube, pas Hécube* stages a play within a
+        # play, so its didascalies come from two works, and the two behave oppositely.
+        # Rodrigues' own describe what the company does and nobody voices them.
+        # Euripides', quoted in guillemets, are read aloud by Séphora as part of the
+        # performance — confirmed by the operator, and the reason `spoken` is written
+        # out explicitly on every direction rather than left to a default: the operator
+        # has to be able to see which way round each one is, and flip it.
+        # Containing the quotation, not opening with it: `Le Chœur : « Tu n'as pas
+        # encore subi l'expiation… »` is the Chorus speaking, and testing the first
+        # character filed it as unvoiced.
+        line["spoken"] = any(q in line["text"] for q in ("«", "“", '"'))
+        spoken += line["spoken"]
         hold = infer_hold(line["text"])
         if hold:
             line["hold"] = hold
             holds += 1
         else:
             line.pop("hold", None)
-        report.append((line["id"], hold, line["text"]))
+        report.append((line["id"], hold, line["spoken"], line["text"]))
 
-    print(f"\n{stage} lines marked as stage directions, {holds} of them holding tracking\n")
-    for lid, hold, text in report:
+    print(f"\n{stage} stage directions: {spoken} read aloud (Euripides, in guillemets), "
+          f"{stage - spoken} unvoiced (Rodrigues); {holds} hold tracking\n")
+    for lid, hold, is_spoken, text in report:
         tag = f"hold:{hold}" if hold else "—"
-        print(f"  {lid}  {tag:<14}{text[:74]!r}")
+        voice = "read aloud" if is_spoken else "unvoiced"
+        print(f"  {lid}  {tag:<14}{voice:<12}{text[:62]!r}")
 
     if args.write:
         args.script.write_text(json.dumps(script, ensure_ascii=False, indent=1) + "\n")

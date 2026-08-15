@@ -824,6 +824,19 @@ impl<'a> Tracker<'a> {
         let from = self.confidence;
         let advanced = best.span.last() > self.position;
         self.position = best.span.last();
+        // Step onto a hold the moment the line before it has been heard.
+        //
+        // A production stage direction is never matched — nobody says "Chorégraphie
+        // sur la musique d'Otis Redding" out loud — so the position would step
+        // straight over it and the hold would never fire at all. But the line before
+        // it *was* just heard, which means the music is now. Parking on it is what
+        // stops the next two minutes of transcribed soul record counting against the
+        // position.
+        if let Some(next) = self.script.lines.get(self.position + 1) {
+            if next.hold.is_some() && !next.matchable {
+                self.position += 1;
+            }
+        }
         if advanced {
             self.stalled_speech_s = 0.0;
         } else {
@@ -951,7 +964,18 @@ impl<'a> Tracker<'a> {
     /// Agreeing sightings a jump of `distance` lines must collect. See
     /// `jump_extra_sighting_lines`.
     fn jump_sightings_needed(&self, distance: usize) -> usize {
-        let per = if self.cfg.jump_extra_sighting_lines > 0 {
+        // While holding, every move is a relocation rather than an overshoot.
+        //
+        // The coarse jump rate exists because the jump path also carries ordinary
+        // overshoots — a cut, a dropped exchange — and those deserve to be cheap. A
+        // hold says there is no ordinary anything happening: the script has declared
+        // that what is coming out of the speakers is music or noise, so a proposal to
+        // move at all is a claim about somewhere else and is charged at the finer
+        // rate. Observed on night 17, where pre-show music moved the position 57 lines
+        // for two sightings and held it wrong for twenty seconds.
+        let per = if self.holding {
+            self.cfg.challenger_extra_hit_lines
+        } else if self.cfg.jump_extra_sighting_lines > 0 {
             self.cfg.jump_extra_sighting_lines
         } else {
             self.cfg.challenger_extra_hit_lines

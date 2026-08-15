@@ -116,6 +116,22 @@ pub struct ScriptLine {
     /// Dialogue, or a stage direction. See [`LineKind`].
     #[serde(default, skip_serializing_if = "is_dialogue")]
     pub kind: LineKind,
+    /// Whether anyone says this out loud. `None` means "as the kind implies".
+    ///
+    /// Stated, never inferred, because the two are genuinely independent and this
+    /// production proves it. *Hécube, pas Hécube* stages a play within a play, so its
+    /// stage directions come from two works: Tiago Rodrigues' own, which describe what
+    /// the company does and nobody voices, and Euripides', quoted in guillemets, which
+    /// Séphora reads aloud as part of the performance — `SÉPHORA, lit les didascalies`
+    /// is a line in the cast list.
+    ///
+    /// Checked against both recordings before deciding: the quoted directions score a
+    /// mean 0.47 against the audio and the unquoted ones about 0.30, with
+    /// `Hécube apparaît.` the one clean never-heard at 0.08 and 0.00. Suggestive,
+    /// consistent with the guillemet rule, and nowhere near decisive — which is the
+    /// argument for a field the operator sets rather than a heuristic that guesses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spoken: Option<bool>,
     /// Tracking suspends here until something further on is heard. See [`Hold`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hold: Option<Hold>,
@@ -204,6 +220,16 @@ pub struct PreparedLine {
     pub cut: bool,
     /// Dialogue or didascalie; see [`LineKind`].
     pub kind: LineKind,
+    /// Someone says this out loud, so the matcher may look for it. Resolved from
+    /// `ScriptLine::spoken`, or from the kind when that is unset.
+    pub spoken: bool,
+    /// Struck *or* unvoiced: either way the matcher must not look for it here.
+    ///
+    /// One predicate, because they are one situation. A cut line and a production
+    /// stage direction are both text on the operator's page that will never come out
+    /// of a loudspeaker, and every moment the matcher spends offering them as
+    /// candidates is a moment it can be wrong for free.
+    pub matchable: bool,
     /// Tracking suspends on this line; see [`Hold`].
     pub hold: Option<Hold>,
     pub hold_seconds: Option<f64>,
@@ -345,6 +371,9 @@ impl PreparedScript {
                 id: line.id.clone(),
                 cut: line.cut,
                 kind: line.kind,
+                spoken: line.spoken.unwrap_or(matches!(line.kind, LineKind::Dialogue)),
+                matchable: !line.cut
+                    && line.spoken.unwrap_or(matches!(line.kind, LineKind::Dialogue)),
                 hold: line.hold,
                 hold_seconds: line.hold_seconds,
                 text_key,
@@ -409,6 +438,11 @@ impl PreparedScript {
         let max_span = max_span.clamp(1, MAX_SPAN);
         let last_start = (from + window).min(self.lines.len() - 1);
         for start in from..=last_start {
+            // Cut, or nobody says it: invisible to the matcher, though the operator
+            // still sees it on the page. See `PreparedLine::matchable`.
+            if !self.lines[start].matchable {
+                continue;
+            }
             if let Some(c) = character {
                 if self.lines[start].character != c {
                     continue;
@@ -435,14 +469,17 @@ impl PreparedScript {
 
     fn next_member(&self, after: usize, start: usize, character: Option<&str>) -> Option<usize> {
         match character {
-            // Zone channel: strictly adjacent lines, any speaker.
-            None => (after + 1 < self.lines.len()).then_some(after + 1),
+            // Zone channel: the next line the audience actually hears. A production
+            // stage direction sitting between two spoken lines is not a gap in the
+            // dialogue — nobody paused — so the span steps straight over it.
+            None => ((after + 1)..self.lines.len()).find(|&i| self.lines[i].matchable),
             // Per-character channel: this character's next line, allowing a short
             // interjection on another channel to sit between them — but only a
             // short one, or a span could reach halfway across the scene.
             Some(c) => {
                 let limit = (start + MAX_SPAN * 2).min(self.lines.len().saturating_sub(1));
-                ((after + 1)..=limit).find(|&i| self.lines[i].character == c)
+                ((after + 1)..=limit)
+                    .find(|&i| self.lines[i].matchable && self.lines[i].character == c)
             }
         }
     }
@@ -452,11 +489,16 @@ impl PreparedScript {
     pub fn landmark_spans_into(&self, from: usize, horizon: usize, out: &mut Vec<Span>) {
         out.clear();
         for &l in self.landmarks_ahead(from, horizon) {
+            if !self.lines[l].matchable {
+                continue;
+            }
             let mut span = Span::single(l);
             out.push(span);
-            if l + 1 < self.lines.len() && self.lines[l + 1].scene == self.lines[l].scene {
-                span.push(l + 1);
-                out.push(span);
+            if let Some(next) = self.next_member(l, l, None) {
+                if self.lines[next].scene == self.lines[l].scene {
+                    span.push(next);
+                    out.push(span);
+                }
             }
         }
     }
@@ -564,6 +606,7 @@ mod tests {
         ScriptLine {
             cut: false,
             kind: LineKind::Dialogue,
+            spoken: None,
             hold: None,
             hold_seconds: None,
             id: id.into(),
