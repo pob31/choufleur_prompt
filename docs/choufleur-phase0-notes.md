@@ -1474,3 +1474,34 @@ of finals on Hécube 16, 17 and Lazzi, and the `RepetitionLoop` filter catches a
 one per night; the survivor is Hécube's genuinely repeated "la douleur qui succède à la
 douleur". Lazzi's are the interesting ones — "La la la", "Ha ha ha", "toux toux toux",
 "Duh-duh-duh" — non-speech being written down, all filtered.
+### AC. A cue sheet belongs to one document, and nobody tells you when it stops
+
+The operator prepped the script by hand — fixing extraction errors, and putting back
+the speaker labels the PDF had turned into dialogue where a line was struck — then
+reported that "some of the indices are out of whack".
+
+They were, and not in the way either of us expected. `cues.json` was extracted against
+`script.json` (984 lines) while the prepping happened in `script.prepped.json` (930).
+Against the file in use: **3 cues dangling and 123 pointing at the wrong line.** Only 5
+of 133 were still correct.
+
+The dangling three are the harmless case — they fail loudly. The 123 are the dangerous
+one: the id still resolves, so nothing complains, and the cue simply fires somewhere
+else. The offset is not even constant (+0, +1, +2, +3, +7, then mostly +9 to +12), so
+no amount of eyeballing finds them all.
+
+`research/reanchor_cues.py` moves a cue sheet between two versions of a script by
+**sequence alignment** rather than by best text match. The distinction is the whole
+tool: matching each cue's line against the new script independently sent a cue on
+"Pardon." three hundred lines away, because the word is everywhere and a perfect score
+means nothing. Alignment insists the order is preserved — the one thing that really is
+true of two versions of the same play — so a short ambiguous line is placed by its
+neighbours. Result on Hécube: **127 exact, 0 wrong, 0 dangling, 4 flagged.**
+
+The four flagged keep their old anchor rather than being moved, on the same reasoning:
+a cue that fails in the prep tool in front of a human beats one that fires in the wrong
+place during the show. Three of the four are cues attached to lines the operator
+deleted — two stage directions and a speaker label — and one of them is
+`Chorégraphie sur la musique d'Otis Redding`, which is the music passage that started
+the whole "silence and music must not advance" thread. The place where a cue lost its
+line is exactly the place that wants a marker.
