@@ -286,6 +286,23 @@ pub struct TrackerConfig {
     /// Generous, because a monologue legitimately holds one line for a long time —
     /// the La Reprise documentary monologue has 25-second lines.
     pub stall_to_lost_s: f64,
+    /// **[sweep]** How many times a hold's stated duration it may go on protecting the
+    /// position before normal judgement resumes. 0 disables the cap.
+    ///
+    /// A hold suspends judgement; it must not suspend it *forever*. If the tracker
+    /// enters a hold from a position that was itself wrong — an ordinary overshoot,
+    /// which is all it takes — the hold then suppresses the very decay that would have
+    /// noticed, and the run sits there. Measured on the music at line 481: four minutes
+    /// wrong while the company spoke.
+    ///
+    /// Tied to `hold_seconds` rather than to a fixed ceiling, because only the operator
+    /// knows how long their music runs, and a fixed number would either cut a long
+    /// passage short or protect a mistake for its whole length. Where they have not
+    /// said, nothing is capped — guessing is what this avoids. And the cap does not
+    /// *end* the hold: it stops the hold protecting, so the tracker can decay, admit it
+    /// is lost, and be found again. A company does not hit its music cue to the second,
+    /// so nothing here ends on a timer.
+    pub hold_protect_factor: f64,
     /// **[sweep]** Below this, the best explanation anywhere in the script is not an
     /// explanation, and the segment is treated as saying nothing about where we are.
     ///
@@ -476,6 +493,7 @@ impl Default for TrackerConfig {
             min_relocate_tokens: 4,
             jump_pending_ttl_s: 8.0,
             stall_to_lost_s: 90.0,
+            hold_protect_factor: 2.0,
             noise_floor: 0.0,
             challenger_enabled: true,
             challenger_margin: 0.18,
@@ -541,6 +559,8 @@ pub struct Tracker<'a> {
     incumbent_evidence: f64,
     /// The position currently sits on a line marked `hold`; see `ScriptLine::hold`.
     holding: bool,
+    /// Speech heard since this hold began, for `hold_protect_factor`.
+    held_speech_s: f64,
     /// Best score anywhere in the script for the segment being handled, so that a
     /// segment nothing can explain is recognised as noise rather than as divergence.
     /// See `noise_floor`.
@@ -566,6 +586,7 @@ impl<'a> Tracker<'a> {
             challenger: None,
             incumbent_evidence: 0.0,
             holding: false,
+            held_speech_s: 0.0,
             best_anywhere: 0.0,
             spans: Vec::new(),
             landmark_spans: Vec::new(),
@@ -627,12 +648,8 @@ impl<'a> Tracker<'a> {
         //
         // The hold ends the moment something further on is heard — never on a timer.
         // See `ScriptLine::hold_seconds` for why.
-        self.holding = self
-            .script
-            .lines
-            .get(self.position)
-            .and_then(|l| l.hold)
-            .is_some();
+        let on_hold = self.script.lines.get(self.position).and_then(|l| l.hold);
+        self.holding = on_hold.is_some() && !self.hold_expired();
         // Weak evidence keeps its higher bar; everything else may move the
         // position on `follow_threshold` and report the lower confidence honestly.
         let move_threshold = if weak {
@@ -643,6 +660,12 @@ impl<'a> Tracker<'a> {
 
         // Look at the whole script every time, not only once lost. Cheap, and it
         // is the only way to notice that somewhere else explains this better.
+        // The challenger sleeps during a hold. Tried awake and measured worse: it
+        // escapes a mis-parked hold, which was the hope, but it also fires on the noise
+        // the hold exists to ignore — night 16 went 310 → 746 → 321 and back inside two
+        // minutes, and big moves roughly doubled on both nights. With hold lines no
+        // longer matchable the mis-park it was rescuing us from mostly cannot happen,
+        // so the rescue is not worth the churn.
         if self.cfg.challenger_enabled && !weak && !self.holding {
             if let Some(ev) = self.run_challenger(seg) {
                 events.push(ev);
@@ -824,19 +847,7 @@ impl<'a> Tracker<'a> {
         let from = self.confidence;
         let advanced = best.span.last() > self.position;
         self.position = best.span.last();
-        // Step onto a hold the moment the line before it has been heard.
-        //
-        // A production stage direction is never matched — nobody says "Chorégraphie
-        // sur la musique d'Otis Redding" out loud — so the position would step
-        // straight over it and the hold would never fire at all. But the line before
-        // it *was* just heard, which means the music is now. Parking on it is what
-        // stops the next two minutes of transcribed soul record counting against the
-        // position.
-        if let Some(next) = self.script.lines.get(self.position + 1) {
-            if next.hold.is_some() && !next.matchable {
-                self.position += 1;
-            }
-        }
+
         if advanced {
             self.stalled_speech_s = 0.0;
         } else {
@@ -903,7 +914,35 @@ impl<'a> Tracker<'a> {
         // script at all, and the position we hold is no less likely than it was a
         // moment ago. See `noise_floor`.
         if self.holding {
+            self.held_speech_s += speech_seconds(seg);
             return;
+        }
+        // A hold begins when the script stops being heard, not when the line before it
+        // is heard.
+        //
+        // Parking on the hold as soon as its predecessor matched was wrong twice over,
+        // and the operator caught it: *"when there is a silence/music/ad-lib section
+        // marked after a long paragraph, as soon as there is a bit of hunting for the
+        // next line it tends to skip directly to the silence/music/ad-lib section."*
+        // A long paragraph produces several segments, so one early match on the line
+        // before the music committed the tracker to a hold while the company was still
+        // talking — and the hold then suppressed the very decay that would have noticed.
+        // Measured at line 481: 255 s and 248 s wrong, on the two nights.
+        //
+        // Here instead: the line before the music was heard clearly, and now nothing
+        // can be placed. That is what a hold *is*. Requiring `Line` keeps it from
+        // firing out of a position we do not trust — entering a hold is a commitment to
+        // stop listening for a while, and a guess is a bad thing to commit to.
+        if self.confidence >= Confidence::Line {
+            if let Some(next) = self.script.lines.get(self.position + 1) {
+                if next.hold.is_some() && !next.matchable {
+                    self.position += 1;
+                    self.holding = true;
+                    self.held_speech_s = 0.0;
+                    events.push(self.position_event(0.0, PositionCause::Follow));
+                    return;
+                }
+            }
         }
         if self.cfg.noise_floor > 0.0 && best_local.max(self.best_anywhere) < self.cfg.noise_floor {
             return;
@@ -929,6 +968,23 @@ impl<'a> Tracker<'a> {
             return;
         };
         self.demote(target, events);
+    }
+
+    /// Has this hold been protecting the position for longer than the operator said it
+    /// would last? See `hold_protect_factor`.
+    fn hold_expired(&self) -> bool {
+        if self.cfg.hold_protect_factor <= 0.0 {
+            return false;
+        }
+        let Some(stated) = self
+            .script
+            .lines
+            .get(self.position)
+            .and_then(|l| l.hold_seconds)
+        else {
+            return false; // they did not say, so nothing is assumed
+        };
+        self.held_speech_s > stated * self.cfg.hold_protect_factor
     }
 
     /// Lower confidence to `target` if it is currently higher. Never raises —

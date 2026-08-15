@@ -386,7 +386,21 @@ impl PreparedScript {
                 kind: line.kind,
                 flag: line.flag,
                 spoken: line.spoken.unwrap_or(matches!(line.kind, LineKind::Dialogue)),
+                // A hold is never matchable, whatever it was typed as.
+                //
+                // A hold declares that the script cannot predict what is about to come
+                // out of the speakers. Offering it as a candidate contradicts that, and
+                // the markers an operator inserts are short — "Musique", "Silence." —
+                // which makes them the worst kind of candidate. Observed: a one-word
+                // `Musique` line typed as dialogue matched at 0.84 on a segment merely
+                // containing the word, in a play whose subject is a boy who loves Otis
+                // Redding, and parked the tracker on a music hold for 110 seconds while
+                // the company was speaking.
+                //
+                // So the position reaches a hold by being walked into it and by no
+                // other route — see `Tracker::accept`.
                 matchable: !line.cut
+                    && line.hold.is_none()
                     && line.spoken.unwrap_or(matches!(line.kind, LineKind::Dialogue)),
                 hold: line.hold,
                 hold_seconds: line.hold_seconds,
