@@ -1629,3 +1629,36 @@ becomes line 1.
 
 Yesterday morning, on the raw import: 90 % and 92 %, p90 4 and 2 lines, **14 and 15**
 jumps over a hundred lines, 310 s and 277 s lost.
+
+### AF. The import dropped twenty lines, and none of them announced itself
+
+The operator, watching a run: *"I noticed a line that was removed beginning of scene
+3."* It was Elsa apologising for being late — the line `Pas de problème.` answers.
+
+Not a deletion. Absent from every backup including the morning's, absent from the
+removed-lines sidecar, and `L-0293` in the prepped script holds an entirely different
+line, because the two documents' ids diverged long ago. It went in the original import
+and had been missing all day, under the eye of everybody who looked at that script.
+
+So the useful move was not to restore the line that was noticed. Aligning the whole
+prepped script against the source and asking which source lines have **no counterpart
+and were not merged into a neighbour** — merging being what the operator did
+deliberately this afternoon, so counting it as loss would bury the real findings —
+turns up **twenty**.
+
+The shape of that set is the evidence. All twenty are isolated singles: **not one run of
+three or more.** A cut removes a passage; an importer drops a line here and a line
+there. Three are stage directions, including `Chorégraphie sur la musique d'Otis
+Redding` — the music passage that started the entire holds thread, and which we had been
+discussing all day without noticing it had been silently dropped from the script we were
+discussing it in. Two more carry visible importer damage, a speaker name glued to the
+following text: `NADIAParce que les médecins m'ont dit…`, `LOÏCQuatorze qui en
+paraissent quinze`.
+
+Two things follow. The obvious one is that `docx_to_script.py` needs a completeness
+check — every source paragraph either becomes a line, is deliberately merged, or is
+reported — because an importer that loses 2 % of a script and says nothing is worse than
+one that refuses to run. The less obvious one is that **a script is not trustworthy
+because somebody has read it**: this one had been read closely enough that afternoon to
+have its cuts applied, its didascalies typed and its speakers corrected, and the gaps
+still survived, because a missing line looks exactly like a line that was never there.
