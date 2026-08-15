@@ -1218,3 +1218,50 @@ Alongside it, the operator's verdict after an hour of watching: smooth, never to
 lost, and **the position never left the visible page**. That is the PRD requirement in
 its original words — the last spoken line in the middle third of what is displayed —
 reported from the chair rather than computed from a trace.
+
+### Y. The length penalty was the biggest single win, and "latency" was not latency
+
+Reported from the chair: *"longer text blocks at faster speed give the tracking
+mechanism difficulties. Shouting too. I can see the words are not that bad in the
+transcript, but it's not following."*
+
+That is a description of `overlap_exp`. The matcher multiplies its score by an overlap
+term that penalises a segment for carrying more words than the line it matches, and a
+long fast speech produces exactly that — a segment far longer than any single line, so
+the score collapses however well the words agree. Shouting compounds it, because the
+voice detector holds the run open longer.
+
+Swept on both nights, time spent lost:
+
+| exponent | night 16 | night 17 | losses | lines reached |
+| --- | --- | --- | --- | --- |
+| 0.50 | 560 s | 778 s | 22 / 21 | 669 / 647 |
+| **0.35** | **253 s** | **153 s** | **10 / 11** | **691 / 686** |
+| 0.25 | 124 s | 297 s | 8 / 9 | 692 / 667 |
+| 0.15 | 195 s | 117 s | 11 / 8 | 668 / 667 |
+
+0.35 rather than the lowest number: best across both nights on lines reached, and all
+21 tracker scenarios still pass. **At 0 they do not** — which is why this dial sat
+untouched all day. Three proxy measurements said the term cost accuracy and the
+scenarios said removing it cost correctness; neither could settle it without a corpus,
+and two full nights could.
+
+Ruled out first, both worth recording as negatives: it is **not** the span limit (only
+2 % of rejected segments need more than `max_span` = 3 lines, so segments are not
+outrunning spans, they are being scored down), and **not** the engine falling behind
+(no backlog reported).
+
+**Then: "latency has dropped noticeably."** It had not. Median time between line
+changes is 4.9 s before and 5.0 s after; p90 identical; the pipeline still takes its
+usual ~600 ms. What changed is where the time is spent:
+
+| | word | line | block | lost |
+| --- | --- | --- | --- | --- |
+| before | 9.3 % | 32.4 % | 48.2 % | **10.1 %** |
+| after | 10.3 % | **42.2 %** | 43.1 % | **4.4 %** |
+
+**Latency from the operator's chair is time-without-a-trustworthy-position, not
+milliseconds through the pipeline.** Being lost or uncertain is what feels like lag,
+because the page holds still while the room moves on. The lever was in the matcher, and
+chasing it as a performance problem — smaller model, shorter interims, more threads —
+would have spent the effort in the wrong place and made recognition worse on the way.
