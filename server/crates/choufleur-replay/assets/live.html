@@ -441,6 +441,60 @@
     cursor: pointer;
   }
   #follow { margin-left: .6em; }
+  /* Naming your own targets. Prep only: what a mark means is a decision about the
+     show, not something to change while running it. */
+  #targets { display: none; margin-left: .6em; }
+  body[data-prep="on"] #targets {
+    display: inline-block; border: 1px solid var(--dimmer); background: none;
+    color: var(--dim); border-radius: 999px; padding: .3em .9em; font: inherit;
+    cursor: pointer;
+  }
+  #targets.on { border-color: var(--now); color: var(--now); }
+  #palette {
+    display: none; position: absolute; z-index: 7; right: 1.2em; bottom: 3.4em;
+    width: 24em; padding: .8em .9em; border-radius: 5px;
+    background: #14171c; border: 1px solid var(--edge);
+    box-shadow: 0 10px 40px rgba(0,0,0,.6);
+  }
+  body[data-palette="on"] #palette { display: block; }
+  #palette h4 {
+    margin: 0 0 .6em; font: 600 .64em/1.4 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .12em; text-transform: uppercase; color: var(--dimmer);
+  }
+  .target { display: flex; align-items: center; gap: .4em; margin-bottom: .45em; }
+  .target input {
+    flex: 1 1 auto; min-width: 0; background: #0f1114; color: var(--fg);
+    border: 1px solid var(--dimmer); border-radius: 3px; padding: .25em .45em;
+    font: 400 .84em/1.4 ui-sans-serif, system-ui, sans-serif;
+  }
+  .target input:focus { outline: none; border-color: var(--now); }
+  .swatches { display: flex; gap: .18em; }
+  .swatches button {
+    width: 1.05em; height: 1.05em; border-radius: 50%; border: 1px solid transparent;
+    cursor: pointer; padding: 0;
+  }
+  .swatches button.on { border-color: var(--fg); }
+  .target .drop {
+    border: 1px solid var(--dimmer); background: none; color: var(--dimmer);
+    border-radius: 999px; padding: .1em .5em; cursor: pointer;
+    font: 400 .78em/1.3 ui-sans-serif, system-ui, sans-serif;
+  }
+  .target .drop:hover { border-color: var(--lost); color: var(--lost); }
+  #palette .foot {
+    display: flex; gap: .4em; align-items: center; margin-top: .7em;
+    border-top: 1px solid var(--edge); padding-top: .6em;
+  }
+  #palette .foot button {
+    border: 1px solid var(--dimmer); background: none; color: var(--dim);
+    border-radius: 999px; padding: .25em .8em; cursor: pointer;
+    font: 400 .84em/1.4 ui-sans-serif, system-ui, sans-serif;
+  }
+  #palette .foot .save { margin-left: auto; border-color: var(--now); color: var(--now); }
+  #palette .note {
+    font: 400 .76em/1.45 ui-sans-serif, system-ui, sans-serif; color: var(--dimmer);
+    margin-top: .5em;
+  }
+
   #flags { display: flex; align-items: center; gap: .25em; margin-left: .6em; }
   #flags button {
     border: 1px solid var(--dimmer); background: none; color: var(--dim);
@@ -489,6 +543,7 @@
   <div id="heard"><div class="head">heard<button id="copy">copy</button></div><div id="heardlog"></div></div>
   <svg id="leads"></svg>
   <div id="rail"></div>
+  <div id="palette"></div>
   <div id="view">
       <div id="hint">tap the line being spoken to put it back on track</div>
     <div id="scroller"><div id="lines"></div></div>
@@ -502,6 +557,7 @@
     <span id="clock">0:00</span>
     <span id="gap">—</span>
     <input id="find" placeholder="find a line, or a number" spellcheck="false">
+    <button id="targets" title="what this cue list drives">targets</button>
     <span id="flags">
       <button id="flagprev" title="previous flag">&#9664;</button>
       <button id="flag" title="flag the current line (alt-click any line)">&#9873;</button>
@@ -869,14 +925,17 @@
       if (!r.ok) return;
       cues = await r.json();
     } catch { return; }
-    // Paint the marks and cards from the list, so a department that does not use
-    // these colours is not stuck with them.
-    const rules = cueCats
+    paintCategoryRules();
+    renderRail();
+  }
+
+  // Paint the marks and cards from the list, so a department that does not use these
+  // colours is not stuck with them.
+  function paintCategoryRules() {
+    document.getElementById('catstyle').textContent = cueCats
       .map((c) => `.cue[data-colour="${c.key}"] { border-left-color: ${c.swatch}; }\n`
                 + `mark.trig[data-colour="${c.key}"] { border-bottom-color: ${c.swatch}; }`)
       .join('\n');
-    document.getElementById('catstyle').textContent = rules;
-    renderRail();
   }
 
   function renderRail() {
@@ -1145,6 +1204,123 @@
       path.classList.toggle('now', cues[j.k].lineIndex === current);
     });
   }
+
+  // ---- the targets a cue list drives ------------------------------------------
+  //
+  // "A colour palette for the various categories of actions is fine. The user should
+  // be able to pick their own."
+  //
+  // A category's *key* is never edited here. A cue stores its category by key, so
+  // renaming "QLab" to "QLab 5" must not orphan seventy cues — the label and the
+  // colour are the operator's to change freely, the key is bookkeeping.
+  //
+  // Chosen from a palette rather than a colour input. These are read at a glance, in
+  // the dark, next to each other, and an unconstrained picker mostly produces colours
+  // that are indistinguishable at a 3-pixel rule or invisible on this background.
+  const PALETTE = [
+    '#4d7ea8', '#8566ad', '#5f9e6a', '#c8a33a', '#c07a3a', '#c0564a',
+    '#4aa3a0', '#a8628c', '#8a9440', '#7a8088',
+  ];
+  const $palette = document.getElementById('palette');
+  const $targets = document.getElementById('targets');
+  let draft = null;
+
+  const slug = (s) =>
+    s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+  function openTargets() {
+    draft = cueCats.map((c) => ({ ...c }));
+    document.body.dataset.palette = 'on';
+    $targets.classList.add('on');
+    paintTargets();
+  }
+  function closeTargets() {
+    draft = null;
+    document.body.dataset.palette = 'off';
+    $targets.classList.remove('on');
+  }
+
+  function paintTargets() {
+    $palette.textContent = '';
+    const h = document.createElement('h4');
+    h.textContent = 'what this cue list drives';
+    $palette.appendChild(h);
+    draft.forEach((cat, n) => {
+      const row = document.createElement('div');
+      row.className = 'target';
+      const name = document.createElement('input');
+      name.value = cat.label;
+      name.placeholder = 'QLab, Eos, console, followspot…';
+      name.oninput = () => { cat.label = name.value; };
+      const sw = document.createElement('div');
+      sw.className = 'swatches';
+      PALETTE.forEach((hex) => {
+        const b = document.createElement('button');
+        b.style.background = hex;
+        b.classList.toggle('on', cat.swatch === hex);
+        b.title = hex;
+        b.onclick = (e) => {
+          e.preventDefault();
+          cat.swatch = hex;
+          [...sw.children].forEach((c, i) => c.classList.toggle('on', PALETTE[i] === hex));
+        };
+        sw.appendChild(b);
+      });
+      const drop = document.createElement('button');
+      drop.className = 'drop';
+      drop.textContent = 'remove';
+      drop.onclick = (e) => {
+        e.preventDefault();
+        draft.splice(n, 1);
+        paintTargets();
+      };
+      row.append(name, sw, drop);
+      $palette.appendChild(row);
+    });
+
+    const foot = document.createElement('div');
+    foot.className = 'foot';
+    const add = document.createElement('button');
+    add.textContent = 'add a target';
+    add.onclick = (e) => {
+      e.preventDefault();
+      draft.push({ key: '', label: '', swatch: PALETTE[draft.length % PALETTE.length] });
+      paintTargets();
+    };
+    const cancel = document.createElement('button');
+    cancel.textContent = 'cancel';
+    cancel.onclick = (e) => { e.preventDefault(); closeTargets(); };
+    const save = document.createElement('button');
+    save.className = 'save';
+    save.textContent = 'save';
+    save.onclick = (e) => {
+      e.preventDefault();
+      // A new target earns its key from its name; an existing one keeps the key it
+      // has, whatever it is now called.
+      const taken = new Set();
+      const cats = draft
+        .filter((c) => c.label.trim() || c.key)
+        .map((c) => {
+          let key = c.key || slug(c.label) || 'target';
+          while (taken.has(key)) key += '-2';
+          taken.add(key);
+          return { key, label: c.label.trim() || key, swatch: c.swatch };
+        });
+      ws.send(JSON.stringify({ type: 'edit_categories', categories: cats }));
+      closeTargets();
+    };
+    foot.append(add, cancel, save);
+    $palette.appendChild(foot);
+
+    const note = document.createElement('div');
+    note.className = 'note';
+    note.textContent = 'Renaming is safe — cues stay attached. Removing a target leaves '
+      + 'its cues uncoloured rather than deleting them.';
+    $palette.appendChild(note);
+  }
+
+  $targets.addEventListener('click', () => (draft ? closeTargets() : openTargets()));
 
   // ---- editing a cue ----------------------------------------------------------
   //
@@ -1948,7 +2124,7 @@
   window.addEventListener('resize', () => { lineTops = null; replace(); });
 
   // What this page was written against. See PROTOCOL_VERSION in live.rs.
-  const PROTOCOL = 4;
+  const PROTOCOL = 5;
   // Whether this is a reconnection rather than the first join.
   let joined = false;
 
@@ -1995,6 +2171,7 @@
         replace();
       } else if (m.type === 'cues_changed') {
         cues = m.cues;
+        if (m.list) { cueCats = m.list.categories || []; paintCategoryRules(); }
         renderRail();
         // A cue added from a line opens straight away: an empty card in the rail is
         // not a cue, it is a promise to type one, and it should not be possible to

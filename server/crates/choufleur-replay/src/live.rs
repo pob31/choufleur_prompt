@@ -35,7 +35,7 @@ use crate::formats::SegmentRecord;
 ///
 /// So the page carries the version it was written against and says so on screen when
 /// they disagree. A silent no-op is the one failure mode worth spending a field on.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// One script line, as the client needs it. Sent once, in bulk.
 #[derive(Clone, Serialize)]
@@ -217,7 +217,14 @@ pub enum Update {
     /// which renumbers nothing but invalidates every index the page was holding. At
     /// 133 cues the whole list is a few kilobytes and arrives once per edit — a delta
     /// protocol here would be three more message types and a class of bug for no gain.
-    CuesChanged { cues: Vec<CueView> },
+    CuesChanged {
+        cues: Vec<CueView>,
+        /// Sent alongside, always. The categories decide how every cue is painted, so
+        /// a client holding one and not the other would draw the sheet in colours it
+        /// no longer uses — and the two change together often enough that a separate
+        /// message would only be a way for them to disagree.
+        list: CueList,
+    },
     /// A line was flagged or unflagged.
     ///
     /// Its own message rather than a field on `LineEdited`, because it is the one

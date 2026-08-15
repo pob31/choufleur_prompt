@@ -273,7 +273,26 @@ fn load_cues(path: &Path, lines: &[LineView]) -> Vec<CueView> {
         .enumerate()
         .map(|(i, l)| (l.id.as_str(), i))
         .collect();
-    let means = doc.get("colourMeans").cloned().unwrap_or_default();
+    // What a colour means, from the categories if the operator has defined them and
+    // from the PDF's own key otherwise. Categories win: once somebody has said their
+    // targets are a desk and a QLab 5, the highlighter legend is history — and
+    // renaming a target has to change what the cards say or the rename did nothing.
+    let list = load_cue_list(&doc);
+    let means: std::collections::HashMap<String, String> = if list.categories.is_empty() {
+        doc.get("colourMeans")
+            .and_then(|m| m.as_object())
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        list.categories
+            .iter()
+            .map(|c| (c.key.clone(), c.label.clone()))
+            .collect()
+    };
     let mut out = Vec::new();
     let mut dangling: Vec<String> = Vec::new();
     let empty = Vec::new();
@@ -348,11 +367,7 @@ fn load_cues(path: &Path, lines: &[LineView]) -> Vec<CueView> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("text")
                 .to_string(),
-            means: colour
-                .as_deref()
-                .and_then(|c| means.get(c))
-                .and_then(|m| m.as_str())
-                .map(str::to_string),
+            means: colour.as_deref().and_then(|c| means.get(c)).cloned(),
             colour,
             needs_review: c
                 .get("needsReview")
@@ -448,6 +463,42 @@ fn write_cue(
         // A cue the operator has been through is a cue somebody has checked.
         c.remove("needsReview");
     }
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// Replace the list's categories, keeping the cues that use them working.
+///
+/// Written as an explicit `categories` array, which then takes precedence over the
+/// colours-in-use derivation for good — the moment an operator has said what their
+/// targets are, guessing from a PDF's highlighter marks is no longer the better answer.
+///
+/// Keys are never rewritten here. A cue stores its category by key, so renaming
+/// "QLab" to "QLab 5" must not orphan seventy cues; only the label and the swatch are
+/// the operator's to change freely.
+fn write_categories(path: &Path, cats: &[serde_json::Value]) -> Result<()> {
+    let raw = std::fs::read_to_string(path)?;
+    let mut doc: serde_json::Value = serde_json::from_str(&raw)?;
+    let obj = doc.as_object_mut().context("cue sheet is not an object")?;
+    let clean: Vec<serde_json::Value> = cats
+        .iter()
+        .filter_map(|c| {
+            let key = c.get("key")?.as_str()?.trim();
+            if key.is_empty() {
+                return None;
+            }
+            let label = c.get("label").and_then(|l| l.as_str()).unwrap_or(key).trim();
+            let swatch = c.get("swatch").and_then(|s| s.as_str()).unwrap_or("").trim();
+            Some(serde_json::json!({
+                "key": key,
+                "label": if label.is_empty() { key } else { label },
+                "swatch": swatch,
+            }))
+        })
+        .collect();
+    obj.insert("categories".into(), serde_json::Value::Array(clean));
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
     std::fs::rename(&tmp, path)?;
@@ -991,6 +1042,26 @@ struct LineEdit {
     hold: Option<String>,
 }
 
+/// Re-read the sheet from disk and publish it into the shared state.
+///
+/// Re-read rather than patched in place: the trigger phrase is derived from the line's
+/// text, the sort is by line, and the categories decide the painting — so the only
+/// copy worth trusting is the one the loader produces.
+fn reload_cues(state: &Arc<LiveState>) -> (Vec<CueView>, CueList) {
+    let cues = {
+        let lines = state.lines.lock().unwrap();
+        load_cues(&state.cues_path, &lines)
+    };
+    let list = std::fs::read_to_string(&state.cues_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .map(|doc| load_cue_list(&doc))
+        .unwrap_or(CueList { name: None, categories: Vec::new() });
+    *state.cues.lock().unwrap() = cues.clone();
+    *state.cue_list.lock().unwrap() = list.clone();
+    (cues, list)
+}
+
 /// The HTTP side: the page, the script, and the position stream.
 fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -1064,6 +1135,23 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                     // line, so they are handled before the line-index
                                     // requirement below — which would otherwise drop
                                     // every one of them on the floor without a word.
+                                    if kind == Some("edit_categories") {
+                                        let cats: Vec<serde_json::Value> = v
+                                            .get("categories")
+                                            .and_then(|c| c.as_array())
+                                            .cloned()
+                                            .unwrap_or_default();
+                                        if let Err(e) =
+                                            write_categories(&inbound.cues_path, &cats)
+                                        {
+                                            eprintln!("could not save the targets: {e:#}");
+                                        }
+                                        let (fresh, list) = reload_cues(&inbound);
+                                        let _ = inbound
+                                            .tx
+                                            .send(Update::CuesChanged { cues: fresh, list });
+                                        continue;
+                                    }
                                     if matches!(kind, Some("edit_cue" | "delete_cue" | "insert_cue"))
                                     {
                                         let str_of = |k: &str| {
@@ -1111,14 +1199,10 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                 // and a re-anchor changes both — so the
                                                 // only copy worth trusting is the one
                                                 // the loader produces.
-                                                let fresh = {
-                                                    let lines = inbound.lines.lock().unwrap();
-                                                    load_cues(&inbound.cues_path, &lines)
-                                                };
-                                                *inbound.cues.lock().unwrap() = fresh.clone();
+                                                let (fresh, list) = reload_cues(&inbound);
                                                 let _ = inbound
                                                     .tx
-                                                    .send(Update::CuesChanged { cues: fresh });
+                                                    .send(Update::CuesChanged { cues: fresh, list });
                                             }
                                         }
                                         continue;
