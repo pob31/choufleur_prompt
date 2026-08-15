@@ -43,6 +43,8 @@ pub struct LineView {
     /// `"silence"`, `"music"`, `"adlib"`, or absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hold: Option<String>,
+    /// Bookmarked by the operator. See `ScriptLine::flag`.
+    pub flag: bool,
 }
 
 /// Where the show is. `None` before the first fix.
@@ -122,6 +124,13 @@ pub enum Update {
         line_index: usize,
         line: LineView,
     },
+    /// A line was flagged or unflagged.
+    ///
+    /// Its own message rather than a field on `LineEdited`, because it is the one
+    /// correction that has to be possible *during* a show — the moment you notice a
+    /// line is wrong is exactly the moment you cannot stop to retype it — and because
+    /// it changes no text, so nothing has to be re-read or re-matched.
+    LineFlagged { line_index: usize, flag: bool },
     /// A line was removed for good — an import artefact, not an editing choice. Like
     /// an insert, every later index has moved, so the client rebuilds.
     LineDeleted { line_index: usize },
@@ -341,6 +350,7 @@ mod tests {
                 kind: "dialogue".into(),
                 spoken: true,
                 hold: None,
+                flag: false,
             }]),
             latest: Mutex::new(None),
             t_audio: Mutex::new(0.0),
@@ -376,6 +386,21 @@ mod tests {
         assert!(s.contains(r#""kind":"stage""#), "{s}");
         assert!(s.contains(r#""spoken":false"#), "{s}");
         assert!(s.contains(r#""hold":"music""#), "{s}");
+    }
+
+    #[test]
+    fn a_flag_is_its_own_message_so_it_can_be_set_during_a_show() {
+        // Not a field on LineEdited: flagging has to work mid-run, from a page whose
+        // copy of the text may be seconds stale, and writing the whole line back to
+        // record a bookmark is how a stale tab overwrites a correction.
+        let s = serde_json::to_string(&Update::LineFlagged {
+            line_index: 411,
+            flag: true,
+        })
+        .unwrap();
+        assert!(s.contains(r#""type":"line_flagged""#), "{s}");
+        assert!(s.contains(r#""lineIndex":411"#), "{s}");
+        assert!(s.contains(r#""flag":true"#), "{s}");
     }
 
     #[test]

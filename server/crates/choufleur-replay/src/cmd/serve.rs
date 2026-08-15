@@ -146,6 +146,7 @@ pub fn run(
             }
             .to_string(),
             spoken: l.spoken,
+            flag: l.flag,
             hold: l.hold.map(|h| {
                 match h {
                     choufleur_core::script::Hold::Silence => "silence",
@@ -483,6 +484,31 @@ fn write_line_delete(path: &Path, index: usize) -> Result<()> {
     Ok(())
 }
 
+/// Set or clear a line's flag on disk, touching nothing else.
+///
+/// Deliberately its own path rather than a corner of `write_line_edit`: flagging
+/// happens mid-run, from a page whose copy of the text may be seconds stale, and
+/// writing the whole line back to record a bookmark is how a stale tab overwrites a
+/// correction. Read-modify-write of one boolean cannot do that.
+fn write_line_flag(path: &Path, index: usize, flag: bool) -> Result<()> {
+    let raw = std::fs::read_to_string(path)?;
+    let mut doc: serde_json::Value = serde_json::from_str(&raw)?;
+    let line = doc
+        .get_mut("lines")
+        .and_then(|l| l.as_array_mut())
+        .and_then(|l| l.get_mut(index))
+        .context("no such line in the script")?;
+    if flag {
+        line["flag"] = serde_json::Value::Bool(true);
+    } else if let Some(o) = line.as_object_mut() {
+        o.remove("flag");
+    }
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
 /// An id unique in the whole script, derived from the line it follows.
 fn insert_id(lines: &[LineView], after: usize) -> String {
     let base = lines
@@ -599,6 +625,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                         .to_string(),
                                                     scene: neighbour.scene.clone(),
                                                     cut: false,
+                                                    flag: false,
                                                     kind: v
                                                         .get("kind")
                                                         .and_then(|k| k.as_str())
@@ -672,6 +699,29 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                             let _ = inbound
                                                 .tx
                                                 .send(Update::LineDeleted { line_index: i });
+                                        }
+                                        // Allowed during a show, unlike insert and
+                                        // delete: it moves no indices and changes no
+                                        // text, so nothing the run depends on moves.
+                                        Some("flag_line") => {
+                                            let flag = {
+                                                let mut lines = inbound.lines.lock().unwrap();
+                                                let f = v
+                                                    .get("flag")
+                                                    .and_then(|f| f.as_bool())
+                                                    .unwrap_or(!lines[i].flag);
+                                                lines[i].flag = f;
+                                                f
+                                            };
+                                            if let Err(e) =
+                                                write_line_flag(&inbound.script_path, i, flag)
+                                            {
+                                                eprintln!("could not save the flag: {e:#}");
+                                            }
+                                            let _ = inbound.tx.send(Update::LineFlagged {
+                                                line_index: i,
+                                                flag,
+                                            });
                                         }
                                         Some("position_jump") => {
                                             inbound.steer.lock().unwrap().push(i);

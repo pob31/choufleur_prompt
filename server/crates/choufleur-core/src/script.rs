@@ -132,6 +132,17 @@ pub struct ScriptLine {
     /// argument for a field the operator sets rather than a heuristic that guesses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spoken: Option<bool>,
+    /// Come back to this one.
+    ///
+    /// Not a property of the play and not an instruction to anything — a bookmark the
+    /// operator drops while their attention is elsewhere. The moment you notice a line
+    /// is wrong is almost never the moment you can stop and fix it: you are watching a
+    /// run, or listening for a cue. Writing it down is the difference between fixing
+    /// it tomorrow and rediscovering it at the next rehearsal.
+    ///
+    /// Kept in the script rather than in a browser tab for exactly that reason.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub flag: bool,
     /// Tracking suspends here until something further on is heard. See [`Hold`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hold: Option<Hold>,
@@ -220,6 +231,8 @@ pub struct PreparedLine {
     pub cut: bool,
     /// Dialogue or didascalie; see [`LineKind`].
     pub kind: LineKind,
+    /// Bookmarked by the operator; see `ScriptLine::flag`. Never affects matching.
+    pub flag: bool,
     /// Someone says this out loud, so the matcher may look for it. Resolved from
     /// `ScriptLine::spoken`, or from the kind when that is unset.
     pub spoken: bool,
@@ -371,6 +384,7 @@ impl PreparedScript {
                 id: line.id.clone(),
                 cut: line.cut,
                 kind: line.kind,
+                flag: line.flag,
                 spoken: line.spoken.unwrap_or(matches!(line.kind, LineKind::Dialogue)),
                 matchable: !line.cut
                     && line.spoken.unwrap_or(matches!(line.kind, LineKind::Dialogue)),
@@ -607,6 +621,7 @@ mod tests {
             cut: false,
             kind: LineKind::Dialogue,
             spoken: None,
+            flag: false,
             hold: None,
             hold_seconds: None,
             id: id.into(),

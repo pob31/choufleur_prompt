@@ -183,6 +183,7 @@ mod tests {
 
     fn script() -> Script {
         let mk = |id: &str, ch: &str, text: &str| ScriptLine { cut: false,
+            flag: false,
             spoken: None,
             kind: Default::default(),
             hold: None,

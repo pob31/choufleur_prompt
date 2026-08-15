@@ -78,6 +78,7 @@ fn toy_script() -> Script {
             .iter()
             .enumerate()
             .map(|(i, (scene, ch, text, lm))| ScriptLine {
+                flag: false,
                 spoken: None,
                 cut: false,
                 kind: LineKind::Dialogue,
@@ -743,6 +744,7 @@ fn long_script(n: usize) -> Script {
     assert!(n * PER_LINE <= 14 * 6 * 14 * 6, "fixture would repeat a word");
     let lines: Vec<ScriptLine> = (0..n)
         .map(|i| ScriptLine {
+            flag: false,
             spoken: None,
             cut: false,
             kind: LineKind::Dialogue,

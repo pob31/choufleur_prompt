@@ -18,6 +18,7 @@
     --now: #ffd479;      /* the current line: warm, like a work light */
     --lost: #ff6b5e;
     --speaker: #7fb2d9;
+    --flag: #b48ee8;     /* a bookmark: distinct from the current line and from lost */
   }
   * { box-sizing: border-box; }
   html, body {
@@ -154,6 +155,16 @@
   }
   .line.now .tag { background: var(--now); color: #14110c; opacity: 1; }
   .line.holding.now { color: var(--now); }
+
+  /* A flag is a bookmark, not a state of the show, so it sits in the margin rather
+     than changing how the line reads. Visible at a glance while scrolling past. */
+  .line.flagged::before {
+    content: '';
+    position: absolute; left: -1.1em; top: .15em;
+    width: .28em; height: 1.05em; border-radius: 1px; background: var(--flag);
+  }
+  .line { position: relative; }
+  .line.stage.flagged::before { left: -1.1em; }
 
   /* A correction, briefly acknowledged, so a tap that did nothing is obvious. */
   @keyframes placed { from { background: rgba(255,212,121,.28); } to { background: none; } }
@@ -308,6 +319,16 @@
     cursor: pointer;
   }
   #follow { margin-left: .6em; }
+  #flags { display: flex; align-items: center; gap: .25em; margin-left: .6em; }
+  #flags button {
+    border: 1px solid var(--dimmer); background: none; color: var(--dim);
+    border-radius: 999px; padding: .3em .7em; font: inherit; cursor: pointer;
+  }
+  #flags button:hover { color: var(--fg); border-color: var(--dim); }
+  #flag.on { border-color: var(--flag); color: var(--flag); }
+  #flagcount { font-variant-numeric: tabular-nums; color: var(--dimmer); min-width: 2.4em;
+               text-align: center; font-size: .85em; }
+  .editor button.flagged { border-color: var(--flag); color: var(--flag); }
   #dot { width: .5em; height: .5em; border-radius: 50%; background: var(--dimmer); }
   body[data-running="true"] #dot { background: #5fbf7f; }
 
@@ -355,6 +376,12 @@
     <span id="clock">0:00</span>
     <span id="gap">—</span>
     <input id="find" placeholder="find a line, or a number" spellcheck="false">
+    <span id="flags">
+      <button id="flagprev" title="previous flag">&#9664;</button>
+      <button id="flag" title="flag the current line (alt-click any line)">&#9873;</button>
+      <span id="flagcount">0</span>
+      <button id="flagnext" title="next flag">&#9654;</button>
+    </span>
     <button id="edit">edit</button>
     <button id="ear">heard</button>
     <button id="follow" hidden>follow</button>
@@ -432,6 +459,7 @@
   async function loadScript() {
     lines = await (await fetch('script.json')).json();
     build();
+    paintFlags();
   }
 
   // ---- scrolling ------------------------------------------------------------
@@ -544,6 +572,7 @@
       }
       els[index].classList.add('now');
       current = index;
+      paintFlags();
     }
     // An open editor freezes the scroll. The show carries on advancing underneath —
     // the position is still live and the footer still moves — but yanking the page
@@ -640,7 +669,7 @@
     // A line number if it looks like one, otherwise text. Both are things an operator
     // actually says out loud — "go to 412", "find the Otis Redding bit".
     const asNumber = /^\d+$/.test(q) ? Math.min(lines.length, Math.max(1, +q)) - 1 : null;
-    if (asNumber !== null) { hits = [asNumber]; hitAt = 0; goTo(asNumber, true); return; }
+    if (asNumber !== null) { hits = [asNumber]; hitAt = 0; jumpedTo = asNumber; goTo(asNumber, true); return; }
     const again = hits.length && hits.query === q;
     if (!again) {
       hits = lines.reduce((a, l, i) => {
@@ -654,10 +683,61 @@
     // Enter again steps to the next occurrence, which is how every find box works.
     hitAt = (hitAt + 1) % hits.length;
     $find.dataset.count = `${hitAt + 1}/${hits.length}`;
+    jumpedTo = hits[hitAt];
     goTo(hits[hitAt], true);
   });
 
+  // ---- flags ----------------------------------------------------------------
+  //
+  // A bookmark, and the one correction that has to work *during* a show: the moment
+  // you notice a line is wrong is exactly the moment you cannot stop and retype it.
+  // So flagging is one tap on the current line, or alt-click on any line, and it
+  // never opens the editor or disturbs the scroll.
+  // Where the reader is, as opposed to where the show is. Null until they navigate,
+  // so during an untouched run the flag button follows the position.
+  let jumpedTo = null;
+  const $flag = document.getElementById('flag');
+  const $flagCount = document.getElementById('flagcount');
+
+  const flagsAt = () => lines.reduce((a, l, i) => (l.flag ? (a.push(i), a) : a), []);
+
+  // Whatever the operator is looking at: the line being spoken during a run, or the
+  // one they last jumped to in prep, where nothing is running and `current` is -1.
+  const subject = () => (jumpedTo !== null ? jumpedTo : current);
+
+  function paintFlags() {
+    const all = flagsAt();
+    $flagCount.textContent = all.length ? String(all.length) : '—';
+    const at = subject();
+    $flag.classList.toggle('on', at >= 0 && !!lines[at]?.flag);
+  }
+
+  function toggleFlag(index) {
+    if (index < 0 || index >= lines.length || !ws || ws.readyState !== 1) return;
+    ws.send(JSON.stringify({ type: 'flag_line', lineIndex: index, flag: !lines[index].flag }));
+  }
+
+  $flag.addEventListener('click', () => toggleFlag(subject()));
+  // Step to the flag before or after where the *reader* is, not where the show is:
+  // walking a list of things to fix is a different activity from following a run,
+  // and during a run the position moves under you while you work.
+  function stepFlag(dir) {
+    const all = flagsAt();
+    if (!all.length) return;
+    const from = jumpedTo ?? current;
+    const next = dir > 0
+      ? all.find((i) => i > from) ?? all[0]
+      : [...all].reverse().find((i) => i < from) ?? all[all.length - 1];
+    jumpedTo = next;
+    goTo(next, true);
+  }
+  document.getElementById('flagnext').addEventListener('click', () => stepFlag(1));
+  document.getElementById('flagprev').addEventListener('click', () => stepFlag(-1));
+
   let openEditor = null;
+  // The open editor's own flag button, so a flag toggled from anywhere is reflected
+  // in it rather than going stale under the operator's hand.
+  let repaintOpenFlag = null;
   // Set when this client asked for the insert, so it — and only it — opens the editor
   // on the new line. Every other screen just redraws.
   let pendingInsert = null;
@@ -775,6 +855,22 @@
     //
     // Two clicks, because it cannot be undone from here. Not a modal: a dialogue box
     // in the middle of table work is answered without being read.
+    // Also in the editor, because once you have opened a line to fix it you may
+    // decide it needs someone else's eye instead. Sent immediately rather than on
+    // commit: a flag is not part of the text edit and should survive cancelling it.
+    const bFlag = document.createElement('button');
+    bFlag.textContent = 'flag';
+    bFlag.onmousedown = (e) => e.preventDefault();
+    const paintFlagBtn = () => bFlag.classList.toggle('flagged', !!lines[i].flag);
+    bFlag.onclick = (e) => {
+      e.preventDefault();
+      toggleFlag(i);
+      txt.focus();
+    };
+    paintFlagBtn();
+    repaintOpenFlag = paintFlagBtn;
+    row.append(sep(), bFlag);
+
     const bDelete = document.createElement('button');
     bDelete.className = 'danger';
     let armed = false;
@@ -840,6 +936,7 @@
       if (closing) return;
       closing = true;
       openEditor = null;
+      repaintOpenFlag = null;
       const newText = txt.value.trim();
       const newWho = who.value.trim();
       if (commit && newText) {
@@ -900,7 +997,8 @@
       + (l.cut ? ' cut' : '')
       + (stage ? ' stage' : '')
       + (stage && l.spoken ? ' voiced' : '')
-      + (l.hold ? ' holding' : '');
+      + (l.hold ? ' holding' : '')
+      + (l.flag ? ' flagged' : '');
     el.textContent = '';
     if (l.hold) {
       const tag = document.createElement('span');
@@ -924,6 +1022,10 @@
   $lines.addEventListener('click', (ev) => {
     const el = ev.target.closest('.line');
     if (!el || !ws || ws.readyState !== 1) return;
+    // Alt-click flags, in either mode and without opening anything. Checked before
+    // the edit branch so it works while editing is on, which is when you are most
+    // likely to be triaging rather than typing.
+    if (ev.altKey) { ev.preventDefault(); jumpedTo = Number(el.dataset.i); toggleFlag(jumpedTo); return; }
     if (editing) { beginEdit(el, ev); return; }
     const i = Number(el.dataset.i);
     ws.send(JSON.stringify({ type: 'position_jump', lineIndex: i }));
@@ -1088,6 +1190,14 @@
         lines[m.lineIndex].hold = m.hold ?? null;
         render(m.lineIndex);
         replace();
+      } else if (m.type === 'line_flagged') {
+        lines[m.lineIndex].flag = m.flag;
+        // An open editor has replaced the line element, so re-rendering it would
+        // write into a node that is out of the document. The margin mark reappears
+        // when the editor closes and `render` runs there.
+        if (els[m.lineIndex]?.isConnected) render(m.lineIndex);
+        if (repaintOpenFlag) repaintOpenFlag();
+        paintFlags();
       } else if (m.type === 'line_deleted') {
         lines.splice(m.lineIndex, 1);
         build();
