@@ -1181,3 +1181,40 @@ None of these came from a metric.
   a journey that did not happen.
 - **No reading band.** A tinted strip across the current line sounded helpful and was
   glare: the current line is already the only bright thing on a dim page.
+
+### X. A third kind of repetition: the running gag
+
+Findings M and T covered two shapes — the same passage performed twice hundreds of
+lines apart, and lines whose text is *identical*. Watching a live run turned up a
+third, and it is the one a play is most likely to contain.
+
+An operator saw the position jump backwards and named the moment: *"Étrange et
+mystérieux"*. The script around it:
+
+    L0111  sc-2  ÉRIC   C'est très mystérieux. Je pense que la statue de chienne…
+    L0113  sc-2  GAËL   C'est un peu étrange.
+    L0114  sc-2  DENIS  C'est étrange et symbolique.
+    L0115  sc-2  GAËL   Mais plus étrange que symbolique.
+    L0148  sc-2  DENIS  Ah, oui. Symbolique. Mais un peu étrange.
+
+A company riffing on two words across thirty-seven lines. Not duplicates, so the
+identical-text rule does not see them; not distant, so the twin detector in
+`prep_report.py` — which requires a 20-line gap — deliberately skips them. They are
+*near*-duplicates at close range, which is precisely the configuration character and
+phonetic matching bring closer together.
+
+**Measured, today's matchers did not cause it.** Night 16 has 11 backward jumps of
+10+ lines either way, 2480 vs 2425 lines travelled backwards, and *zero* landing in
+this run under either configuration. The live jump is not reproducible from the
+recorded transcript, because a fresh Whisper pass on Metal is not bit-identical — so
+it is real, observed, and outside what the offline harness can replay. Worth stating
+plainly: the regression test cannot see this class of event at all.
+
+The prep answer is probably not the twin detector but the opposite of it — a
+*near*-duplicate detector with no minimum gap, whose output is not "these are the
+same" but "these will be confused". Untested.
+
+Alongside it, the operator's verdict after an hour of watching: smooth, never totally
+lost, and **the position never left the visible page**. That is the PRD requirement in
+its original words — the last spoken line in the middle third of what is displayed —
+reported from the chair rather than computed from a trace.
