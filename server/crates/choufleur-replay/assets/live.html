@@ -160,7 +160,13 @@
      looking away from the stage. */
   body[data-prep="on"] .cue { pointer-events: auto; cursor: text; }
   body[data-prep="on"] .cue:hover { background: #1d2129; }
-  .cue.editing { background: #1b1f26; cursor: default; }
+  /* On top of its neighbours, always. An open editor is taller than the card it
+     replaced, so it overlaps whatever comes next — and the thing you are typing into
+     must be the thing in front. */
+  .cue.editing {
+    background: #1b1f26; cursor: default; z-index: 6;
+    box-shadow: 0 6px 24px rgba(0,0,0,.55);
+  }
   .cue textarea, .cue input {
     display: block; width: 100%; background: #0f1114; color: var(--fg);
     border: 1px solid var(--dimmer); border-radius: 3px; padding: .25em .4em;
@@ -175,6 +181,7 @@
     font: 400 .82em/1.4 ui-sans-serif, system-ui, sans-serif;
   }
   .cue .ctl button.on { border-color: var(--now); color: var(--now); }
+  .cue .ctl.actions { margin-top: .35em; border-top: 1px solid var(--edge); padding-top: .35em; }
   .cue .ctl button.kill { margin-left: auto; }
   .cue .ctl button.kill.armed { border-color: var(--lost); color: var(--lost); }
   .cue .hintline {
@@ -844,6 +851,10 @@
   }
 
   function renderRail() {
+    // Rebuilding throws away every card, so an open editor would vanish mid-sentence
+    // — and `cueEditing` would be left pointing at a card that no longer exists,
+    // freezing the layout for good. Commit it first.
+    if (openCue) openCue();
     document.body.dataset.rail = cues.length ? 'on' : 'off';
     // Only one mark per line: two cues on the same line would fight over the text,
     // and the second leader can point at the first one's mark perfectly well.
@@ -892,6 +903,18 @@
 
   function layoutCues() {
     if (!cues.length) return;
+    // Frozen while a cue is open.
+    //
+    // Two faults, one cause. The card grows when it becomes an editor, so every
+    // measurement taken of it is stale and the cards after it are placed as though it
+    // were still small — they slide underneath. And the layout runs every frame, so
+    // the moment the operator scrolls to select a phrase, the whole rail slides and
+    // the card they are typing into goes with it.
+    //
+    // Editing a cue is a modal activity: the rail holds still until it is finished,
+    // then re-measures and settles. Reported from the chair as cues slipping under
+    // each other and "the display of the cues jump around".
+    if (cueEditing >= 0) return;
     if (!lineTops) measure();
     const top = $scroller.scrollTop;
     const fold = railH;                 // below this, a line is not on screen yet
@@ -1014,11 +1037,18 @@
   // against somebody else's punctuation. Selecting is also how you would say it out
   // loud: point at the words.
   let openCue = null;
+  // Which card is currently an editor, or -1. Separate from `openCue` because the
+  // layout has to know from the first instant, before the closure exists.
+  let cueEditing = -1;
   // Set when this client asked for a cue, so it — and only it — opens the new card.
   let pendingCueFor = null;
 
   function editCue(k) {
     if (openCue) openCue();
+    // Set before anything is measured or appended: the layout runs on the next frame
+    // regardless, and one pass taken while the card is halfway to being an editor
+    // places everything below it wrongly.
+    cueEditing = k;
     const el = cueEls[k], c = cues[k];
     const before = el.innerHTML;
     el.classList.add('editing');
@@ -1068,7 +1098,7 @@
       close(false);
       ws.send(JSON.stringify({ type: 'delete_cue', id: c.id }));
     };
-    ctl.append(bText, bVis, bQLab, bDesk, bTrig, bClear, kill);
+    ctl.append(bText, bVis, bQLab, bDesk, bTrig, bClear);
 
     const hint = document.createElement('div');
     hint.className = 'hintline';
@@ -1083,13 +1113,29 @@
         hint.textContent = triggerText ? `on “${triggerText}”` : 'fires on the whole line';
       }
     };
-    el.append(what, ctl, hint);
+    // Two rows: what the cue *is* on the first, what to do with it on the second.
+    // Six controls wrapping in one row put `delete` in a different place depending on
+    // the width of the card, which is not where a destructive button belongs.
+    const actions = document.createElement('div');
+    actions.className = 'ctl actions';
+    const bAdd = document.createElement('button');
+    bAdd.textContent = 'add cue here';
+    bAdd.onmousedown = (e) => e.preventDefault();
+    bAdd.onclick = (e) => {
+      e.preventDefault();
+      pendingCueFor = lines[c.lineIndex].id;
+      close(true);
+      ws.send(JSON.stringify({ type: 'insert_cue', lineId: lines[c.lineIndex].id }));
+    };
+    actions.append(bAdd, kill);
+    el.append(what, ctl, actions, hint);
     repaint();
     fit();
     what.focus();
 
     function close(commit) {
       openCue = null;
+      cueEditing = -1;
       el.classList.remove('editing');
       if (commit) {
         ws.send(JSON.stringify({
@@ -1098,7 +1144,9 @@
         }));
       }
       el.innerHTML = before;
-      lineTops = null;
+      // The card is its old size again, but only after the browser has laid it out —
+      // measuring now would cache the editor's height and misplace everything below.
+      requestAnimationFrame(() => { lineTops = null; layoutCues(); });
     }
     openCue = () => close(true);
     what.onkeydown = (e) => {
