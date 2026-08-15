@@ -321,7 +321,7 @@ impl Default for TrackerConfig {
             // would be decorative and skip tolerance unreachable.
             distance_prior_halflife: 12.0,
             prior_floor: 0.70,
-            overlap_exp: 0.5,
+            overlap_exp: 0.35,
             member_coverage_min: 0.5,
             landmark_boost: [1.05, 1.15, 1.30],
             reanchor_horizon: 40,
