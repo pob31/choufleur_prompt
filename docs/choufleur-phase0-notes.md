@@ -1867,3 +1867,37 @@ from the other side.
 adoptions, and the same paired shape appeared when the challenger was briefly allowed to
 run during holds. The word-based move count belongs in `metrics.py` — the line-based one
 should not be quoted again.
+
+### AK. Both move metrics were wrong, and reading the text said so
+
+*"Can you tell what the text was in the >=15 sections so I can understand what might
+have caused the issue?"* Reading them dissolved the regression that finding AJ had
+recorded against overlap matching.
+
+Of the eleven 250-word moves on night 17 with accumulation on:
+
+- `307 → 309`, `309 → 311`, `634 → 636` are **two-line advances**. They clear 250 words
+  only because the lines are enormous. At t=4826 the audio says *"que faisait Autice
+  quand il agit à les bras comme ça"* and it lands on `Que faisait Otis lorsqu'il
+  agitait les bras comme ça ?` — the show moving on, correctly.
+- `57 → 5` at t=58 s: the audio is *"Nous sommes le cœur… Nous jouons aussi d'autres
+  personnages"* and line 5 **is** `Nous sommes le Chœur.` The tracker was wrongly at 57
+  and corrected itself. **A fix, counted as a fault.**
+- `138 → 41 → 139` is the one real error, and it reached the right line — 139 is
+  `« Malheur à moi ! On m'aveugle… »`, which is exactly what was said — ten seconds later.
+
+So **roughly one of eleven is an error.** Counting in lines under-reported real gaps
+(fifteen short exchanges is seconds of show); counting in words over-reports normal
+advances (two long paragraphs is 300 words of legitimate progress). Neither is the
+quantity of interest, which is **content skipped without being heard** — a move is only
+suspicious if the audio in the moments before it does not belong where it landed.
+
+The lesson is not about this metric. Every aggregate here has needed the same check at
+least once — `window_accuracy`'s anchor sets differing between models, the line-based
+move count, now the word-based one. **Read the moments before quoting the number.**
+Three times today an aggregate said something the transcript flatly contradicted.
+
+Overlap matching therefore stands better than AJ recorded: block time roughly halves,
+lost time collapses from 171 s to 4 s, and the cost is about one brief excursion per
+night rather than eight. The window sweep is flat between 20 s and 30 s (4 s lost, 19–20 %
+block); 45 s is worse. Default stays at 20.
