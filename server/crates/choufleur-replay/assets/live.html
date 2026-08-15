@@ -128,8 +128,6 @@
     background: none; color: inherit;
     border-bottom: 1.5px solid var(--dimmer); padding-bottom: .04em;
   }
-  mark.trig[data-colour="blue"]   { border-bottom-color: #4d7ea8; }
-  mark.trig[data-colour="purple"] { border-bottom-color: #8566ad; }
   .line.now mark.trig { border-bottom-color: var(--now); }
 
   #rail {
@@ -147,9 +145,8 @@
     will-change: transform;
   }
   .cue .what { display: block; }
-  /* The operator's own colours, with the sheet's own meanings. */
-  .cue[data-colour="blue"]   { border-left-color: #6ea8dc; }
-  .cue[data-colour="purple"] { border-left-color: #b48ee8; }
+  /* The operator's own colours, with the sheet's own meanings — filled in at load
+     from the cue list, because which they are is a fact about the department. */
   .cue .means {
     display: block; font-size: .74em; letter-spacing: .09em; text-transform: uppercase;
     color: var(--dimmer); margin-bottom: .12em;
@@ -483,6 +480,7 @@
   body[data-prep="on"] .line.cut { opacity: .38; }
   body[data-prep="on"] .line.stage { color: var(--dimmer); }
 </style>
+<style id="catstyle"></style>
 </head>
 <body data-conf="scene" data-running="true">
 <div id="stage">
@@ -863,10 +861,21 @@
 
   async function loadCues() {
     try {
+      const list = await fetch('cuelist.json');
+      if (list.ok) cueCats = (await list.json()).categories || [];
+    } catch { /* an older server has no list; the rail still works uncoloured */ }
+    try {
       const r = await fetch('cues.json');
       if (!r.ok) return;
       cues = await r.json();
     } catch { return; }
+    // Paint the marks and cards from the list, so a department that does not use
+    // these colours is not stuck with them.
+    const rules = cueCats
+      .map((c) => `.cue[data-colour="${c.key}"] { border-left-color: ${c.swatch}; }\n`
+                + `mark.trig[data-colour="${c.key}"] { border-bottom-color: ${c.swatch}; }`)
+      .join('\n');
+    document.getElementById('catstyle').textContent = rules;
     renderRail();
   }
 
@@ -1031,7 +1040,12 @@
   // is unavoidable — an inline span's position is not derivable from anything cached —
   // but there are at most a handful in view, unlike the 133 cards.
   const NS = 'http://www.w3.org/2000/svg';
-  const CUE_STROKE = { blue: '#4d7ea8', purple: '#8566ad' };
+  // Filled from the cue list rather than written here. See CueList in live.rs: a
+  // lighting sheet means an Eos by the same marks this sound sheet means QLab by, and
+  // neither of them is the page's business to know.
+  let cueCats = [];
+  const catOf = (key) => cueCats.find((c) => c.key === key);
+  const CUE_STROKE = (key) => catOf(key)?.swatch || '';
 
   // Where the rendered text of a line stops, as opposed to where its box stops.
   // Only ever called for the handful of cues in view.
@@ -1127,7 +1141,7 @@
       // The cue's own colour, so several tendrils leaving one paragraph are told apart
       // by the same code as their cards — and so a line running under a sentence is
       // read as belonging to the rail rather than as part of the typography.
-      path.style.stroke = CUE_STROKE[cues[j.k].colour] || '';
+      path.style.stroke = CUE_STROKE(cues[j.k].colour);
       path.classList.toggle('now', cues[j.k].lineIndex === current);
     });
   }
@@ -1247,8 +1261,10 @@
     };
     const bText = mk('text', 'trigger:text', () => { trigger = 'text'; });
     const bVis  = mk('visual', 'trigger:visual', () => { trigger = 'visual'; });
-    const bQLab = mk('QLab', 'colour:blue', () => { colour = colour === 'blue' ? '' : 'blue'; });
-    const bDesk = mk('console', 'colour:purple', () => { colour = colour === 'purple' ? '' : 'purple'; });
+    // One button per category the list defines, in the list's own words.
+    const catBtns = cueCats.map((cat) =>
+      mk(cat.label, 'never', () => { colour = colour === cat.key ? '' : cat.key; })
+    );
     const bTrig = mk('use selection', 'never', () => {
       const picked = selectionInScript();
       if (!picked) {
@@ -1291,7 +1307,7 @@
       close(false);
       ws.send(JSON.stringify({ type: 'delete_cue', id: c.id }));
     };
-    ctl.append(bText, bVis, bQLab, bDesk, bTrig, bWhole, bClear);
+    ctl.append(bText, bVis, ...catBtns, bTrig, bWhole, bClear);
 
     const hint = document.createElement('div');
     hint.className = 'hintline';
@@ -1302,8 +1318,14 @@
     const repaint = () => {
       bText.classList.toggle('on', trigger === 'text');
       bVis.classList.toggle('on', trigger === 'visual');
-      bQLab.classList.toggle('on', colour === 'blue');
-      bDesk.classList.toggle('on', colour === 'purple');
+      catBtns.forEach((b, n) => {
+        const on = colour === cueCats[n].key;
+        b.classList.toggle('on', on);
+        // The button wears the category's own colour when chosen, so the vocabulary
+        // is legible without a legend somewhere else.
+        b.style.borderColor = on ? cueCats[n].swatch : '';
+        b.style.color = on ? cueCats[n].swatch : '';
+      });
       bTrig.classList.toggle('on', !!triggerText);
       if (!hint.textContent) {
         hint.textContent = triggerText ? `on “${triggerText}”` : 'fires on the whole line';

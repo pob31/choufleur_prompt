@@ -58,6 +58,38 @@ pub struct LineView {
     pub flag: bool,
 }
 
+/// What a cue list is *for*, and the vocabulary it uses.
+///
+/// A cue sheet belongs to a department, and departments do not share tools. This one
+/// reads blue as QLab and purple as the console because it is a sound sheet; a
+/// lighting sheet would mean an Eos or a grandMA by the same marks, video something
+/// else again. Hard-coding "QLab" into the editor was a sound engineer's accident that
+/// happened to be the first sheet through the door.
+///
+/// So the categories travel with the list. Taken from an explicit `categories` array
+/// when the sheet has one, and otherwise derived from the colours actually in use and
+/// what the sheet's own `colourMeans` says they signify — which is the operator's
+/// notation, already written down, and not ours to invent.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CueCategory {
+    /// The value stored on a cue, historically a colour name.
+    pub key: String,
+    /// What it means to this department: "QLab", "console", "Eos", "followspot".
+    pub label: String,
+    /// What to paint it, as CSS.
+    pub swatch: String,
+}
+
+/// A cue list: who it belongs to and what its marks mean.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CueList {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub categories: Vec<CueCategory>,
+}
+
 /// One cue, as the rail needs it.
 ///
 /// A projection of the cue sheet, not the sheet itself: the page needs to know where a
@@ -264,6 +296,8 @@ pub struct LiveState {
     pub cues: Mutex<Vec<CueView>>,
     /// Where cue edits are written.
     pub cues_path: std::path::PathBuf,
+    /// The list's own vocabulary; see [`CueList`].
+    pub cue_list: Mutex<CueList>,
     /// Prep mode: the script is served for editing and nothing is running.
     ///
     /// Everything the operator has to set — which lines are cut, which are stage
@@ -426,6 +460,7 @@ mod tests {
             steer: Mutex::new(Vec::new()),
             cues: Mutex::new(Vec::new()),
             cues_path: std::path::PathBuf::from("/dev/null"),
+            cue_list: Mutex::new(CueList { name: None, categories: Vec::new() }),
             prep: false,
         };
         let s = serde_json::to_string(&state.hello()).unwrap();

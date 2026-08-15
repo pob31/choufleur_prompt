@@ -31,7 +31,7 @@ use choufleur_core::prompt::{proper_nouns, static_prompt_with, BiasMode, PromptC
 use choufleur_core::tracker::Tracker;
 
 use crate::engine::{Engine, EngineConfig};
-use crate::live::{Broadcast, CueView, LineView, LiveState, Update};
+use crate::live::{Broadcast, CueCategory, CueList, CueView, LineView, LiveState, Update};
 use crate::manifest::Corpus;
 use crate::monitor::Monitor;
 
@@ -51,6 +51,87 @@ const ASSET_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/live.html"
 );
+
+/// A colour name to something a browser can paint.
+///
+/// Only the names a marked-up script actually uses. An unknown name is passed through
+/// untouched, because CSS knows far more colour names than this table ever will and
+/// the operator may well have written one of them.
+fn swatch(name: &str) -> String {
+    match name {
+        "blue" => "#4d7ea8",
+        "purple" => "#8566ad",
+        "gold" => "#c8a33a",
+        "pale yellow" => "#c2bd6a",
+        "orange" => "#c07a3a",
+        "green" => "#5f9e6a",
+        "red" => "#c0564a",
+        "grey" | "gray" => "#7a8088",
+        other => other,
+    }
+    .to_string()
+}
+
+/// The list's vocabulary: what its marks mean and what to paint them.
+fn load_cue_list(doc: &serde_json::Value) -> CueList {
+    // An explicit list wins. Nothing writes one yet, but this is the shape the
+    // per-operator lists will arrive in, and reading it now costs a dozen lines.
+    if let Some(arr) = doc.get("categories").and_then(|c| c.as_array()) {
+        let categories = arr
+            .iter()
+            .filter_map(|c| {
+                let key = c.get("key")?.as_str()?.to_string();
+                let label = c
+                    .get("label")
+                    .and_then(|l| l.as_str())
+                    .unwrap_or(&key)
+                    .to_string();
+                let swatch_of = c
+                    .get("swatch")
+                    .and_then(|s| s.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| swatch(&key));
+                Some(CueCategory { key, label, swatch: swatch_of })
+            })
+            .collect();
+        return CueList {
+            name: doc.get("name").and_then(|n| n.as_str()).map(str::to_string),
+            categories,
+        };
+    }
+    // Otherwise: the colours this sheet actually uses, in the order they first appear,
+    // read through its own `colourMeans`. Order of first appearance rather than
+    // alphabetical, so the buttons come out in the order the show does.
+    let means = doc.get("colourMeans");
+    let mut categories: Vec<CueCategory> = Vec::new();
+    if let Some(cues) = doc.get("cues").and_then(|c| c.as_array()) {
+        for c in cues {
+            let Some(key) = c.get("noteColour").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if categories.iter().any(|c| c.key == key) {
+                continue;
+            }
+            let label = means
+                .and_then(|m| m.get(key))
+                .and_then(|l| l.as_str())
+                .unwrap_or(key)
+                .to_string();
+            categories.push(CueCategory {
+                key: key.to_string(),
+                label,
+                swatch: swatch(key),
+            });
+        }
+    }
+    CueList {
+        name: doc
+            .get("source")
+            .and_then(|n| n.as_str())
+            .map(str::to_string),
+        categories,
+    }
+}
 
 /// Fold for comparison, keeping a way back to the original.
 ///
@@ -516,8 +597,21 @@ pub fn run(
         .map(PathBuf::from)
         .unwrap_or_else(|| corpus.script_path().with_file_name("cues.json"));
     let cues = load_cues(&cue_path, &lines);
+    let cue_list = std::fs::read_to_string(&cue_path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .map(|doc| load_cue_list(&doc))
+        .unwrap_or(CueList { name: None, categories: Vec::new() });
     if !cues.is_empty() {
         println!("cues:    {} from {}", cues.len(), cue_path.display());
+        let labels: Vec<&str> = cue_list
+            .categories
+            .iter()
+            .map(|c| c.label.as_str())
+            .collect();
+        if !labels.is_empty() {
+            println!("targets: {}", labels.join(", "));
+        }
     }
 
     let (tx, _rx) = tokio::sync::broadcast::channel(256);
@@ -533,6 +627,7 @@ pub fn run(
         steer: Mutex::new(Vec::new()),
         cues: Mutex::new(cues),
         cues_path: cue_path.clone(),
+        cue_list: Mutex::new(cue_list),
         prep,
     });
 
@@ -938,6 +1033,12 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                 "/cues.json",
                 get(|State(s): State<Arc<LiveState>>| async move {
                     axum::Json(s.cues.lock().unwrap().clone())
+                }),
+            )
+            .route(
+                "/cuelist.json",
+                get(|State(s): State<Arc<LiveState>>| async move {
+                    axum::Json(s.cue_list.lock().unwrap().clone())
                 }),
             )
             .route(
