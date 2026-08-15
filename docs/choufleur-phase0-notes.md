@@ -1300,3 +1300,59 @@ question stands: the answer is more likely learned alternates, which record what
 company actually says (built, and measured to generalise across nights in finding K),
 than sentence embeddings, which would raise the floor under every candidate at a
 moment when the measured problem is ambiguity rather than absence of a match.
+
+---
+
+## Marked for tomorrow
+
+Three notes from the operator at the end of a night's watching. They read as separate
+asks and are closer to one principle — **a show is continuous, and the tracker does not
+yet believe that strongly enough**.
+
+### 1. Silence and music must not advance the position
+
+The show opens with Otis Redding, and Whisper transcribes it as dialogue ("Ouh, loving
+you!"). Those segments reach the matcher and can win a line. Silence is already
+harmless — no segment is emitted — but music is not: it produces confident text with no
+speaker, at a moment when the tracker is least anchored.
+
+Three places it could be caught, cheapest first: `no_speech_prob` is already recorded
+per segment and is not currently used as a gate; the hallucination filter has the
+machinery and no music rule; and Silero returns a speech probability that a sustained
+musical passage should depress. Worth measuring which of the three separates the
+show's music from its dialogue before adding any of them — the opening minutes of both
+Hécube nights are the test set, already transcribed.
+
+Note the second-order effect: decay is speech-time based, so music counted as speech
+also runs the confidence timers down. Music that cannot match *and* cannot decay is the
+correct behaviour, which is one rule, not two.
+
+### 2. A large jump should cost more evidence — in *both* directions
+
+`backward_threshold` (0.88) landed tonight and only covers going back. The operator's
+extension is right: a big *forward* jump deserves the same suspicion. A show advances a
+line or two at a time, so any proposal to move fifty lines — whichever way — is
+claiming something rare happened, and rare claims need more evidence than routine ones.
+
+The clean form is one rule rather than two thresholds: **the score required scales with
+the distance proposed**, with backward steeper than forward because a wrong backward
+move re-reads ground the show has left and cannot self-correct, while a wrong forward
+move is walked into and fixed.
+
+That partly exists already as `distance_prior_halflife` (12 lines) with `prior_floor`
+0.70 — but a floor of 0.70 means a line five hundred away is discounted by less than a
+third, which is not what "continuous" implies. Tomorrow: sweep the floor and the
+half-life on both nights, exactly as `overlap_exp` was swept tonight, and consider
+whether the prior alone is the right instrument or whether the threshold should move
+with it.
+
+### 3. The expectation is a continuous show following the script
+
+The frame behind both of the above, and the thing to encode explicitly rather than
+approximate through independent knobs. Everything the tracker does should start from
+"the next line is overwhelmingly the most likely" and require evidence in proportion to
+how far a proposal departs from it.
+
+Related, and now unblocked: **cut lines still compete in the matcher.** They are marked
+and displayed but not excluded, so a struck line can win — and tomorrow cues start
+hanging off specific lines, where a wrong page costs more than it does today.
