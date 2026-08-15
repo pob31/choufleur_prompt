@@ -1069,7 +1069,11 @@
     for (const group of rows.values()) {
       group.sort((p, q) => p.t.right - q.t.right);
       group.forEach((j, i) => {
-        j.lane = (i - (group.length - 1) / 2) * LANE;
+        // Downwards only. Centring shared a row fairly and lifted the first tendril
+        // off its own underline and up into the descenders of the words above — the
+        // one direction there is no room in. Below the text there is nothing but the
+        // gap to the next line.
+        j.lane = i * LANE;
         // Fan the turns as well, or the curves merge again in the gutter even when
         // the straight runs are apart.
         j.fan = i * FAN;
@@ -1239,6 +1243,9 @@
 
     const hint = document.createElement('div');
     hint.className = 'hintline';
+    const keys = document.createElement('div');
+    keys.className = 'hintline';
+    keys.textContent = 'enter saves · esc cancels · select in the script to set a trigger';
 
     const repaint = () => {
       bText.classList.toggle('on', trigger === 'text');
@@ -1266,12 +1273,17 @@
       ws.send(JSON.stringify({ type: 'insert_cue', lineId: lines[c.lineIndex].id }));
     };
     actions.append(bAdd, kill);
-    el.append(what, ctl, actions, hint);
+    el.append(what, ctl, actions, hint, keys);
     repaint();
     fit();
     what.focus();
 
+    let closed = false;
     function close(commit) {
+      if (closed) return;
+      closed = true;
+      document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('mousedown', onDown, true);
       openCue = null;
       cueEditing = -1;
       el.classList.remove('editing');
@@ -1288,16 +1300,28 @@
       requestAnimationFrame(() => { lineTops = null; layoutCues(); });
     }
     openCue = () => close(true);
-    what.onkeydown = (e) => {
+
+    // On the document, not on the textarea.
+    //
+    // Enter and Escape have to work wherever the operator happens to be — after
+    // pressing "use selection" the caret is in the script, and after any of the
+    // toggles it is nowhere in particular. Binding them to the field meant the only
+    // way to confirm was to click back into the text box first and then press enter,
+    // which is a step with no purpose. Same keys as the script editor: enter saves,
+    // escape cancels.
+    function onKey(e) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); close(true); }
-      if (e.key === 'Escape') { e.preventDefault(); close(false); }
-    };
-    el.addEventListener('focusout', (e) => {
-      // A selection in the script pulls focus out of the card, which is the whole
-      // point of "use selection" — so closing on blur would make that button
-      // impossible to reach.
-      if (!el.contains(e.relatedTarget) && e.relatedTarget !== null) close(true);
-    });
+      else if (e.key === 'Escape') { e.preventDefault(); close(false); }
+    }
+    // Clicking away saves, as it does in the script editor — except inside the script
+    // itself, which is not "away": pointing at the words is how a trigger is chosen,
+    // and committing on it would make "use selection" unreachable.
+    function onDown(e) {
+      if (el.contains(e.target) || $lines.contains(e.target)) return;
+      close(true);
+    }
+    document.addEventListener('keydown', onKey, true);
+    document.addEventListener('mousedown', onDown, true);
   }
 
   $rail.addEventListener('click', (ev) => {
