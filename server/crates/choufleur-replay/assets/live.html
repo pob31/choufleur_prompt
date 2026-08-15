@@ -1031,74 +1031,82 @@
   function drawLeads(here) {
     const stage = $leads.getBoundingClientRect();
     const colRight = $lines.getBoundingClientRect().right;
-    const want = here.length;
-    while (leadEls.length < want) {
-      const path = document.createElementNS(NS, 'path');
-      const dot = document.createElementNS(NS, 'circle');
-      dot.setAttribute('r', '2.5');
-      $leads.append(path, dot);
-      leadEls.push([path, dot]);
-    }
-    for (let n = want; n < leadEls.length; n++) {
-      leadEls[n][0].setAttribute('d', '');
-      leadEls[n][1].setAttribute('r', '0');
-    }
-    here.forEach(([k], n) => {
-      const [path, dot] = leadEls[n];
+
+    // Measure everything first, then draw.
+    //
+    // Two cues on the same visual row leave at the same height and their horizontal
+    // runs lie exactly on top of each other — one line where there are two, and no way
+    // to tell which card owns which phrase. That can only be seen once every anchor is
+    // known, so measuring and drawing are separate passes and the offsets are worked
+    // out in between.
+    const jobs = [];
+    for (const [k] of here) {
       const card = cueEls[k];
-      if (card.style.display === 'none') { path.setAttribute('d', ''); dot.setAttribute('r','0'); return; }
+      if (card.style.display === 'none') continue;
       const line = els[cues[k].lineIndex];
-      // The marked phrase if the line has one, otherwise where its text actually
-      // *ends*.
-      //
-      // Using the line element itself looked right and drew nothing: a paragraph is a
-      // block, so its right edge is the right edge of the column, which sits hard
-      // against the rail — the curve had no length to be seen in. Only the 35 cues
-      // with a marked phrase had a visible tendril, which is what "not always visible"
-      // was. A Range over the text gives the end of the last rendered line instead,
-      // and that is also the point the cue actually fires on.
-      // This cue's own mark, not merely the line's first: a block with three cues has
-      // three marks and three tendrils, and crossing them would be worse than none.
-      const mark = line.querySelector(`mark.trig[data-cue="${cues[k].id}"]`);
+      if (!line) continue;
       // The *last* rect, not the bounding box. A phrase that wraps spans two rows, and
       // their union is a box whose right edge belongs to one row and whose bottom
       // belongs to the other — so the tendril would leave from a corner where there is
       // no text at all. The cue fires when the phrase finishes, so the end of the last
       // row is both the correct anchor and the honest one.
+      const mark = line.querySelector(`mark.trig[data-cue="${cues[k].id}"]`);
       const rects = mark ? mark.getClientRects() : null;
       const t = rects && rects.length ? rects[rects.length - 1] : endOfText(line);
-      if (!t) { path.setAttribute('d',''); dot.setAttribute('r','0'); return; }
-      const c = card.getBoundingClientRect();
-      if (t.bottom < stage.top || t.top > stage.bottom) { path.setAttribute('d',''); dot.setAttribute('r','0'); return; }
-      // The underline continues into the tendril.
-      //
-      // Leaving from the column edge kept the text clear and gave up the one thing
-      // that mattered: which phrase. Leaving from the end of the phrase at its
-      // *middle* struck the words out. So it leaves from the end of the phrase at the
-      // underline's own height and runs along under the text — descender level, not
-      // through the letters — before turning for the card. It reads as the underline
-      // growing a tail, which is exactly what it is.
-      const x1 = t.right - stage.left;
-      const y1 = t.bottom - stage.top + 1;
-      const turn = colRight - stage.left + 4;
-      const x2 = c.left - stage.left - 4;
-      const y2 = c.top - stage.top + 14;
+      if (!t || t.bottom < stage.top || t.top > stage.bottom) continue;
+      jobs.push({ k, t, c: card.getBoundingClientRect() });
+    }
+
+    // Rows of roughly the same height share a lane each. Centred on the true height,
+    // so a lone tendril is not nudged off its underline to make room for nobody.
+    const ROW = 8, LANE = 3.5, FAN = 7;
+    const rows = new Map();
+    for (const j of jobs) {
+      const key = Math.round((j.t.bottom - stage.top) / ROW);
+      if (!rows.has(key)) rows.set(key, []);
+      rows.get(key).push(j);
+    }
+    for (const group of rows.values()) {
+      group.sort((p, q) => p.t.right - q.t.right);
+      group.forEach((j, i) => {
+        j.lane = (i - (group.length - 1) / 2) * LANE;
+        // Fan the turns as well, or the curves merge again in the gutter even when
+        // the straight runs are apart.
+        j.fan = i * FAN;
+      });
+    }
+
+    while (leadEls.length < jobs.length) {
+      const path = document.createElementNS(NS, 'path');
+      const dot = document.createElementNS(NS, 'circle');
+      dot.setAttribute('r', '0');
+      $leads.append(path, dot);
+      leadEls.push([path, dot]);
+    }
+    for (let n = jobs.length; n < leadEls.length; n++) leadEls[n][0].setAttribute('d', '');
+
+    jobs.forEach((j, n) => {
+      const [path] = leadEls[n];
+      // The underline continues into the tendril: it leaves from the end of the phrase
+      // at the underline's own height and runs beneath the words that follow — at
+      // descender level, not through the letters — before turning for the card.
+      const x1 = j.t.right - stage.left;
+      const y1 = j.t.bottom - stage.top + 1 + (j.lane || 0);
+      const x2 = j.c.left - stage.left - 4;
+      const y2 = j.c.top - stage.top + 14;
       // Straight under the remaining words to the edge of the column, then a curve.
       // A bezier from the word directly would sweep up through the line above it.
-      const from = Math.max(turn, x1);
+      const from = Math.max(colRight - stage.left + 4 + (j.fan || 0), x1);
       const bend = Math.max(24, (x2 - from) * 0.4);
       path.setAttribute('d',
         `M${x1.toFixed(1)},${y1.toFixed(1)} H${from.toFixed(1)} `
         + `C${(from+bend).toFixed(1)},${y1.toFixed(1)} ${(x2-bend).toFixed(1)},${y2.toFixed(1)} `
         + `${x2.toFixed(1)},${y2.toFixed(1)}`);
-      dot.setAttribute('r', '0');
-      // The cue's own colour, so three tendrils leaving one paragraph are told apart
+      // The cue's own colour, so several tendrils leaving one paragraph are told apart
       // by the same code as their cards — and so a line running under a sentence is
       // read as belonging to the rail rather than as part of the typography.
-      const stroke = CUE_STROKE[cues[k].colour] || '';
-      path.style.stroke = stroke;
-      const isNow = cues[k].lineIndex === current;
-      path.classList.toggle('now', isNow);
+      path.style.stroke = CUE_STROKE[cues[j.k].colour] || '';
+      path.classList.toggle('now', cues[j.k].lineIndex === current);
     });
   }
 
