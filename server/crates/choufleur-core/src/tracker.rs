@@ -286,6 +286,31 @@ pub struct TrackerConfig {
     /// Generous, because a monologue legitimately holds one line for a long time —
     /// the La Reprise documentary monologue has 25-second lines.
     pub stall_to_lost_s: f64,
+    /// Also score the recent segments *together* while the position is stalled.
+    ///
+    /// The segmenter caps a segment at five seconds, so a sixteen-second speech
+    /// arrives as three or four fragments and each is scored alone against the whole
+    /// line. A fragment agrees with a fraction of a 173-word line however perfectly it
+    /// was heard, so the score is low and long lines sit at `Block` — reported twice
+    /// from the chair, as *"longer text blocks at faster speed give the tracking
+    /// mechanism difficulties"* and *"accuracy on longer passages could be slightly
+    /// improved"*.
+    ///
+    /// This is the same fault `overlap_exp` addressed from the other side. That
+    /// tolerated the length mismatch and was the largest single win of its day; this
+    /// removes the mismatch, by comparing everything just heard against the line
+    /// instead of the newest slice of it.
+    ///
+    /// Bounded by the stall, which is what makes it safe: the buffer is cleared the
+    /// instant the position advances, so it only ever grows while the show is saying
+    /// something the tracker cannot get past — exactly the long-passage case. Left
+    /// unbounded it would eventually match a long line somewhere else and take the
+    /// show with it.
+    pub accumulate_enabled: bool,
+    /// **[sweep]** Longest stretch of recent speech to combine, in seconds.
+    pub accumulate_max_s: f64,
+    /// Fewest fragments worth combining. One is just the segment again.
+    pub accumulate_min_segments: usize,
     /// **[sweep]** How many times a hold's stated duration it may go on protecting the
     /// position before normal judgement resumes. 0 disables the cap.
     ///
@@ -493,6 +518,9 @@ impl Default for TrackerConfig {
             min_relocate_tokens: 4,
             jump_pending_ttl_s: 8.0,
             stall_to_lost_s: 90.0,
+            accumulate_enabled: true,
+            accumulate_max_s: 20.0,
+            accumulate_min_segments: 2,
             hold_protect_factor: 2.0,
             noise_floor: 0.0,
             challenger_enabled: true,
@@ -561,6 +589,10 @@ pub struct Tracker<'a> {
     holding: bool,
     /// Speech heard since this hold began, for `hold_protect_factor`.
     held_speech_s: f64,
+    /// Recent segment text, newest last, for `accumulate_enabled`. Cleared whenever
+    /// the position advances, so it holds exactly the speech the tracker has not yet
+    /// got past.
+    recent: std::collections::VecDeque<(f64, String)>,
     /// Best score anywhere in the script for the segment being handled, so that a
     /// segment nothing can explain is recognised as noise rather than as divergence.
     /// See `noise_floor`.
@@ -587,6 +619,7 @@ impl<'a> Tracker<'a> {
             incumbent_evidence: 0.0,
             holding: false,
             held_speech_s: 0.0,
+            recent: std::collections::VecDeque::new(),
             best_anywhere: 0.0,
             spans: Vec::new(),
             landmark_spans: Vec::new(),
@@ -673,7 +706,31 @@ impl<'a> Tracker<'a> {
             }
         }
 
-        let Some(best) = self.best_candidate(seg, weak) else {
+        // Everything heard since the position last moved, as one text.
+        //
+        // Scored *as well as* the newest fragment, never instead of it: a combination
+        // is the better explanation of a long line and a worse one of a short line,
+        // and `overlap_exp` already prices that difference, so taking whichever wins
+        // needs no further rule. Both runs are safe because `best_candidate` clears
+        // the per-language memo at its top — otherwise the second would be scored
+        // against the first's normalised text.
+        //
+        // Matching is microseconds against a ~190 ms decode, so doing it twice is free.
+        let combined = self.combined_segment(seg, weak);
+        let alone = self.best_candidate(seg, weak);
+        let together = combined.as_ref().and_then(|c| self.best_candidate(c, weak));
+        // Whichever explains the span better wins, wherever it points.
+        //
+        // Tried confining the combined candidate to the ordinary window, on the theory
+        // that accumulated text is good evidence about progress and poor evidence about
+        // location. Measured: it removed none of the long moves it was aimed at and
+        // cost 57 s of lost time, so the theory was wrong about where those moves come
+        // from and the restriction was paying for nothing.
+        let picked = match (alone, together) {
+            (Some(a), Some(t)) => Some(if t.0.score > a.0.score { t } else { a }),
+            (a, t) => a.or(t),
+        };
+        let Some(best) = picked else {
             events.push(TrackerEvent::Rejected {
                 reason: if weak {
                     RejectReason::WeakEvidence
@@ -846,6 +903,10 @@ impl<'a> Tracker<'a> {
     ) {
         let from = self.confidence;
         let advanced = best.span.last() > self.position;
+        // The show has moved on, so nothing before this is still waiting to be matched.
+        if advanced {
+            self.recent.clear();
+        }
         self.position = best.span.last();
 
         if advanced {
@@ -968,6 +1029,45 @@ impl<'a> Tracker<'a> {
             return;
         };
         self.demote(target, events);
+    }
+
+    /// The recent segments as one segment, when combining them is worth trying.
+    ///
+    /// Carries the newest segment's channel, language and timing so anything reading
+    /// those sees the truth; only the *text* is the combination. Used to score and
+    /// never to accept — `accept` takes the real segment, because it sets
+    /// `last_match_t` and the stall clock from the segment's own times while the
+    /// combination spans the whole buffer.
+    fn combined_segment(
+        &mut self,
+        seg: &TranscriptSegment,
+        weak: bool,
+    ) -> Option<TranscriptSegment> {
+        if !self.cfg.accumulate_enabled || weak || self.holding {
+            return None;
+        }
+        // Interims are prefixes of a segment still being spoken, so buffering them
+        // would count the same words twice over.
+        if !seg.interim {
+            self.recent.push_back((seg.t_end, seg.text.clone()));
+        }
+        let cutoff = seg.t_end - self.cfg.accumulate_max_s;
+        while self.recent.front().is_some_and(|(t, _)| *t < cutoff) {
+            self.recent.pop_front();
+        }
+        // Only while the show is saying something the tracker has not got past. A
+        // position that is advancing needs no help, and combining across an advance
+        // would compare one line's words against the next line's.
+        if self.stalled_speech_s <= 0.0 || self.recent.len() < self.cfg.accumulate_min_segments {
+            return None;
+        }
+        let text = self
+            .recent
+            .iter()
+            .map(|(_, t)| t.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        Some(TranscriptSegment { text, ..seg.clone() })
     }
 
     /// Has this hold been protecting the position for longer than the operator said it

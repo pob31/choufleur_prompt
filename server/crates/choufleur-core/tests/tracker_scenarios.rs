@@ -231,9 +231,14 @@ fn skip_tolerance_advances_past_material_that_was_never_heard() {
 
 #[test]
 fn a_large_jump_is_believed_only_on_the_second_sighting() {
+    // Accumulation off: this pins how a *single* fragment is judged. Combining recent
+    // segments makes the incumbent a stronger explanation, so a distant match stops
+    // being proposed at all and there is no pending jump to observe — a real change,
+    // recorded in the notes, not something to assert away here.
+
     let script = toy_script();
     let p = prepared(&script);
-    let mut tracker = Tracker::new(&p, TrackerConfig::default());
+    let mut tracker = Tracker::new(&p, TrackerConfig { accumulate_enabled: false, ..TrackerConfig::default() });
     let mut sb = SegBuilder::new();
 
     tracker.update(&sb.say(Some(A), "Tu ne devrais pas être ici.", 2.0));
@@ -488,9 +493,14 @@ fn a_one_word_line_confirms_the_next_line_but_cannot_relocate_the_show() {
 
 #[test]
 fn a_distant_match_makes_the_tracker_uncertain_even_before_it_moves() {
+    // Accumulation off: this pins how a *single* fragment is judged. Combining recent
+    // segments makes the incumbent a stronger explanation, so a distant match stops
+    // being proposed at all and there is no pending jump to observe — a real change,
+    // recorded in the notes, not something to assert away here.
+
     let script = toy_script();
     let p = prepared(&script);
-    let mut tracker = Tracker::new(&p, TrackerConfig::default());
+    let mut tracker = Tracker::new(&p, TrackerConfig { accumulate_enabled: false, ..TrackerConfig::default() });
     let mut sb = SegBuilder::new();
 
     tracker.update(&sb.say(Some(A), "Tu ne devrais pas être ici.", 2.0));
@@ -865,7 +875,7 @@ fn audio_nothing_in_the_script_explains_can_be_made_to_cost_the_position_nothing
         ..TrackerConfig::default()
     };
     for (cfg, expect_decay) in [(TrackerConfig::default(), true), (quiet, false)] {
-        let mut tracker = Tracker::new(&prepared, cfg);
+        let mut tracker = Tracker::new(&prepared, TrackerConfig { accumulate_enabled: false, ..cfg });
         let mut segs = SegBuilder::new();
         tracker.update(&segs.say(Some(A), "Tu ne devrais pas être ici.", 2.0));
         let before = tracker.confidence();

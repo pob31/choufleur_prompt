@@ -1811,3 +1811,59 @@ makes this material hard.**
 Left at 40 as the default: 50 is inside the noise, and a number that helps one corpus by
 0.007 is not a default worth moving. The flag exists now so the next person can measure
 their own feed instead of inheriting ours.
+
+### AJ. Overlap matching, and a metric that was measuring the wrong thing
+
+*"Accuracy on longer passages could be slightly improved."* The segmenter caps a segment
+at five seconds, so a sixteen-second speech arrives as three or four fragments and each
+is scored **alone** against the whole line. A fragment agrees with a fraction of a
+173-word line however perfectly it was heard, so long lines sit at `Block`.
+
+`accumulate_enabled`: while the position is stalled, also score the concatenation of the
+recent segments and take whichever explains the span better. Bounded by the stall — the
+buffer is cleared the instant the position advances — so it only grows while the show is
+saying something the tracker cannot get past.
+
+| | 6-line | p90 | lost | word | line | **block** |
+| --- | --- | --- | --- | --- | --- | --- |
+| night 16 off | 94 % | 1 | 272 s | 10.8 % | 45.8 % | **40.1 %** |
+| night 16 on | 93 % | 2 | **38 s** | 14.8 % | 62.0 % | **22.7 %** |
+| night 17 off | 95 % | 1 | 171 s | 9.6 % | 51.8 % | **38.0 %** |
+| night 17 on | 94 % | 1 | **4 s** | 13.9 % | 66.6 % | **19.4 %** |
+
+Block time roughly halves on both nights and lost time collapses. Per finding Y that is
+the quantity an operator experiences as lag and as trustworthiness, so this is the
+target squarely hit. The cost is one point of window accuracy on each night.
+
+**The operator caught the metric.** *"`>=15` doesn't take into account the long
+paragraphs?"* It does not, and the unit was wrong: the median line is 10 words, the
+longest is 393, and 88 lines exceed 50 — so fifteen short exchanges and fifteen long
+paragraphs are the same number and wildly different amounts of show. Recounted in words
+skipped, night 17 goes from **8 consequential moves to 11**, not 3 to 8 — the line
+metric had been *exaggerating* the regression while *hiding* that the baseline already
+had eight moves it was scoring as three.
+
+And recounted, the moves turn out to be **paired excursions that undo themselves**:
+`820 → 689` then `689 → 820` twelve seconds later, `138 → 41` then back ten seconds
+later. So eleven "moves" is about five round trips, and the failure is a brief flicker
+rather than being lost. Against 171 s → 4 s that is a trade worth taking, and it is a
+flag either way.
+
+Not linked to holds — asked, and checked: none of the excursions touch a hold line.
+
+**Tried and reverted:** confining the combined candidate to the ordinary window, on the
+theory that accumulated text is good evidence about progress and poor evidence about
+location. It removed none of the long moves it was aimed at and cost 57 s of lost time,
+so the theory was wrong about where they come from.
+
+Three scenario tests now pin `accumulate_enabled: false` explicitly. They exercise how a
+*single* fragment is judged, and accumulation genuinely changes that — a stronger
+incumbent means a distant match stops being proposed at all, so there is no pending jump
+to observe. Recorded rather than asserted away: it means the pending-jump guard is
+weaker with accumulation on, and the excursions above are probably the same fact seen
+from the other side.
+
+**Next, if the excursions are worth chasing:** they have the signature of challenger
+adoptions, and the same paired shape appeared when the challenger was briefly allowed to
+run during holds. The word-based move count belongs in `metrics.py` — the line-based one
+should not be quoted again.
