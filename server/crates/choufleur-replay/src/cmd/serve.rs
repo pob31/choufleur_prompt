@@ -38,7 +38,19 @@ use crate::monitor::Monitor;
 /// Where the page is read from while iterating, if it is present.
 ///
 /// Compiled-in remains the fallback so a built binary is still self-contained.
-const ASSET_PATH: &str = "server/crates/choufleur-replay/assets/live.html";
+///
+/// Resolved against the crate directory at compile time, **not** against the working
+/// directory. It was a repo-relative path, which meant it only resolved when the
+/// binary happened to be run from the repository root — and from anywhere else the
+/// lookup quietly failed and the page fell back to `include_str!`. That is worse than
+/// no disk-serving at all: edits to the page appear to do nothing until the next
+/// `cargo build` bakes them in, so a fix and a failed fix look identical. It cost an
+/// afternoon here, twice, and the second time the operator was the one reporting that
+/// a button did not work.
+const ASSET_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/live.html"
+);
 
 /// Play a file to the monitor, on a thread that does nothing else.
 ///

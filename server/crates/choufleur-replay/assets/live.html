@@ -755,7 +755,11 @@
     const bDelete = document.createElement('button');
     bDelete.className = 'danger';
     let armed = false;
+    // Set when this editor is being torn down on purpose, so the focus handlers do
+    // not treat the teardown as the operator clicking away.
+    let closing = false;
     bDelete.textContent = 'delete';
+    bDelete.onmousedown = (e) => e.preventDefault();
     bDelete.onclick = (e) => {
       e.preventDefault();
       if (!armed) {
@@ -768,9 +772,22 @@
           bDelete.textContent = 'delete';
           bDelete.classList.remove('armed');
         }, 4000);
+        // Put the caret back, or the editor closes underneath the armed button.
+        //
+        // WebKit does not focus a <button> when it is clicked, so the click blurs the
+        // textarea, `focusout` fires with a null relatedTarget, and the editor commits
+        // and closes — taking the half-armed button with it. The next click lands on a
+        // freshly rebuilt, disarmed button, so the second step can never be reached and
+        // delete looks simply broken. Every other control in this row already ends in
+        // `txt.focus()`, which is exactly why they work and this did not.
+        txt.focus();
         return;
       }
-      openEditor = null;          // nothing to commit; the line is going
+      // Closing deliberately: suppress the commit that dismantling the box would
+      // otherwise trigger. Saving a line on its way out is harmless here but writes a
+      // spurious edit to disk and to every other screen.
+      closing = true;
+      openEditor = null;
       box.replaceWith(el);
       ws.send(JSON.stringify({ type: 'delete_line', lineIndex: i }));
     };
@@ -779,6 +796,7 @@
     const bInsert = document.createElement('button');
     bInsert.className = 'insert';
     bInsert.textContent = 'insert line below';
+    bInsert.onmousedown = (e) => e.preventDefault();
     bInsert.onclick = (e) => {
       e.preventDefault();
       // Save this line first: the insert renumbers everything below it, so an edit
@@ -796,6 +814,8 @@
     el.replaceWith(box);
 
     const done = (commit) => {
+      if (closing) return;
+      closing = true;
       openEditor = null;
       const newText = txt.value.trim();
       const newWho = who.value.trim();
@@ -836,6 +856,7 @@
     // Committing on blur would fire when tabbing between the two fields, so the
     // editor closes only on an explicit key or a click elsewhere.
     box.addEventListener('focusout', (e) => {
+      if (closing) return;
       if (!box.contains(e.relatedTarget)) done(true);
     });
     fit();
