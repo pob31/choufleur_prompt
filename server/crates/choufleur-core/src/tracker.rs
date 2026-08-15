@@ -159,6 +159,23 @@ pub struct TrackerConfig {
     /// Left equal to `margin`, and left as a knob so the next attempt starts from a
     /// measurement rather than from this paragraph.
     pub lost_margin: f64,
+    /// How far ahead counts as a jump rather than an advance.
+    ///
+    /// Retained but **unused** by the threshold rule: charging extra for a long
+    /// forward move was measured and rejected. See `jump_threshold`.
+    pub jump_gap: usize,
+    /// Score a forward move beyond `jump_gap` must reach — **0.0, disabled.**
+    ///
+    /// It sounded symmetric with `backward_threshold` and it is not. Measured at 0.78
+    /// on both nights: night 16 unchanged, night 17 lost 110 lines of coverage and its
+    /// time-lost went from 153 s to 1222 s. Skipping ahead is *routine* — a cut, a
+    /// dropped exchange, a company running faster than the script — so a toll on
+    /// forward travel stops the tracker keeping up with the show, while the same toll
+    /// backwards costs nothing because going back is genuinely rare.
+    ///
+    /// The asymmetry is the finding: distance alone is not what makes a move
+    /// suspicious, direction is.
+    pub jump_threshold: f64,
     /// Score a match must reach to move the position *backwards*, while not lost.
     ///
     /// Deliberately far above `accept_threshold`. Not applied when lost, because then
@@ -306,6 +323,8 @@ impl Default for TrackerConfig {
             accept_threshold: 0.62,
             word_threshold: 0.88,
             margin: 0.06,
+            jump_gap: 12,
+            jump_threshold: 0.0,
             backward_threshold: 0.88,
             rival_min_gap: 4,
             phonetic_similarity: true,
@@ -499,8 +518,29 @@ impl<'a> Tracker<'a> {
         // every subsequent line disagrees and it stays wrong until it is lost.
         //
         // Forward mistakes self-correct — the show walks into them.
-        let going_back = best.span.last() < self.position;
-        let move_threshold = if going_back && !matches!(self.confidence, Confidence::Lost) {
+        // Distance costs evidence, in both directions.
+        //
+        // A show is continuous: the next line is overwhelmingly the most likely, and
+        // any proposal to move a long way is claiming something rare happened. Rare
+        // claims need more evidence than routine ones — and the sharpest case is an
+        // exact repeat, which scores near 1.0 wherever it sits, so only distance can
+        // tell the copy in front of us from the copy three hundred lines away.
+        //
+        // Backward stays steeper than forward: a wrong backward move re-reads ground
+        // the show has left, so every later line disagrees and it cannot self-correct,
+        // while a wrong forward move is walked into and fixed.
+        //
+        // Reported from a live run — the scene-4 performance of the Euripides text
+        // that scene 2 only reads. Tonight's backward rule already blocked the copy
+        // behind (0.70 after the distance prior, under a 0.88 bar); the copy *ahead*
+        // had nothing to clear at all.
+        let target = best.span.last();
+        let going_back = target < self.position;
+        let move_threshold = if matches!(self.confidence, Confidence::Lost) {
+            // Nothing to preserve: every direction is equally unknown, and demanding
+            // more here would only lengthen the relocation this exists to allow.
+            move_threshold
+        } else if going_back {
             move_threshold.max(self.cfg.backward_threshold)
         } else {
             move_threshold

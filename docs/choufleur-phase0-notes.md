@@ -1356,3 +1356,49 @@ how far a proposal departs from it.
 Related, and now unblocked: **cut lines still compete in the matcher.** They are marked
 and displayed but not excluded, so a struck line can win — and tomorrow cues start
 hanging off specific lines, where a wrong page costs more than it does today.
+
+### AA. Scene 4: eight versions of one question, and a symmetry that is not one
+
+The operator, still watching: *"scene 4 has long repeated lines — lawyer insisting with
+her question over and over."* The script:
+
+    L0370  Quel genre de mère abandonne son enfant, au moment où…
+    L0372  D'accord. Alors quel genre de mère laisse son enfant…
+    L0374  Très bien. Je reformule : « Quel genre de mère laisse… »
+    L0376  « Madame Nadia Roger, vous pouvez répondre ? Quel genre… »
+    L0378  « Quel genre de mère laisse son enfant à d'autres personnes… »
+    L0380  … identical to L0378
+    L0382  Des centaines de fois. « Quel genre de mère laisse… »
+    L0393  … identical again
+
+Eight versions of one question across twenty-five lines, pairwise similarity up to
+**1.00**. A prosecutor wearing a witness down — deliberate, dramatic, and the worst
+case a position tracker can be handed. Every copy ties with every other, the ambiguity
+rule refuses them all, confidence decays, and the tracker is lost in the middle of a
+scene where an operator can see exactly where the show is.
+
+The gaps are **1, 2, 4, 6, 8, 10, 11, 12, 13, 14, 15, 17, 19, 21, 23, 25**, which is
+why tonight's two guards both miss: `rival_min_gap` (4) covers the tightest pairs and
+`jump_gap` (12) only bites above twelve. Everything between is a rival *and* not a
+jump.
+
+The fix is a **confusable set precomputed per line** — lines within a bounded window
+whose text is near-identical stop counting as rivals, so the matcher takes the nearest
+instead of refusing. Refusing is the worst available answer: the copies say the same
+words, so any of them puts the right text on screen. Started and reverted unfinished;
+tomorrow's job.
+
+**And a symmetry that turned out not to exist.** The operator's earlier note — a large
+*forward* jump should cost more evidence, like a backward one — sounded obviously
+right and measured badly:
+
+| | night 16 | night 17 |
+| --- | --- | --- |
+| no forward toll | 691 reached, 253 s lost | **687 reached, 153 s lost** |
+| forward toll 0.78 above 12 lines | 691 reached, 253 s lost | **577 reached, 1222 s lost** |
+
+Night 17 loses 110 lines of coverage and eight times the lost time. Skipping ahead is
+*routine* — a cut, a dropped exchange, a company running fast — so a toll on forward
+travel stops the tracker keeping up with the show, while the identical toll backwards
+costs nothing because going back is genuinely rare. **Distance is not what makes a move
+suspicious; direction is.** Reverted, with the knob and the numbers kept.
