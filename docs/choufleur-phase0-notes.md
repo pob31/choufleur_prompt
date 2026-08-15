@@ -1265,3 +1265,38 @@ milliseconds through the pipeline.** Being lost or uncertain is what feels like 
 because the page holds still while the room moves on. The lever was in the matcher, and
 chasing it as a performance problem — smaller model, shorter interims, more threads —
 would have spent the effort in the wrong place and made recognition worse on the way.
+
+### Z. Rarity weighting is wrong here, and why that is not obvious
+
+Asked for: lightweight, fast semantic matching that copes with paraphrase. The cheapest
+candidate is IDF weighting — count each token by how rare it is in the script, so
+`Polymestor` outweighs `le`. It needs no model, no download and no time in the hot
+path, and it is standard practice in every retrieval system.
+
+Measured on night 16, every script line against the passage that best explains it:
+
+| band | equal weights | IDF weighted |
+| --- | --- | --- |
+| not found (<0.30) | 10 | **36** |
+| paraphrased (0.30–0.62) | 298 | 287 |
+| recognisable (0.62–0.85) | 272 | 268 |
+| as written (>0.85) | 191 | 180 |
+
+Mean 0.680 → 0.662, with 317 lines worse against 128 better. **It hurts.**
+
+The reason is specific to this problem and inverts the usual assumption. IDF assumes
+rare words are *reliable* — in a document collection they are, because the text is what
+it is. Here the text arrives through a recogniser, and finding on the same corpus was
+that the rare words are precisely the ones it destroys: `Hécube` → *cubes*, `Polyxène`
+→ *problème*, `Euripide` → *épisode*. Weighting by rarity is therefore weighting by
+unreliability, while the function words that survive recognition intact get discounted
+for being common.
+
+Two consequences worth keeping. Any scheme that leans on distinctive vocabulary —
+IDF, keyword extraction, landmark-only matching — inherits this, and the lexicon
+prompt is the *right* response to the same fact, since it repairs the rare words
+rather than trusting or discounting them. And the paraphrase band is 298 lines, so the
+question stands: the answer is more likely learned alternates, which record what the
+company actually says (built, and measured to generalise across nights in finding K),
+than sentence embeddings, which would raise the floor under every candidate at a
+moment when the measured problem is ambiguity rather than absence of a match.
