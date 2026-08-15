@@ -244,6 +244,13 @@
     margin-left: 1.4em; padding-left: .9em; border-left: 2px solid var(--edge);
   }
   .line.stage .who { display: none; }
+  /* Nobody speaks music, and nobody speaks a silence. The rule is on the hold rather
+     than on the kind because a marker inserted from the page inherits the speaker of
+     the line above it — so a music cue added mid-scene arrives attributed to whoever
+     was last talking, which is worse than unattributed: it reads as a line they say.
+     `adlib` keeps its speaker: an improvised passage is still somebody improvising. */
+  .line[data-hold="music"] .who,
+  .line[data-hold="silence"] .who { display: none; }
   /* Read aloud, so it *is* heard and the matcher does look for it. In this show
      that is Euripides' didascalies, which Séphora reads as part of the performance;
      Rodrigues' own describe what the company does and are never voiced. The operator
@@ -1709,10 +1716,13 @@
       + (l.flag ? ' flagged' : '');
     el.textContent = '';
     if (l.hold) {
+      el.dataset.hold = l.hold;
       const tag = document.createElement('span');
       tag.className = 'tag';
       tag.textContent = HOLD_LABEL[l.hold] || l.hold;
       el.appendChild(tag);
+    } else {
+      delete el.dataset.hold;
     }
     const who = document.createElement('span');
     who.className = 'who';
