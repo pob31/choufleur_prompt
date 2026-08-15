@@ -104,6 +104,14 @@
      word without the word being obscured by it. */
   #leads {
     position: absolute; inset: 0; z-index: 1; pointer-events: none; overflow: visible;
+    /* Explicit, and not redundant with `inset: 0`.
+       An <svg> is a replaced element, so `width: auto` resolves to its *intrinsic*
+       size — 300 x 150 px — rather than stretching between the offsets the way a div
+       does. The canvas therefore sat in the top-left corner at postcard size, and
+       tendrils were drawn correctly and clipped away everywhere below it. Reported
+       exactly as "only visible when the cues are in the top part of the screen",
+       which is the shape of a 150-pixel-tall box. */
+    width: 100%; height: 100%;
   }
   #leads path { fill: none; stroke: var(--dimmer); stroke-width: 1; }
   #leads path.now { stroke: var(--now); stroke-width: 1.5; }
