@@ -114,6 +114,7 @@ pub fn run(
     output_device: Option<String>,
     buffer_ms: u32,
     trace_out: Option<PathBuf>,
+    prep: bool,
 ) -> Result<()> {
     let corpus = Corpus::load(corpus_path, audio_root)?;
     let (script, prepared) = super::load_script(&corpus.script_path())?;
@@ -127,6 +128,20 @@ pub fn run(
             text: l.text.clone(),
             scene: l.scene.clone(),
             cut: l.cut,
+            kind: match l.kind {
+                choufleur_core::script::LineKind::Stage => "stage",
+                choufleur_core::script::LineKind::Dialogue => "dialogue",
+            }
+            .to_string(),
+            spoken: l.spoken,
+            hold: l.hold.map(|h| {
+                match h {
+                    choufleur_core::script::Hold::Silence => "silence",
+                    choufleur_core::script::Hold::Music => "music",
+                    choufleur_core::script::Hold::Adlib => "adlib",
+                }
+                .to_string()
+            }),
         })
         .collect();
 
@@ -141,7 +156,15 @@ pub fn run(
         tx,
         audible_until: Mutex::new(if monitor { 0.0 } else { f64::INFINITY }),
         steer: Mutex::new(Vec::new()),
+        prep,
     });
+
+    // Nothing to load, nothing to play, nothing to decode. Serve the script and wait.
+    if prep {
+        println!("script:  {} lines", state.lines.lock().unwrap().len());
+        println!("prep mode — no audio, no recognition; the script is here to be edited");
+        return serve_http(state, port);
+    }
 
     let mut ecfg = EngineConfig::new(
         super::resolve_model(whisper_model, super::DEFAULT_WHISPER_MODEL)?,
@@ -324,13 +347,7 @@ fn run_engine(
 /// The running matcher keeps the text it was prepared with: `PreparedScript` is built
 /// once and borrowed by the tracker for the length of the run. So a correction reaches
 /// every screen immediately and reaches the *matching* from the next run.
-fn write_line_edit(
-    path: &Path,
-    index: usize,
-    text: &str,
-    character: Option<&str>,
-    cut: bool,
-) -> Result<()> {
+fn write_line_edit(path: &Path, index: usize, edit: &LineEdit) -> Result<()> {
     let raw = std::fs::read_to_string(path)?;
     let mut doc: serde_json::Value = serde_json::from_str(&raw)?;
     let line = doc
@@ -338,17 +355,41 @@ fn write_line_edit(
         .and_then(|l| l.as_array_mut())
         .and_then(|l| l.get_mut(index))
         .context("no such line in the script")?;
-    line["text"] = serde_json::Value::String(text.to_string());
-    if let Some(c) = character {
-        line["character"] = serde_json::Value::String(c.to_string());
+    line["text"] = serde_json::Value::String(edit.text.clone());
+    if let Some(c) = &edit.character {
+        line["character"] = serde_json::Value::String(c.clone());
     }
     // Written even when false, so restoring a line is as durable as cutting one. A
     // cut that cannot be undone is a deletion wearing a different name.
-    line["cut"] = serde_json::Value::Bool(cut);
+    line["cut"] = serde_json::Value::Bool(edit.cut);
+    // `spoken` likewise, always and explicitly. Its default depends on the kind, so
+    // leaving it out would mean flipping a line from stage back to dialogue silently
+    // changed whether it can be matched — and the operator setting it needs to see
+    // which way round it is, in the file as well as on the page.
+    line["kind"] = serde_json::Value::String(edit.kind.clone());
+    line["spoken"] = serde_json::Value::Bool(edit.spoken);
+    match &edit.hold {
+        Some(h) => line["hold"] = serde_json::Value::String(h.clone()),
+        None => {
+            if let Some(o) = line.as_object_mut() {
+                o.remove("hold");
+            }
+        }
+    }
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
     std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+/// One line's worth of correction, as it arrives from the page.
+struct LineEdit {
+    text: String,
+    character: Option<String>,
+    cut: bool,
+    kind: String,
+    spoken: bool,
+    hold: Option<String>,
 }
 
 /// The HTTP side: the page, the script, and the position stream.
@@ -443,24 +484,57 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                             // an edit that only fixes a typo does not
                                             // silently un-cut a struck line.
                                             let cut = v.get("cut").and_then(|c| c.as_bool());
-                                            let cut = {
+                                            // `hold` carries three states, not two:
+                                            // absent leaves it alone, null clears it,
+                                            // a string sets it. Collapsing null into
+                                            // absent would make a hold impossible to
+                                            // remove once placed.
+                                            let hold_given = v.get("hold");
+                                            let kind = v
+                                                .get("kind")
+                                                .and_then(|k| k.as_str())
+                                                .filter(|k| *k == "stage" || *k == "dialogue")
+                                                .map(str::to_string);
+                                            let spoken = v.get("spoken").and_then(|b| b.as_bool());
+                                            let edit = {
                                                 let mut lines = inbound.lines.lock().unwrap();
-                                                lines[i].text = text.clone();
+                                                let l = &mut lines[i];
+                                                l.text = text.clone();
                                                 if let Some(c) = &character {
-                                                    lines[i].character = c.clone();
+                                                    l.character = c.clone();
                                                 }
                                                 if let Some(c) = cut {
-                                                    lines[i].cut = c;
+                                                    l.cut = c;
                                                 }
-                                                lines[i].cut
+                                                if let Some(k) = kind {
+                                                    l.kind = k;
+                                                }
+                                                if let Some(b) = spoken {
+                                                    l.spoken = b;
+                                                }
+                                                if let Some(h) = hold_given {
+                                                    l.hold = h
+                                                        .as_str()
+                                                        .filter(|h| {
+                                                            matches!(
+                                                                *h,
+                                                                "silence" | "music" | "adlib"
+                                                            )
+                                                        })
+                                                        .map(str::to_string);
+                                                }
+                                                LineEdit {
+                                                    text: l.text.clone(),
+                                                    character: character.clone(),
+                                                    cut: l.cut,
+                                                    kind: l.kind.clone(),
+                                                    spoken: l.spoken,
+                                                    hold: l.hold.clone(),
+                                                }
                                             };
-                                            if let Err(e) = write_line_edit(
-                                                &inbound.script_path,
-                                                i,
-                                                &text,
-                                                character.as_deref(),
-                                                cut,
-                                            ) {
+                                            if let Err(e) =
+                                                write_line_edit(&inbound.script_path, i, &edit)
+                                            {
                                                 eprintln!("could not save the edit: {e:#}");
                                             } else {
                                                 println!("edited line {}: {text}", i + 1);
@@ -469,7 +543,10 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                 line_index: i,
                                                 text,
                                                 character,
-                                                cut,
+                                                cut: edit.cut,
+                                                kind: edit.kind,
+                                                spoken: edit.spoken,
+                                                hold: edit.hold,
                                             });
                                         }
                                         _ => {}

@@ -35,6 +35,14 @@ pub struct LineView {
     pub text: String,
     pub scene: String,
     pub cut: bool,
+    /// `"dialogue"` or `"stage"`.
+    pub kind: String,
+    /// Whether anyone says it out loud — which for a stage direction is a real
+    /// question, not a formality. See `ScriptLine::spoken`.
+    pub spoken: bool,
+    /// `"silence"`, `"music"`, `"adlib"`, or absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hold: Option<String>,
 }
 
 /// Where the show is. `None` before the first fix.
@@ -93,6 +101,8 @@ pub enum Update {
         title: Option<String>,
         line_count: usize,
         position: Option<Position>,
+        /// No audio, no engine — the page is here to be edited, not watched.
+        prep: bool,
     },
     PositionUpdate(Position),
     /// A line was corrected; every client should update its copy.
@@ -101,6 +111,9 @@ pub enum Update {
         text: String,
         character: Option<String>,
         cut: bool,
+        kind: String,
+        spoken: bool,
+        hold: Option<String>,
     },
     /// What the recogniser actually heard, and what became of it.
     ///
@@ -166,6 +179,14 @@ pub struct LiveState {
     /// A queue rather than a direct call because the tracker belongs to the engine
     /// thread, which must never be interrupted mid-decode.
     pub steer: Mutex<Vec<usize>>,
+    /// Prep mode: the script is served for editing and nothing is running.
+    ///
+    /// Everything the operator has to set — which lines are cut, which are stage
+    /// directions, which of those are read aloud, where tracking should wait for
+    /// music — is script preparation, and preparation does not happen during a show.
+    /// It happens at a table, days earlier, with no sound card and no two-hour wait
+    /// to see the passage you are working on.
+    pub prep: bool,
 }
 
 impl LiveState {
@@ -175,6 +196,7 @@ impl LiveState {
             title: self.title.clone(),
             line_count: self.lines.lock().unwrap().len(),
             position: *self.latest.lock().unwrap(),
+            prep: self.prep,
         }
     }
 }
@@ -306,6 +328,9 @@ mod tests {
                 text: "Silence, mes amies.".into(),
                 scene: "sc-1".into(),
                 cut: false,
+                kind: "dialogue".into(),
+                spoken: true,
+                hold: None,
             }]),
             latest: Mutex::new(None),
             t_audio: Mutex::new(0.0),
@@ -313,11 +338,34 @@ mod tests {
             tx,
             audible_until: Mutex::new(f64::INFINITY),
             steer: Mutex::new(Vec::new()),
+            prep: false,
         };
         let s = serde_json::to_string(&state.hello()).unwrap();
         assert!(s.contains(r#""type":"hello""#), "{s}");
         assert!(s.contains(r#""lineCount":1"#), "{s}");
         assert!(s.contains(r#""position":null"#), "{s}");
+        assert!(s.contains(r#""prep":false"#), "{s}");
+    }
+
+    #[test]
+    fn a_stage_direction_crosses_the_wire_with_its_voicing_and_its_hold() {
+        // Three separate facts about one line, and this show is why they cannot be
+        // collapsed: a didascalie may be read aloud (Euripides', which Séphora
+        // performs) or never voiced (Rodrigues'), and either may or may not be a
+        // point where tracking should wait.
+        let u = Update::LineEdited {
+            line_index: 3,
+            text: "Chorégraphie sur la musique d'Otis Redding.".into(),
+            character: None,
+            cut: false,
+            kind: "stage".into(),
+            spoken: false,
+            hold: Some("music".into()),
+        };
+        let s = serde_json::to_string(&u).unwrap();
+        assert!(s.contains(r#""kind":"stage""#), "{s}");
+        assert!(s.contains(r#""spoken":false"#), "{s}");
+        assert!(s.contains(r#""hold":"music""#), "{s}");
     }
 
     #[test]

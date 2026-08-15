@@ -139,6 +139,14 @@ enum Command {
         /// Do not play the audio. Pacing then falls back to the wall clock.
         #[arg(long)]
         no_monitor: bool,
+        /// Serve the script for editing, with no audio and no recognition.
+        ///
+        /// Preparing a script — marking cuts, typing the stage directions, saying
+        /// which are read aloud, placing the holds where music runs — is table work.
+        /// It happens days before the show, and needing a sound card and a two-hour
+        /// playback to reach the passage you want to fix makes it work nobody does.
+        #[arg(long)]
+        prep: bool,
         /// Output device to play through; substring match. Default device otherwise.
         #[arg(long)]
         output_device: Option<String>,
@@ -267,6 +275,7 @@ fn main() -> Result<()> {
             output_device,
             buffer_ms,
             out,
+            prep,
         } => cmd::serve::run(
             &corpus,
             tracker_config.as_deref(),
@@ -282,10 +291,11 @@ fn main() -> Result<()> {
             audio.no_lexicon,
             audio.realtime,
             port,
-            !no_monitor,
+            !no_monitor && !prep,
             output_device,
             buffer_ms,
             out,
+            prep,
         ),
         Command::Track {
             corpus,

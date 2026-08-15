@@ -128,6 +128,33 @@
   .line.cut { text-decoration: line-through; opacity: .38; }
   .line.cut .who { text-decoration: none; }
 
+  /* Stage directions read as a different register, because they are one. Set in the
+     same italic the printed script uses, inset, and without a speaker chip — nobody
+     is speaking, or if somebody is, it is a performer reading a direction aloud
+     rather than a character talking. */
+  .line.stage {
+    font-style: italic; color: var(--dimmer); max-width: 40em;
+    margin-left: 1.4em; padding-left: .9em; border-left: 2px solid var(--edge);
+  }
+  .line.stage .who { display: none; }
+  /* Read aloud, so it *is* heard and the matcher does look for it. In this show
+     that is Euripides' didascalies, which Séphora reads as part of the performance;
+     Rodrigues' own describe what the company does and are never voiced. The operator
+     has to be able to tell the two apart at a glance, because it changes whether the
+     page is waiting for words that are coming. */
+  .line.stage.voiced { border-left-color: var(--speaker); color: var(--dim); }
+
+  /* A hold says why nothing is moving. "Music" is information; a frozen page is a
+     fault. This is the same argument as the lost banner, one level quieter. */
+  .tag {
+    display: inline-block; font: 600 .62em/1.5 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .1em; text-transform: uppercase; vertical-align: .18em;
+    padding: .05em .5em; margin-right: .5em; border-radius: 2px;
+    background: var(--edge); color: var(--fg); font-style: normal; opacity: .8;
+  }
+  .line.now .tag { background: var(--now); color: #14110c; opacity: 1; }
+  .line.holding.now { color: var(--now); }
+
   /* A correction, briefly acknowledged, so a tap that did nothing is obvious. */
   @keyframes placed { from { background: rgba(255,212,121,.28); } to { background: none; } }
   .line.placed { animation: placed .9s ease-out; }
@@ -243,6 +270,12 @@
     font: 400 .62em/1.4 ui-sans-serif, system-ui, sans-serif; letter-spacing: .05em;
   }
   .editor button.struck { border-color: var(--lost); color: var(--lost); }
+  .editor button.on { border-color: var(--now); color: var(--now); }
+  .editor .row .sep { width: 1px; align-self: stretch; background: var(--edge); margin: 0 .2em; }
+  .editor .row .label {
+    font: 400 .6em/1.4 ui-sans-serif, system-ui, sans-serif;
+    color: var(--dimmer); letter-spacing: .06em; text-transform: uppercase;
+  }
   .editor input.gone, .editor textarea.gone { text-decoration: line-through; opacity: .45; }
   .editor .keys {
     font: 400 .6em/1.5 ui-sans-serif, system-ui, sans-serif;
@@ -270,6 +303,32 @@
   #follow { margin-left: .6em; }
   #dot { width: .5em; height: .5em; border-radius: 50%; background: var(--dimmer); }
   body[data-running="true"] #dot { background: #5fbf7f; }
+
+  /* Prep mode. Nothing is running, so everything that reports on a run is noise:
+     the transcript panel, the lost banner, the tap-to-correct hint, the clock. */
+  #find { display: none; }
+  body[data-prep="on"] #find {
+    display: block; margin-left: auto; width: 15em; background: #16181d;
+    color: var(--fg); border: 1px solid var(--edge); border-radius: 999px;
+    padding: .3em .9em; font: inherit;
+  }
+  body[data-prep="on"] #find:focus { outline: none; border-color: var(--now); }
+  #find.miss { border-color: var(--lost); }
+  body[data-prep="on"] #heard,
+  body[data-prep="on"] #lost,
+  body[data-prep="on"] #hint,
+  body[data-prep="on"] #ear,
+  body[data-prep="on"] #follow,
+  body[data-prep="on"] #dot,
+  body[data-prep="on"] #conf,
+  body[data-prep="on"] #clock,
+  body[data-prep="on"] #gap { display: none; }
+  body[data-prep="on"] #edit { margin-left: .6em; }
+  /* Every line is equally current when none of them is. */
+  body[data-prep="on"] .line { color: var(--dim); opacity: 1; }
+  body[data-prep="on"] .past { color: var(--dim); }
+  body[data-prep="on"] .line.cut { opacity: .38; }
+  body[data-prep="on"] .line.stage { color: var(--dimmer); }
 </style>
 </head>
 <body data-conf="scene" data-running="true">
@@ -288,6 +347,7 @@
     <span id="conf">—</span>
     <span id="clock">0:00</span>
     <span id="gap">—</span>
+    <input id="find" placeholder="find a line, or a number" spellcheck="false">
     <button id="edit">edit</button>
     <button id="ear">heard</button>
     <button id="follow" hidden>follow</button>
@@ -327,13 +387,8 @@
         frag.appendChild(h);
       }
       const p = document.createElement('p');
-      p.className = 'line' + (l.cut ? ' cut' : '');
       p.dataset.i = i;
-      const who = document.createElement('span');
-      who.className = 'who';
-      who.textContent = (l.character || '').replace(/^char-/, '').replace(/-/g, ' ');
-      p.appendChild(who);
-      p.appendChild(document.createTextNode(l.text));
+      decorate(p, l);
       frag.appendChild(p);
       els[i] = p;
     });
@@ -515,10 +570,51 @@
   let ws = null;
   let editing = false;
   const $edit = document.getElementById('edit');
-  $edit.addEventListener('click', () => {
-    editing = !editing;
-    document.body.dataset.edit = editing ? 'on' : 'off';
-    $edit.classList.toggle('on', editing);
+  const setEditing = (on) => {
+    editing = on;
+    document.body.dataset.edit = on ? 'on' : 'off';
+    $edit.classList.toggle('on', on);
+  };
+  $edit.addEventListener('click', () => setEditing(!editing));
+
+  // Prep mode: no audio, no recognition, and 931 lines to walk through. Editing is
+  // the whole reason the page is open, so it starts on, and the one control that
+  // matters is being able to reach a passage without scrolling for a minute.
+  const $find = document.getElementById('find');
+  const goTo = (index, flash) => {
+    const el = els[index];
+    if (!el) return;
+    scrollTo(anchorFor(index), true);
+    if (!flash) return;
+    el.classList.remove('placed');
+    void el.offsetWidth;
+    el.classList.add('placed');
+  };
+  let hits = [], hitAt = -1;
+  $find.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') { $find.value = ''; $find.blur(); return; }
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    const q = $find.value.trim().toLowerCase();
+    if (!q) return;
+    // A line number if it looks like one, otherwise text. Both are things an operator
+    // actually says out loud — "go to 412", "find the Otis Redding bit".
+    const asNumber = /^\d+$/.test(q) ? Math.min(lines.length, Math.max(1, +q)) - 1 : null;
+    if (asNumber !== null) { hits = [asNumber]; hitAt = 0; goTo(asNumber, true); return; }
+    const again = hits.length && hits.query === q;
+    if (!again) {
+      hits = lines.reduce((a, l, i) => {
+        if ((l.text + ' ' + (l.character || '')).toLowerCase().includes(q)) a.push(i);
+        return a;
+      }, []);
+      hits.query = q;
+      hitAt = -1;
+    }
+    if (!hits.length) { $find.classList.add('miss'); setTimeout(() => $find.classList.remove('miss'), 600); return; }
+    // Enter again steps to the next occurrence, which is how every find box works.
+    hitAt = (hitAt + 1) % hits.length;
+    $find.dataset.count = `${hitAt + 1}/${hits.length}`;
+    goTo(hits[hitAt], true);
   });
 
   let openEditor = null;
@@ -587,6 +683,44 @@
     const row = document.createElement('div');
     row.className = 'row';
     row.appendChild(strike);
+
+    // What the line *is*, whether anyone says it, and whether tracking should wait
+    // here. Three separate questions that a single "stage direction" checkbox would
+    // conflate — and this show is the proof that they come apart: it stages a play
+    // within a play, so Euripides' didascalies are read aloud by Séphora while
+    // Rodrigues' own are never voiced.
+    let kind = lines[i].kind === 'stage' ? 'stage' : 'dialogue';
+    let spoken = lines[i].spoken !== false;
+    let hold = lines[i].hold || null;
+
+    const mk = (text, isOn, click) => {
+      const b = document.createElement('button');
+      b.textContent = text;
+      b.classList.toggle('on', isOn());
+      b.onclick = (e) => { e.preventDefault(); click(); repaint(); txt.focus(); };
+      return b;
+    };
+    const sep = () => { const d = document.createElement('div'); d.className = 'sep'; return d; };
+    const label = (t) => { const d = document.createElement('span'); d.className = 'label'; d.textContent = t; return d; };
+
+    const bStage = mk('stage direction', () => kind === 'stage', () => {
+      kind = kind === 'stage' ? 'dialogue' : 'stage';
+      // Changing the kind moves the default underneath `spoken`, so carry it: a line
+      // becoming a direction stops being voiced unless it is put back deliberately.
+      spoken = kind === 'dialogue';
+    });
+    const bSpoken = mk('read aloud', () => spoken, () => { spoken = !spoken; });
+    const holdBtns = [['—', null], ['silence', 'silence'], ['music', 'music'], ['ad lib', 'adlib']]
+      .map(([text, value]) => mk(text, () => hold === value, () => { hold = value; }));
+
+    const repaint = () => {
+      bStage.classList.toggle('on', kind === 'stage');
+      bSpoken.classList.toggle('on', spoken);
+      holdBtns.forEach((b, k) => b.classList.toggle('on', hold === [null, 'silence', 'music', 'adlib'][k]));
+      who.style.opacity = kind === 'stage' ? '.4' : '1';
+    };
+    row.append(sep(), bStage, bSpoken, sep(), label('hold'), ...holdBtns);
+    repaint();
     const keys = document.createElement('div');
     keys.className = 'keys';
     keys.textContent = 'enter to save · esc to cancel · tab between fields';
@@ -601,13 +735,23 @@
         const character = newWho
           ? 'char-' + newWho.toLowerCase().replace(/\s+/g, '-')
           : wasWho;
-        if (newText !== wasText || character !== wasWho || cut !== !!lines[i].cut) {
+        const changed = newText !== wasText
+          || character !== wasWho
+          || cut !== !!lines[i].cut
+          || kind !== (lines[i].kind === 'stage' ? 'stage' : 'dialogue')
+          || spoken !== (lines[i].spoken !== false)
+          || (hold || null) !== (lines[i].hold || null);
+        if (changed) {
           ws.send(JSON.stringify({
             type: 'edit_line', lineIndex: i, text: newText, character, cut,
+            kind, spoken, hold,
           }));
           lines[i].text = newText;
           lines[i].character = character;
           lines[i].cut = cut;
+          lines[i].kind = kind;
+          lines[i].spoken = spoken;
+          lines[i].hold = hold;
         }
       }
       box.replaceWith(el);
@@ -632,16 +776,32 @@
     txt.setSelectionRange(at, at);
   }
 
-  function render(i) {
-    const el = els[i], l = lines[i];
-    if (!el) return;
-    el.classList.toggle('cut', !!l.cut);
+  const HOLD_LABEL = { music: 'music', silence: 'silence', adlib: 'ad lib' };
+
+  function decorate(el, l) {
+    const stage = l.kind === 'stage';
+    el.className = 'line'
+      + (l.cut ? ' cut' : '')
+      + (stage ? ' stage' : '')
+      + (stage && l.spoken ? ' voiced' : '')
+      + (l.hold ? ' holding' : '');
     el.textContent = '';
+    if (l.hold) {
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = HOLD_LABEL[l.hold] || l.hold;
+      el.appendChild(tag);
+    }
     const who = document.createElement('span');
     who.className = 'who';
     who.textContent = (l.character || '').replace(/^char-/, '').replace(/-/g, ' ');
     el.appendChild(who);
     el.appendChild(document.createTextNode(l.text));
+  }
+
+  function render(i) {
+    const el = els[i];
+    if (el) decorate(el, lines[i]);
   }
 
   $lines.addEventListener('click', (ev) => {
@@ -778,7 +938,8 @@
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
       if (m.type === 'hello') {
-        if (m.title) document.title = m.title + ' — live';
+        if (m.title) document.title = m.title + (m.prep ? ' — prep' : ' — live');
+        if (m.prep) { document.body.dataset.prep = 'on'; setEditing(true); }
         if (m.position) { show(m.position.lineIndex, m.position.confidence); $clock.textContent = fmt(m.position.tAudio); }
       } else if (m.type === 'position_update') {
         if (m.lane === 'b') {
@@ -792,7 +953,11 @@
         lines[m.lineIndex].text = m.text;
         if (m.character) lines[m.lineIndex].character = m.character;
         lines[m.lineIndex].cut = m.cut;
+        lines[m.lineIndex].kind = m.kind;
+        lines[m.lineIndex].spoken = m.spoken;
+        lines[m.lineIndex].hold = m.hold ?? null;
         render(m.lineIndex);
+        replace();
       } else if (m.type === 'heard') {
         heard(m);
       } else if (m.type === 'run_state') {
