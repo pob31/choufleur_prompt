@@ -10,6 +10,9 @@
 //! engine stays a blocking thread in the harness that owns it, bridged to this side by a
 //! channel and nothing else.
 
+pub mod import;
+pub mod library;
 pub mod store;
 
+pub use library::{Library, Entry};
 pub use store::{Store, Version};

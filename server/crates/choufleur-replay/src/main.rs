@@ -87,6 +87,34 @@ struct AudioArgs {
     agc_max_gain: Option<f32>,
 }
 
+#[derive(Subcommand)]
+enum ShowCmd {
+    /// What is in the library.
+    List,
+    /// Start a show, optionally with its text.
+    New {
+        name: String,
+        /// A plain-text script to import straight away.
+        #[arg(long)]
+        from: Option<PathBuf>,
+    },
+    /// Copy an existing show into the library, leaving the original untouched.
+    Import {
+        /// The show's `manifest.json`.
+        manifest: PathBuf,
+        /// Call it something other than what the manifest says.
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Replace a show's script with a plain-text one, keeping a snapshot.
+    Text {
+        /// The show's `script.json`.
+        script: PathBuf,
+        /// The text to read.
+        from: PathBuf,
+    },
+}
+
 #[derive(Parser)]
 #[command(
     name = "choufleur-replay",
@@ -100,6 +128,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Make, list and fill shows in the library.
+    ///
+    /// The library is `~/Choufleur` unless `$CHOUFLEUR_LIBRARY` says otherwise. The
+    /// Shows screen does all of this with a window; this is the same operations from a
+    /// terminal, and what the screen will call.
+    Show {
+        #[command(subcommand)]
+        what: ShowCmd,
+        /// The library directory.
+        #[arg(long, global = true)]
+        library: Option<PathBuf>,
+    },
+
     /// Check a corpus: files present, hashes intact, script and ground truth agree.
     Verify {
         /// Corpus directory (containing manifest.json) or the manifest itself.
@@ -255,6 +296,17 @@ enum Command {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::Show { what, library } => {
+            let root = library.unwrap_or_else(cmd::show::default_root);
+            match what {
+                ShowCmd::List => cmd::show::list(&root),
+                ShowCmd::New { name, from } => cmd::show::new(&root, &name, from.as_deref()),
+                ShowCmd::Import { manifest, name } => {
+                    cmd::show::import_show(&root, &manifest, name.as_deref())
+                }
+                ShowCmd::Text { script, from } => cmd::show::add_text(&script, &from),
+            }
+        }
         Command::Verify {
             corpus,
             audio_root,

@@ -79,22 +79,10 @@ fn swatch(name: &str) -> String {
 /// `cues.json` and `cues-*.json`. A show grows a list per operator, and asking for each
 /// path on the command line every time is friction with no decision behind it.
 fn find_cue_files(dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut out: Vec<PathBuf> = entries
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.extension().and_then(|e| e.to_str()) == Some("json")
-                && p.file_stem()
-                    .and_then(|s| s.to_str())
-                    .is_some_and(|s| s == "cues" || s.starts_with("cues-"))
-                // Backups are for reading by hand, not for serving.
-                && !p.to_string_lossy().contains("backup")
-        })
-        .collect();
-    out.sort();
-    out
+    // One rule, in `choufleur_server::library`, so a show serves the same lists the
+    // Shows screen says it has. A library show keeps them in `cues/`; the corpus shows
+    // keep them beside the script, and both still work.
+    choufleur_server::library::sheet_files(dir)
 }
 
 /// A sheet's meta read straight from its file.
@@ -752,7 +740,12 @@ pub fn run(
     // has operators, each in its own file — the lists are independent documents, not
     // views of one, so they are never merged and never renumbered against each other.
     let cue_paths: Vec<PathBuf> = if cues_path.is_empty() {
-        find_cue_files(&corpus.script_path().with_file_name("."))
+        find_cue_files(
+            corpus
+                .script_path()
+                .parent()
+                .unwrap_or(Path::new(".")),
+        )
     } else {
         cues_path.iter().map(|p| p.to_path_buf()).collect()
     };
