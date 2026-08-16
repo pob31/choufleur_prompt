@@ -142,6 +142,42 @@ The script is structured as acts containing scenes (notation spec §11), and the
 - Act boundaries are implicit weight-3 landmarks with hold semantics; act tops are natural quick-jump targets
 - The pace/ETA model is calibrated **per act**
 
+**Holds are not only structural.** Phase 0 found the same need inside an act, wherever
+the script stops predicting what will come out of the speakers: a music sequence, a held
+silence, an improvised passage, a fight, a sung number. A line may therefore carry a
+**hold** — `silence`, `music` or `adlib`. While the position rests on one, nothing heard
+is evidence: no decay, no timers, and no whole-script rival hypothesis, so a recogniser's
+opinion of a saxophone cannot relocate the show.
+
+Two rules learned by getting them wrong first:
+
+- **A hold begins when the script stops being heard, not when the line before it is
+  heard.** A long paragraph produces several segments, so committing on the first match
+  before the music parked the tracker while the company was still talking — measured at
+  four minutes wrong on each of two nights.
+- **A hold ends by hearing the show again, never on a timer.** A company does not hit
+  its music cue to the second. A stated duration is a display hint, and at most a cap on
+  how long a hold may go on *protecting* a position before ordinary judgement resumes.
+
+### Lines carry what the operator knows about them
+
+Beyond its text and speaker, a line records:
+
+- **`kind`** — dialogue, or a stage direction. Presentational, and deliberately not a
+  matching rule.
+- **`spoken`** — whether anyone says it aloud. Independent of `kind`, because a
+  production can prove it: *Hécube, pas Hécube* stages a play within a play, and its cast
+  list contains `SÉPHORA, lit les didascalies` — a performer whose job is reading the
+  stage directions out loud. Euripides' didascalies are heard; Rodrigues' own are not.
+- **`cut`** — struck from this production but kept, shown struck through. A cut is a
+  decision about tonight, and it gets reversed.
+- **`flag`** — the operator's bookmark: *come back to this*. The moment you notice a line
+  is wrong is almost never the moment you can stop and fix it.
+
+Cut and unspoken lines are excluded from matching. They are text on the operator's page
+that will never leave a loudspeaker, and every moment the matcher spends offering them
+as candidates is a moment it can be wrong for free.
+
 ### Run Controls (Rehearsal)
 
 Rehearsals do not run linearly. These controls are available to all operators and every use is attributed on all clients:
@@ -299,19 +335,50 @@ When the server loses tracking (confidence decay timeout), it does not guess —
 - All other clients see the claim attributed: "Pierre is re-locating position"
 - A simple point-correction (long press on the correct line) is also always available for small nudges, with confirmation and on-screen attribution
 
-### Per-technician cue filtering
+### Cue lists are independent
 
-Each operator configures which cue types they see:
-- Sound engineer — sound cues only
-- LX operator — lighting cues only
-- Flys — fly cues only
-- Stage manager — all cues
+**The script and the position are shared. Everything else belongs to a list.**
 
-### Personal cue categories
+A cue list is one operator's working document: the sound conduite, the LX plot, a
+followspot's sheet. Its colours mean what that operator decided they mean, its wording
+is their shorthand, and what counts as a cue at all is their judgement. A show carries
+as many lists as it has positions — sound, lights, video, three followspots, two stage
+managers, flys, surtitles — and a screen shows one, or *all* for a stage manager
+watching the whole board.
 
-Within their filtered cues, each operator can define their own second-level **categories** — for a sound engineer, perhaps *QLab*, *Ableton Live*, *Console*, *Spatial*, *Music*. Categories are freely named, carry a color, and are used for grouping and secondary filtering in the client.
+Lists never merge and are never renumbered against one another. Two lists may contain
+the same cue id and never collide, because a cue id is only ever resolved within its own
+list. An edit to one list cannot alter another; a rename on one cannot repaint another.
 
-Categories are strictly personal: they live in the operator's own subtree of the show file and reference shared cues by id, so identically named categories belonging to different operators are independent objects that can never collide or leak between displays (notation spec §9.2). Cue *types* (LX, SND, …) remain the shared production vocabulary; categories are how each operator organizes their own corner of it.
+This replaces an earlier model in which one shared cue array was partitioned by a
+production-wide `cueTypes` registry with each operator filtering on type. Phase 0
+retired it, on the operator's reading: *"The cue lists are independent. Each operator
+should take their notes as they prefer."* A shared vocabulary makes one operator's
+conventions structurally visible to another and forces a common language on people who
+do not have one. The production that proved it writes `2 Mute micros / lumière 11 /
+Musique` — a lighting state recorded inside a *sound* cue, because that was useful to
+the sound operator and to nobody else.
+
+### The list's own vocabulary
+
+Each list defines its own **categories** — what its marks drive. For a sound operator
+perhaps *QLab* and *console*; for lighting an *Eos* or a followspot. A category is a
+key, a label and a colour, and the operator names and colours their own.
+
+Categories belong to the list, which in practice means they belong to its operator.
+They are edited in the prep UI and stored with the list, so a lighting operator renaming
+a target cannot change what the sound operator's cards say.
+
+### Who acts on a cue
+
+A cue records **who executes it**: the list's operator, or a machine. On a real show
+some cues fire themselves — QLab sending OSC to a lighting desk so a transition stays in
+sync — and the human still watches, ready to take it if it fails. Such a cue appears on
+its owner's rail in its normal place, visibly not theirs to press, saying what fires it.
+
+This does not weaken *the system never triggers cues*. The field instructs nothing and
+reaches no machine: it records who acts in the room, which is exactly what an operator
+standing by needs warning about. It changes the wording of a warning, never its nature.
 
 Warnings are personal. Script position is shared.
 

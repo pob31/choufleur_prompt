@@ -19,7 +19,25 @@ Companion to the [PRD](choufleur-prd_1.md) and the [notation spec](choufleur-not
 
 ## Phase 0 — Tracking-Engine Risk Spike (offline, go/no-go)
 
+> **Status: the existential question is answered, and Phase 0 overshot its brief.**
+>
+> Two full performances of *Hécube, pas Hécube* (Comédie-Française) track end to end
+> against the operator's own script and conduite: **93 % and 95 %** of glances land
+> inside a six-line window, p90 error 2 and 1 lines, **no jump over a hundred lines on
+> either night**, and 34 s and **0 s** without a trustworthy position across two hours.
+> One mono mixed feed, French, against a script six months older than the recordings.
+>
+> It also grew past "offline, no server, no client". A `serve` subcommand plays a show
+> audibly with the script on screen, and that display has been watched and corrected
+> from the operator's chair through several complete runs — which is where most of the
+> accuracy came from. It now carries a cue rail, a prep mode, and multi-device editing.
+> See *What Phase 0 leaves behind* at the end of this section.
+
 Everything runs against files on disk. No live audio capture, no server, no client. Python is permitted as a labeling/exploration sidecar only (`research/`), never imported by Rust code.
+
+The last clause held for the analysis and not for the display: the `serve` subcommand
+was added mid-spike because no file comparison can answer *does this feel trustworthy to
+somebody operating a show*. That turned out to be the question that mattered most.
 
 ### M0.1 — Eval corpus assembly
 
@@ -78,7 +96,9 @@ Everything runs against files on disk. No live audio capture, no server, no clie
 
 ### ★ GO/NO-GO GATE
 
-On real recordings, full act, `small` model (`medium` acceptable for non-English), Apple Silicon:
+On real recordings, full act, `small` model, Apple Silicon. (`medium` was permitted here
+for non-English; measured, it tracks no better on French and costs 2.5× — see the PRD's
+*Multilingual model sizing*.)
 
 | Criterion | Threshold |
 |---|---|
@@ -170,6 +190,41 @@ Pure data-layer work in `choufleur-show`; no audio hardware needed, so these mil
 
 ---
 
+### What Phase 0 leaves behind
+
+Not a prototype to discard. **Reuse as much as possible** — the operator's instruction,
+and the honest reading of what these crates now contain.
+
+**`choufleur-core` ships as-is.** The tracker, the matcher, the script model. No I/O, no
+async, no clock; nothing in it depends on the spike. It carries roughly fifteen tuning
+decisions each backed by a measurement on two real performances, and none of them are
+guessable from the PRD: distance charged in *confirmations* rather than score (long
+moves to zero), holds that begin on silence, overlap matching for long speeches (time at
+low confidence roughly halved), `matchable` excluding cut and unspoken lines, a minimum
+line length before a line may be relocated onto. Every one arrived after a wrong version.
+
+**The display's behaviour is a requirement, not a sketch.** The continuous
+velocity-limited follower; cue cards aligned to their lines with a reserved lookahead
+band; leader lines leaving the underline and running *beneath* the text; editors that
+hold still while the operator scrolls to point at something. Each was reached by the
+operator watching a wrong version and saying what felt wrong. Later milestones rewrite
+the plumbing and inherit the behaviour.
+
+**The corpus and harness are the moat.** Two performances, three La Reprise scenes,
+transcripts at two model sizes, `window_accuracy`, the trace format. This is what let
+"does a bigger model help?" be answered with a number, and what caught three separate
+measurements being wrong.
+
+**The findings document is the design rationale**, failures included — the forward-jump
+toll, the noise floor, the challenger during holds, the window-confined combination.
+Those cost as much as the wins and save the time twice.
+
+What does not survive contact with Phase 2: the replay CLI's command shape, the
+single-file HTML, the corpus manifest format, and the total absence of auth. Real work,
+but plumbing — the part with the least judgement in it.
+
+---
+
 ## Phase 2 — Live Headless Server
 
 ### M2.1 — Live audio capture
@@ -183,6 +238,12 @@ Pure data-layer work in `choufleur-show`; no audio hardware needed, so these mil
 ### M2.2 — Server skeleton + protocol
 
 *Goal:* The axum binary: WebSocket fan-out, REST show load, typed protocol crate.
+
+*Inherits from Phase 0:* the spike's `live.rs` already carries a working subset of this
+protocol — `hello` with full-state resync, position updates, line and cue edits, sheet
+rosters — shaped by two days of real use and a protocol-version guard that exists
+because the page and the binary drifted twice. Lift the message shapes and the resync
+discipline; rewrite the transport.
 
 *Tasks:* `choufleur-protocol` — every message in the PRD's protocol table as serde types (typed events + parameters, no display prose, per the localization rule); `hello` with protocol version + full-state resync; `position_update` broadcast; REST endpoints for show load and device config; static-serving stub for the future client.
 
@@ -230,11 +291,19 @@ Client development runs against `choufleur-replay serve-trace` — a fake-server
 
 ### M3.2 — Script display, live scroll, footer
 
+*Inherits from Phase 0:* the continuous follower and its speed limits, the reading
+position set high on the page, and the confidence-as-weight styling. Do not re-derive
+these — the notes record what each replaced and why.
+
 *Tasks:* Virtualized script rendering from the show file; auto-scroll locked to position with confidence styling; persistent footer (current cue / next cue / ETA); notes side panel (wide) and tap bubbles (narrow).
 
 *Done when:* A full loopback act plays and the script follows live, footer live, on tablet and laptop form factors.
 
 ### M3.3 — Warnings UX
+
+*Inherits from Phase 0:* the cue rail — cards aligned to their anchor lines, a reserved
+lookahead band at the foot, leader lines from the underlined trigger phrase, and the
+per-list colour vocabulary. Independent cue lists replace the type-filter model here.
 
 *Tasks:* Peripheral red-frame standby/final/now states; per-operator filter + personal categories (colors, grouping); tap-to-acknowledge (`warning_ack`/`ack_state`); browsing mode with warnings still firing and one-tap return to live.
 
@@ -261,6 +330,11 @@ Client development runs against `choufleur-replay serve-trace` — a fake-server
 ## Phase 4 — Prep Workflow, Warning Families, Field Hardening
 
 ### M4.1 — Prep pages
+
+*Inherits from Phase 0:* working editors for lines and cues, including insert, delete,
+flag, holds, `spoken`, per-list targets, and setting a trigger phrase by selecting it in
+the script rather than typing it. Also the cue re-anchoring tool, which moves a sheet
+between two versions of a script by sequence alignment.
 
 *Tasks:* Browser-served prep: .docx upload + import report display; re-import with orphan-resolution UI (reattach / confirm-delete, honoring the §3.4 consent rules); cue/landmark/lead editing; character↔channel assignment; audio device + level check page.
 

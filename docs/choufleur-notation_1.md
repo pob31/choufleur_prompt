@@ -176,42 +176,85 @@ JEAN: Alors pars. {NOTE:director wants a longer beat before this}
 
 ## 6. Cue Layer
 
-### 6.1 Cue object
+> **Revised after Phase 0.** This section previously specified one shared cue array
+> partitioned by a production-wide `cueTypes` registry, with each operator filtering on
+> type and holding personal categories under `operators.<opId>`. Two days on real
+> material retired that model. The operator's reading, which governs: *"The cue lists are
+> independent. Each operator should take their notes as they prefer."*
+
+### 6.1 A cue list is a document
+
+**The script and the position are shared. Everything else belongs to a list.**
+
+A show carries one cue list per operating position — sound, lights, video, each
+followspot, each stage manager, flys, surtitles. Each is a separate document with its own
+name, its own vocabulary and its own cues. Lists never merge and are never renumbered
+against one another.
 
 ```json
 {
-  "id": "cue-lx-12",
-  "type": "LX",
-  "number": "12",
-  "anchor": { "kind": "line", "lineId": "L-0142-a3f9c1" },
-  "leads": [30],
-  "label": "House preset warm",
-  "createdBy": "import",
-  "notes": []
+  "id": "son",
+  "name": "Conduite SON",
+  "categories": [
+    { "key": "qlab",    "label": "QLab",    "swatch": "#4d7ea8" },
+    { "key": "console", "label": "console", "swatch": "#8566ad" }
+  ],
+  "cues": [ … ]
 }
 ```
 
-- `id` — unique within the show file, conventionally `cue-<type>-<number>` lowercased.
-- `leads` — seconds, descending (earliest warning first), mapping to §4.2 stages.
-- `anchor` — a discriminated union; v1 always `{"kind": "line", ...}` (see §10).
-- `createdBy` — `"import"` (from inline shorthand) or `"prep"` (placed in the UI); informational.
+- `id` — stable, unique within the show; how a client says which list it is showing.
+- `name` — what the operator calls it.
+- `categories` — **what this list drives.** A key, a label and a colour, named and
+  coloured by the operator. Blue means QLab on a sound sheet and nothing on a lighting
+  one; the meanings travel with the list rather than being registered production-wide.
 
-### 6.2 Cue type registry
+**A cue id is resolved only within its own list.** Two lists may both contain `Q-0007`
+and never collide. This is what makes independence structural rather than a convention.
+
+*Why not a shared array with types.* A shared vocabulary makes one operator's
+conventions structurally visible to another and forces a common language on people who
+do not have one. The production that settled it writes `2 Mute micros / lumière 11 /
+Musique` — a lighting state recorded inside a *sound* cue, because it was useful to the
+sound operator and to nobody else. Cross-department views remain possible by showing
+several lists at once; they do not require a shared taxonomy.
+
+### 6.2 Cue object
 
 ```json
-"cueTypes": [
-  { "type": "LX",   "name": "Lighting",        "color": "#E5B800" },
-  { "type": "SND",  "name": "Sound",           "color": "#3FA7D6" },
-  { "type": "VID",  "name": "Video",           "color": "#9C6ADE" },
-  { "type": "FLY",  "name": "Flys",            "color": "#E0533D" },
-  { "type": "SM",   "name": "Stage management","color": "#59A96A" },
-  { "type": "PYRO", "name": "Pyrotechnics",    "color": "#FF6F00" }
-]
+{
+  "id": "Q-0042",
+  "lineId": "L-0142-a3f9c1",
+  "cue": "1.2 fade&stop musique",
+  "trigger": "text",
+  "category": "qlab",
+  "firedBy": "operator",
+  "leads": [30],
+  "evidence": "Silence, mes amies",
+  "evidenceNth": 0,
+  "evidenceFrom": "operator"
+}
 ```
 
-The five built-ins are always present; custom entries follow the `custom` rule of §4.1. Operators' cue filters (PRD, *Per-technician cue filtering*) select on `type`.
+- `trigger` — `"text"`, fired by a line being reached, or `"visual"`, which the system
+  cannot detect and the operator must watch for. That distinction matters more than any
+  other on a rail: one is a prompt, the other is a responsibility.
+- `category` — a key from this list's own `categories`.
+- `firedBy` — `"operator"`, or `"auto"` with a free-text `via` (`"OSC from QLab"`) naming
+  what fires it. **This does not express a trigger** (§2, principle 4): it instructs
+  nothing and reaches no machine. It records who acts in the room, which is what an
+  operator standing by needs warning about — on a real show QLab sends OSC to the
+  lighting desk so a transition stays in sync, and the human still watches in case it
+  does not. It changes the wording of a warning, never its nature.
+- `evidence` / `evidenceNth` — the exact phrase within the line that fires the cue, and
+  **which occurrence of it**. The occurrence is not optional: a play repeats itself, and
+  a cue on the third `Comme ça.` is not a cue on the first. Counted rather than stored as
+  a character offset, so it survives an edit elsewhere in the line.
+- `evidenceFrom` — `"operator"` when a human selected the phrase, `"highlight"` or
+  `"page"` when it was extracted. Where they disagree, the human wins.
 
----
+Cues are anchored by `lineId` and never by position. A cue's index in the script is
+derived and may be sent, never stored.
 
 ## 7. Landmark Layer
 
@@ -316,6 +359,50 @@ Cue **types** (§6.2) are shared production vocabulary — LX, SND, VID… Cue *
 This is how visual and musical cues enter the system later without a format break.
 
 ---
+
+## 10b. Line Properties
+
+> **Added after Phase 0.** Four properties a line carries beyond its text and speaker,
+> each of which earned its place on real material.
+
+```json
+{
+  "id": "L-0505-2-a3f9c1",
+  "character": "char-nadia",
+  "text": "Chorégraphie sur la musique d'Otis Redding.",
+  "kind": "stage",
+  "spoken": false,
+  "hold": "music",
+  "holdSeconds": 140,
+  "cut": false,
+  "flag": false
+}
+```
+
+- **`kind`** — `"dialogue"` (default) or `"stage"`. Presentational, and deliberately
+  **not** a matching rule.
+- **`spoken`** — whether anyone says it aloud. `null` inherits from the kind. Independent
+  of `kind` because a production proved it must be: *Hécube, pas Hécube* stages a play
+  within a play and its cast list contains `SÉPHORA, lit les didascalies` — a performer
+  whose job is reading the stage directions out loud. Euripides' didascalies are heard;
+  Rodrigues' own are not. A rule inferring one from the other would silently drop a
+  chunk of what is said on stage.
+- **`hold`** — `"silence"`, `"music"` or `"adlib"`: the script declaring in advance that
+  it cannot predict what is about to come out of the speakers. While the position rests
+  on a hold, nothing heard is evidence. `holdSeconds` is a display hint and at most a cap
+  on how long a hold may go on *protecting* a position — **never a timer that ends it**,
+  because a company does not hit its music cue to the second.
+- **`cut`** — struck from this production, kept in the file, shown struck through. A cut
+  is a decision about tonight and it gets reversed; deletion is a different act.
+- **`flag`** — the operator's bookmark. Kept on the shared line rather than in a personal
+  subtree: on the shows this was built against, the person who notices a bad line is the
+  person who will fix it, and a bookmark nobody else can see is a note that gets lost.
+
+**Cut and unspoken lines, and any line carrying a hold, are excluded from matching.**
+They are text on the page that will never leave a loudspeaker, and offering them as
+candidates is a way to be wrong for free. A hold is reached by being *walked into*, never
+by being matched — an inserted `Musique` marker is a one-word line, and in a play about a
+boy who loves Otis Redding it matched at 0.84 on a segment merely containing the word.
 
 ## 11. Show File Schema
 
