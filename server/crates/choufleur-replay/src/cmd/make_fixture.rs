@@ -784,6 +784,7 @@ pub fn generate(
                 sha256: sha256_file(&sink.path)?,
             },
             character,
+            characters: Vec::new(),
             lang: None,
             note: None,
         });

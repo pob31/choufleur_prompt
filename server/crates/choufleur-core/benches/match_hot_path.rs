@@ -73,6 +73,7 @@ fn bench(c: &mut Criterion) {
     let prepared = PreparedScript::build(&script, &mut reg);
 
     let seg = TranscriptSegment {
+        characters: Vec::new(),
         channel: 1,
         character: Some("char-a".into()),
         t_start: 10.0,

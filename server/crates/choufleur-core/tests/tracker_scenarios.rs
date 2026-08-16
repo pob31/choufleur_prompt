@@ -117,6 +117,7 @@ impl SegBuilder {
         let t_start = self.t;
         self.t += dur + 0.5;
         TranscriptSegment {
+            characters: Vec::new(),
             channel: match character {
                 Some(A) => 1,
                 Some(B) => 2,

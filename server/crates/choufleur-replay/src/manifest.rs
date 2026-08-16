@@ -41,6 +41,20 @@ pub struct ChannelSpec {
     /// microphones*), matched against any expected speaker.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub character: Option<String>,
+    /// Everyone this channel might be carrying, when one mic serves a position rather
+    /// than a person.
+    ///
+    /// *Lovedoll* has no per-actor mics at all — a shotgun, three SM58s by position,
+    /// four floor mics — and the operator described how it really works: *"I tried to
+    /// keep people on the same mic as much as possible, not always possible. Veronica
+    /// and Nicolas would share sometimes."* Naming one of them is wrong half the time;
+    /// naming none throws away what is known. So a channel names the few people who
+    /// could be on it, and a line spoken by any of them agrees with it.
+    ///
+    /// Takes precedence over `character` when both are set. Empty leaves the channel
+    /// exactly as it was: one name, or none for a zone mic.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub characters: Vec<String>,
     /// Language to force decoding to when the script cannot say. Normally absent:
     /// the script's language tags are the authority (PRD, *Multi-Language Support*).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -50,8 +64,28 @@ pub struct ChannelSpec {
 }
 
 impl ChannelSpec {
+    /// A mic belonging to a place rather than to anybody: matched against any speaker,
+    /// and trusted no further than that.
     pub fn is_zone(&self) -> bool {
-        self.character.is_none()
+        self.speakers().is_empty()
+    }
+
+    /// Everyone this channel might be carrying. Empty for a zone mic.
+    pub fn speakers(&self) -> &[String] {
+        if self.characters.is_empty() {
+            self.character.as_slice()
+        } else {
+            &self.characters
+        }
+    }
+
+    /// The one name to bias recognition towards, when there is one.
+    ///
+    /// Decoding takes a single hint, and on a shared mic the first name listed is as
+    /// good a guess as exists — the operator writes them in the order they expect.
+    /// Matching is not restricted this way; it considers all of them.
+    pub fn primary(&self) -> Option<&str> {
+        self.speakers().first().map(String::as_str)
     }
 }
 
@@ -154,6 +188,7 @@ impl ShowFile {
                         sha256: String::new(),
                     },
                     character: None,
+                    characters: Vec::new(),
                     lang: None,
                     note: Some("zone channel: no speaker identity".into()),
                 }]
@@ -287,6 +322,7 @@ mod tests {
                         sha256: "abc".into(),
                     },
                     character: Some("char-marie".into()),
+                    characters: Vec::new(),
                     lang: None,
                     note: None,
                 },
@@ -297,6 +333,7 @@ mod tests {
                         sha256: "def".into(),
                     },
                     character: None,
+                    characters: Vec::new(),
                     lang: None,
                     note: Some("downstage left boundary mic".into()),
                 },

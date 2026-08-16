@@ -479,6 +479,15 @@ impl PreparedScript {
                     .is_some_and(|m| m.iter().any(|id| id == heard)))
     }
 
+    /// The same question over everyone a channel might be carrying.
+    ///
+    /// A shared position mic offers two or three names and the line only has to be one
+    /// of them. Empty means a zone channel, which agrees with everybody — the caller
+    /// decides what that is worth, since a zone mic earns no confidence from agreeing.
+    pub fn speaks_any(&self, line_character: &str, heard: &[String]) -> bool {
+        heard.is_empty() || heard.iter().any(|h| self.speaks(line_character, h))
+    }
+
     pub fn len(&self) -> usize {
         self.lines.len()
     }
@@ -506,14 +515,15 @@ impl PreparedScript {
 
     /// Candidate spans starting at or after `from`, within `window` lines.
     ///
-    /// `character` is the speaking character carried by the segment's channel;
-    /// `None` is a zone channel with no identity, which may match anyone.
+    /// `speakers` is everyone the segment's channel might be carrying. Empty is a zone
+    /// channel with no identity, which may match anyone; one name is the ordinary
+    /// per-actor mic; several is a position mic two performers share.
     pub fn spans_into(
         &self,
         from: usize,
         window: usize,
         max_span: usize,
-        character: Option<&str>,
+        speakers: &[String],
         out: &mut Vec<Span>,
     ) {
         out.clear();
@@ -528,10 +538,8 @@ impl PreparedScript {
             if !self.lines[start].matchable {
                 continue;
             }
-            if let Some(c) = character {
-                if !self.speaks(&self.lines[start].character, c) {
-                    continue;
-                }
+            if !self.speaks_any(&self.lines[start].character, speakers) {
+                continue;
             }
             let mut span = Span::single(start);
             out.push(span);
@@ -539,7 +547,7 @@ impl PreparedScript {
             // audience heard back to back, so a span never crosses a scene break.
             let mut i = start;
             while span.len() < max_span {
-                let Some(next) = self.next_member(i, start, character) else {
+                let Some(next) = self.next_member(i, start, speakers) else {
                     break;
                 };
                 if self.lines[next].scene != self.lines[start].scene {
@@ -552,22 +560,20 @@ impl PreparedScript {
         }
     }
 
-    fn next_member(&self, after: usize, start: usize, character: Option<&str>) -> Option<usize> {
-        match character {
+    fn next_member(&self, after: usize, start: usize, speakers: &[String]) -> Option<usize> {
+        if speakers.is_empty() {
             // Zone channel: the next line the audience actually hears. A production
             // stage direction sitting between two spoken lines is not a gap in the
             // dialogue — nobody paused — so the span steps straight over it.
-            None => ((after + 1)..self.lines.len()).find(|&i| self.lines[i].matchable),
-            // Per-character channel: this character's next line, allowing a short
-            // interjection on another channel to sit between them — but only a
-            // short one, or a span could reach halfway across the scene.
-            Some(c) => {
-                let limit = (start + MAX_SPAN * 2).min(self.lines.len().saturating_sub(1));
-                ((after + 1)..=limit).find(|&i| {
-                    self.lines[i].matchable && self.speaks(&self.lines[i].character, c)
-                })
-            }
+            return ((after + 1)..self.lines.len()).find(|&i| self.lines[i].matchable);
         }
+        // Identified channel: the next line one of these people has, allowing a short
+        // interjection on another channel to sit between them — but only a short one,
+        // or a span could reach halfway across the scene.
+        let limit = (start + MAX_SPAN * 2).min(self.lines.len().saturating_sub(1));
+        ((after + 1)..=limit).find(|&i| {
+            self.lines[i].matchable && self.speaks_any(&self.lines[i].character, speakers)
+        })
     }
 
     /// Spans anchored on landmarks ahead of `from` — the re-anchoring candidates
@@ -580,7 +586,7 @@ impl PreparedScript {
             }
             let mut span = Span::single(l);
             out.push(span);
-            if let Some(next) = self.next_member(l, l, None) {
+            if let Some(next) = self.next_member(l, l, &[]) {
                 if self.lines[next].scene == self.lines[l].scene {
                     span.push(next);
                     out.push(span);
@@ -791,7 +797,7 @@ mod tests {
     fn zone_spans_are_strictly_adjacent() {
         let p = prepared(&toy());
         let mut out = Vec::new();
-        p.spans_into(0, 1, 3, None, &mut out);
+        p.spans_into(0, 1, 3, &[], &mut out);
         let shapes: Vec<Vec<usize>> = out.iter().map(|s| s.iter().collect()).collect();
         assert_eq!(
             shapes,
@@ -810,7 +816,7 @@ mod tests {
     fn character_spans_skip_the_other_channels_lines() {
         let p = prepared(&toy());
         let mut out = Vec::new();
-        p.spans_into(0, 4, 3, Some("char-a"), &mut out);
+        p.spans_into(0, 4, 3, &["char-a".to_string()], &mut out);
         let shapes: Vec<Vec<usize>> = out.iter().map(|s| s.iter().collect()).collect();
         // Line 1 belongs to char-b, so char-a's span 0 continues at line 2.
         assert!(shapes.contains(&vec![0, 2, 3]));
@@ -823,7 +829,7 @@ mod tests {
     fn spans_never_cross_a_scene_boundary() {
         let p = prepared(&toy());
         let mut out = Vec::new();
-        p.spans_into(3, 2, 3, None, &mut out);
+        p.spans_into(3, 2, 3, &[], &mut out);
         for span in &out {
             let scenes: Vec<&str> = span.iter().map(|i| p.lines[i].scene.as_str()).collect();
             assert!(
@@ -837,7 +843,7 @@ mod tests {
     fn span_tokens_concatenate_members() {
         let p = prepared(&toy());
         let mut out = Vec::new();
-        p.spans_into(2, 0, 2, Some("char-a"), &mut out);
+        p.spans_into(2, 0, 2, &["char-a".to_string()], &mut out);
         let two = out.iter().find(|s| s.len() == 2).unwrap();
         let toks = p.span_tokens(*two, &LangCode::new("fr")).unwrap();
         assert_eq!(toks, vec!["alors", "pars", "maintenant"]);
@@ -905,7 +911,7 @@ mod group_tests {
         let prepared =
             PreparedScript::build(&script_with_chorus(), &mut NormalizerRegistry::with_defaults());
         let mut spans = Vec::new();
-        prepared.spans_into(0, prepared.len(), 1, Some("char-a"), &mut spans);
+        prepared.spans_into(0, prepared.len(), 1, &["char-a".to_string()], &mut spans);
         let starts: Vec<usize> = spans.iter().map(|s| s.first()).collect();
         assert!(starts.contains(&0), "the chorus line is reachable from A's mic");
         assert!(starts.contains(&1), "and so is his own");

@@ -24,8 +24,21 @@ pub struct TranscriptSegment {
     pub channel: u16,
     /// Character id this channel carries, or `None` for a zone channel — an
     /// ambient mic with no speaker identity, matched against any expected speaker.
+    ///
+    /// Kept for the single-occupant case, which is most of them, and because every
+    /// segment file on disk is written this way. Use [`Self::speakers`] rather than
+    /// reading it directly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub character: Option<String>,
+    /// Everyone this channel might be carrying, when a mic is shared.
+    ///
+    /// A position mic belongs to a place, not a person. The operator described the real
+    /// arrangement on *Lovedoll*: *"I tried to keep people on the same mic as much as
+    /// possible, not always possible. Veronica and Nicolas would share sometimes."*
+    /// One name would be wrong half the time and no name throws away what is known, so
+    /// a channel names the few people who could be on it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub characters: Vec<String>,
     pub t_start: f64,
     pub t_end: f64,
     pub text: String,
@@ -48,5 +61,17 @@ pub struct TranscriptSegment {
 impl TranscriptSegment {
     pub fn duration(&self) -> f64 {
         (self.t_end - self.t_start).max(0.0)
+    }
+
+    /// Who this audio could be, in order of how it was written down.
+    ///
+    /// Empty means a zone channel: no identity, matched against any expected speaker.
+    /// One name is the ordinary per-actor mic. Several is a shared position mic.
+    pub fn speakers(&self) -> &[String] {
+        if self.characters.is_empty() {
+            self.character.as_slice()
+        } else {
+            &self.characters
+        }
     }
 }

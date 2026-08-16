@@ -1243,7 +1243,7 @@ impl<'a> Tracker<'a> {
             0,
             script.len(),
             self.cfg.max_span,
-            seg.character.as_deref(),
+            seg.speakers(),
             &mut self.spans,
         );
         let mut best: Option<Candidate> = None;
@@ -1292,7 +1292,7 @@ impl<'a> Tracker<'a> {
             self.position,
             window,
             max_span,
-            seg.character.as_deref(),
+            seg.speakers(),
             &mut self.spans,
         );
         if weak {
@@ -1477,18 +1477,19 @@ impl<'a> Tracker<'a> {
             return None;
         }
 
-        let char_factor = match seg.character.as_deref() {
-            None => self.cfg.zone_factor,
-            Some(c) => {
-                if span
-                    .iter()
-                    .all(|i| script.speaks(&script.lines[i].character, c))
-                {
-                    1.0
-                } else {
-                    self.cfg.char_mismatch_penalty
-                }
-            }
+        // A zone mic earns nothing from agreeing, because it agrees with everyone. A
+        // named one — even a shared position mic offering two or three people — is
+        // evidence, and a line none of them could have said is evidence against.
+        let speakers = seg.speakers();
+        let char_factor = if speakers.is_empty() {
+            self.cfg.zone_factor
+        } else if span
+            .iter()
+            .all(|i| script.speaks_any(&script.lines[i].character, speakers))
+        {
+            1.0
+        } else {
+            self.cfg.char_mismatch_penalty
         };
         // Boost from the span's *first* line only: a landmark's value is "this
         // distinctive phrase identifies this position", which is a claim about

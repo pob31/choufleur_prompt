@@ -77,6 +77,10 @@ pub struct SegmentRecord {
     /// are still written — they are the raw material for `channel_garbled`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filtered: Option<String>,
+    /// Everyone this channel might carry, when a mic is shared. Absent on the ordinary
+    /// per-actor and zone channels, so existing segment files are unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub characters: Vec<String>,
 }
 
 impl SegmentRecord {
@@ -84,6 +88,7 @@ impl SegmentRecord {
         TranscriptSegment {
             channel: self.channel,
             character: self.character.clone(),
+            characters: self.characters.clone(),
             t_start: self.t_start,
             t_end: self.t_end,
             text: self.text.clone(),
@@ -280,6 +285,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("segments.jsonl");
         let recs = vec![SegmentRecord {
+            characters: Vec::new(),
             gain_db: None,
             speech_dbfs: None,
             channel: 1,

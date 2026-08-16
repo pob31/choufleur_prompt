@@ -126,6 +126,8 @@ impl EngineConfig {
 struct Source {
     index: u16,
     character: Option<String>,
+    /// Everyone this channel might carry, when a mic is shared. See `ChannelSpec`.
+    characters: Vec<String>,
     lang: Option<LangCode>,
     reader: WavBlockReader,
     frontend: ChannelFrontend,
@@ -296,6 +298,7 @@ impl Engine {
                 speech_dbfs: Some(src.frontend.speech_dbfs()),
                 channel,
                 character: src.character.clone(),
+                characters: src.characters.clone(),
                 t_start: seg.t_start,
                 t_end: seg.t_end,
                 text: decoded.text.clone(),
@@ -327,6 +330,7 @@ impl Engine {
                 index: 0,
                 // A mix carries no speaker identity: it is a zone channel by nature.
                 character: None,
+                characters: Vec::new(),
                 lang: None,
                 reader,
                 frontend: ChannelFrontend::with_agc(0, self.cfg.vad.clone(), self.cfg.agc.clone())?,
@@ -345,7 +349,8 @@ impl Engine {
             let reader = WavBlockReader::open(&path)?;
             sources.push(Source {
                 index: ch.index,
-                character: ch.character.clone(),
+                character: ch.primary().map(str::to_string),
+                characters: ch.speakers().to_vec(),
                 lang: ch.lang.clone(),
                 reader,
                 frontend: ChannelFrontend::with_agc(ch.index, self.cfg.vad.clone(), self.cfg.agc.clone())?,
