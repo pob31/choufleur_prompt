@@ -91,6 +91,32 @@ pub fn inputs() -> Vec<Input> {
     out
 }
 
+/// A patch over every input a device has, for looking rather than for running.
+///
+/// Finding which input a signal actually arrives on is otherwise a guessing game played
+/// one channel at a time — and on a 128-channel card that is not a game anybody wins.
+pub fn every_input(device: &str) -> Result<Venue> {
+    let found = inputs();
+    let dev = found
+        .iter()
+        .find(|i| {
+            !device.trim().is_empty() && i.name.to_lowercase().contains(&device.to_lowercase())
+        })
+        .or_else(|| found.iter().find(|i| i.default))
+        .or_else(|| found.first())
+        .context("no input devices at all")?;
+    Ok(Venue {
+        device: dev.name.clone(),
+        channels: (1..=dev.channels)
+            .map(|n| Patch {
+                logical: n,
+                input: n,
+                note: String::new(),
+            })
+            .collect(),
+    })
+}
+
 /// Where the patch lives: beside the library, not inside a show.
 ///
 /// A show carried to another theatre must not bring this with it, which is the whole

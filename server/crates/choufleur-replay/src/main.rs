@@ -198,6 +198,12 @@ enum Command {
         /// How long to watch.
         #[arg(long, default_value_t = 10.0)]
         seconds: f64,
+        /// Ignore the patch and listen to every input the device has.
+        ///
+        /// For finding which input a signal actually arrives on, which on a
+        /// 128-channel card is not worth doing one channel at a time.
+        #[arg(long)]
+        scan: bool,
     },
 
     /// Check a corpus: files present, hashes intact, script and ground truth agree.
@@ -355,9 +361,14 @@ enum Command {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Listen { library, seconds } => cmd::listen::run(
+        Command::Listen {
+            library,
+            seconds,
+            scan,
+        } => cmd::listen::run(
             &library.unwrap_or_else(cmd::show::default_root),
             seconds,
+            scan,
         ),
         Command::Ui { library, port } => {
             cmd::ui::run(library.unwrap_or_else(cmd::show::default_root), port)
