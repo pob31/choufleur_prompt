@@ -142,6 +142,25 @@ fn parse(text: &str) -> (Vec<Line>, Report) {
             continue;
         }
 
+        // A numbered section — `3.TOUGH COOKIES (TEXT boys)`. *Lovedoll* is built
+        // entirely this way: forty-one numbered parts, no acts, no scenes, and not one
+        // speaker attribution in five hundred and ninety-nine paragraphs. The heading
+        // is what says who is on and what is playing.
+        //
+        // It is kept on the page as a stage direction as well as ending the section
+        // before it, because that title is the only structure the operator has to
+        // navigate by. Recognised before the speaker rules, which would otherwise read
+        // `1.AM I A HUMAN (Presenting everyone)` as a character called `1.AM I A HUMAN`
+        // — capitals, short, parenthetical stripped as manner. The same fault as the
+        // capitalised didascalie, wearing a number.
+        if let Some(n) = numbered_section(para) {
+            scene = format!("scene-{n}");
+            report.scenes += 1;
+            push(&mut out, &act, &scene, "", para, true);
+            report.stage += 1;
+            continue;
+        }
+
         if let Some((kind, label)) = heading(para) {
             match kind {
                 Heading::Act => {
@@ -290,6 +309,22 @@ fn or_next(rest: &str) -> String {
     }
 }
 
+/// `3.TOUGH COOKIES (TEXT boys)` — a numbered part, and the number.
+///
+/// Deliberately narrow: digits, then a dot or bracket, then a real title. A line of
+/// dialogue almost never opens that way, and when one does the operator sees a stage
+/// direction on the page and retypes it, which is a visible mistake rather than a
+/// silent one.
+fn numbered_section(line: &str) -> Option<String> {
+    let digits: String = line.chars().take_while(char::is_ascii_digit).collect();
+    if digits.is_empty() || digits.len() > 3 {
+        return None;
+    }
+    let rest = line[digits.len()..].trim_start();
+    let rest = rest.strip_prefix('.').or_else(|| rest.strip_prefix(')'))?;
+    (rest.trim().chars().count() >= 3).then_some(digits)
+}
+
 /// A whole line inside brackets is a stage direction.
 fn bracketed(line: &str) -> Option<&str> {
     for (open, close) in [('(', ')'), ('[', ']'), ('（', '）')] {
@@ -334,7 +369,16 @@ fn standalone_speaker(line: &str) -> Option<String> {
     // A sentence ends in a full stop; a name does not. `NADIA, s'asseyant.` is the
     // exception the manner-stripping below handles.
     let name = strip_manner(line);
-    if name.is_empty() || !looks_like_name(&name) {
+    // A single letter alone on a line is text, not a name — somebody is spelling
+    // something out. *Lovedoll* has `S` / `O` / `S` on three consecutive lines, and
+    // another run of `B` `F` `A` `K`, and reading them as speakers cost 344 lines:
+    // a false speaker does not merely mis-file its own line, it becomes the speaker
+    // for every line after it until the next one is found.
+    //
+    // The asymmetry decides it. A missed one-letter character leaves lines
+    // unattributed, which costs nothing on a zone mic and is visible in prep; a false
+    // one silently rewrites a third of the script.
+    if name.chars().filter(|c| c.is_alphabetic()).count() < 2 || !looks_like_name(&name) {
         return None;
     }
     Some(name)
@@ -642,6 +686,32 @@ mod tests {
         // similarity guess would put a line in the wrong mouth invisibly.
         let (_, r) = parsed("NADIA : Un.\nNADLA : Deux.");
         assert_eq!(r.characters.len(), 2);
+    }
+
+    #[test]
+    fn letters_being_spelled_out_are_text_not_speakers() {
+        let (lines, r) = parsed("NICO : Help.\nS\nO\nS\nNICO : Please.");
+        assert!(r.characters.iter().all(|c| c.len() > 1), "{:?}", r.characters);
+        assert_eq!(lines.len(), 5);
+        // And they stay where they were said, rather than becoming speakers who then
+        // own everything after them.
+        assert!(lines[1..4].iter().all(|l| l.character == "char-nico"));
+        assert_eq!(lines[4].character, "char-nico");
+    }
+
+    #[test]
+    fn a_numbered_part_is_a_section_and_stays_on_the_page() {
+        // Lovedoll's whole structure: numbered parts, no acts, no attributions.
+        let (lines, r) = parsed(
+            "1.AM I A HUMAN (Presenting everyone) on Voice Over\nIs your body real?\n\
+             2.ENTRANCE (Nico and Boys) on Music LOVE DOLL#2\nWho is taking care of you?",
+        );
+        assert_eq!(r.scenes, 2);
+        assert_eq!(r.characters.len(), 0, "a numbered title is not a character");
+        assert!(lines[0].stage && lines[2].stage);
+        assert!(lines[0].text.starts_with("1.AM I A HUMAN"));
+        assert_eq!(lines[1].scene, "scene-1");
+        assert_eq!(lines[3].scene, "scene-2");
     }
 
     #[test]
