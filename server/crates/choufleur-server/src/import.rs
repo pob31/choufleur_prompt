@@ -46,6 +46,13 @@ pub struct Report {
     pub unattributed: usize,
     /// Paragraphs skipped as blank or punctuation-only.
     pub skipped: usize,
+    /// Characters with a single line to their name.
+    ///
+    /// Almost always a misread: a didascalie taken for a speaker, or a name spelled two
+    /// ways. Reported rather than corrected, because the fix is a judgement — merge,
+    /// rename or retype — and the importer guessing is how the mistake became invisible
+    /// in the first place.
+    pub suspect: Vec<String>,
 }
 
 impl fmt::Display for Report {
@@ -74,6 +81,15 @@ impl fmt::Display for Report {
                 "{} line{} before any speaker was named — check the top of the script",
                 self.unattributed,
                 if self.unattributed == 1 { "" } else { "s" }
+            )?;
+        }
+        if !self.suspect.is_empty() {
+            writeln!(
+                f,
+                "check {}: {} — one line each, which usually means a stage direction \
+                 read as a name, or a name spelled two ways",
+                if self.suspect.len() == 1 { "this speaker" } else { "these speakers" },
+                self.suspect.join(", ")
             )?;
         }
         write!(f, "nothing was dropped silently; {} blank paragraphs skipped", self.skipped)
@@ -125,6 +141,19 @@ fn parse(text: &str) -> (Vec<Line>, Report) {
             continue;
         }
 
+        // A didascalie set in capitals reads as a name to any rule that looks for
+        // capitals, and then it becomes a *character* — after which the speech beneath
+        // it is attributed to somebody called SILENCE, and the real speaker's name is
+        // left sitting in the dialogue. This is the fault the operator reported from
+        // the first Hécube import: *"the names turning into dialogue… probably caused
+        // by a didascalie that threw off the importer."* The set-piece words are few
+        // and known, so they are named rather than guessed at.
+        if is_set_piece(para) {
+            push(&mut out, &act, &scene, "", para.trim_end_matches('.'), true);
+            report.stage += 1;
+            continue;
+        }
+
         if let Some(inner) = bracketed(para) {
             push(&mut out, &act, &scene, "", inner, true);
             report.stage += 1;
@@ -160,6 +189,18 @@ fn parse(text: &str) -> (Vec<Line>, Report) {
     }
 
     report.lines = out.len();
+    // Only worth saying on a script long enough for "one line" to be unusual. On a
+    // ten-line excerpt everybody has one line and the warning is noise, which is how a
+    // useful warning gets ignored on the script where it matters.
+    report.suspect = characters
+        .iter()
+        .filter(|_| out.len() >= 40)
+        .filter(|name| {
+            let id = slug(name);
+            out.iter().filter(|l| l.character == id).count() <= 1
+        })
+        .cloned()
+        .collect();
     report.characters = characters;
     (out, report)
 }
@@ -179,6 +220,19 @@ fn remember(seen: &mut Vec<String>, name: &str) {
     if !name.is_empty() && !seen.iter().any(|s| s == name) {
         seen.push(name.to_string());
     }
+}
+
+/// Directions that stand alone as a whole line, capitalised or not.
+///
+/// Matched on the whole line after folding, never as a substring — `Silence, mes amies`
+/// is a line Éric says twenty times, and searching for the word inside would file every
+/// one of them as a stage direction.
+fn is_set_piece(line: &str) -> bool {
+    matches!(
+        fold(line.trim_end_matches(['.', '!'])).trim(),
+        "silence" | "long silence" | "un temps" | "un temps long" | "pause"
+            | "noir" | "blackout" | "fin" | "entracte" | "musique" | "obscurite"
+    )
 }
 
 enum Heading {
@@ -235,7 +289,13 @@ fn speaker_prefix(line: &str) -> Option<(String, String)> {
         return None;
     }
     let name = strip_manner(head);
-    if name.is_empty() || !looks_like_name(&name) {
+    // A colon is strong evidence on its own, so the name test is allowed to be lenient
+    // here in a way the standalone one is not. A single stray lower-case letter — `NADlA`
+    // for `NADIA`, an ell for a one, the commonest scanning slip there is — otherwise
+    // fails the test, and the entire line including the name lands in the script as
+    // dialogue spoken by whoever came before. That is the fault reported from the first
+    // Hécube import, and it is silent: the name is simply *in* the text.
+    if name.is_empty() || !(looks_like_name(&name) || mostly_capitals(&name)) {
         return None;
     }
     Some((name, rest[1..].to_string()))
@@ -266,17 +326,43 @@ fn strip_manner(head: &str) -> String {
     head[..cut].trim().trim_end_matches('.').trim().to_string()
 }
 
+/// Words that join two speakers and are written in lower case even when the names
+/// around them are not: `NADIA et ÉRIC`, `LE CHŒUR and NADIA`.
+///
+/// Without these, a shared line is not recognised as an attribution at all, and the
+/// whole thing — names included — lands in the script as dialogue spoken by whoever
+/// came before. That is the second way a name turns into a line.
+const JOINERS: [&str; 6] = ["et", "and", "en", "&", "avec", "puis"];
+
+/// Nearly all capitals — enough to be a name that was mistyped or badly scanned.
+///
+/// Only ever used where a colon has already said "this is an attribution". `Attention :`
+/// and `Il dit :` fail it, which is the point.
+fn mostly_capitals(s: &str) -> bool {
+    let letters: Vec<char> = s.chars().filter(|c| c.is_alphabetic()).collect();
+    if letters.len() < 3 || letters.len() > 40 {
+        return false;
+    }
+    let upper = letters.iter().filter(|c| !c.is_lowercase()).count();
+    upper * 10 >= letters.len() * 7
+}
+
 /// Capitalised, and not a sentence.
 ///
 /// The test is the absence of lower-case letters rather than the presence of upper-case
 /// ones, so `ÉLISSA` and `LOÏC` pass without a table of accented capitals.
 fn looks_like_name(s: &str) -> bool {
     let letters: Vec<char> = s.chars().filter(|c| c.is_alphabetic()).collect();
-    !letters.is_empty()
-        && letters.len() <= 30
-        && letters.iter().all(|c| !c.is_lowercase())
-        && !s.ends_with('!')
-        && !s.ends_with('?')
+    if letters.is_empty() || letters.len() > 40 || s.ends_with('!') || s.ends_with('?') {
+        return false;
+    }
+    // Every word must be a name, or one of the few words that join two of them.
+    s.split_whitespace().all(|w| {
+        JOINERS.contains(&fold(w).trim())
+            || w.chars().filter(|c| c.is_alphabetic()).all(|c| !c.is_lowercase())
+    }) && s
+        .split_whitespace()
+        .any(|w| !JOINERS.contains(&fold(w).trim()) && w.chars().any(|c| c.is_alphabetic()))
 }
 
 fn slug(name: &str) -> String {
@@ -298,6 +384,13 @@ fn fold(s: &str) -> String {
             'û' | 'ü' | 'ù' | 'ú' => 'u',
             'ç' => 'c',
             c => c,
+        })
+        .flat_map(|c| match c {
+            // Ligatures, so `LE CHŒUR` and `LE CHOEUR` are one character rather than
+            // two — the same name typed on two different keyboards.
+            'œ' => "oe".chars().collect::<Vec<_>>(),
+            'æ' => "ae".chars().collect(),
+            c => vec![c],
         })
         .filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '-')
         .collect()
@@ -524,6 +617,64 @@ mod tests {
         // similarity guess would put a line in the wrong mouth invisibly.
         let (_, r) = parsed("NADIA : Un.\nNADLA : Deux.");
         assert_eq!(r.characters.len(), 2);
+    }
+
+    #[test]
+    fn a_capitalised_didascalie_does_not_become_a_character() {
+        // Reported from the first Hécube import. SILENCE reads as a name to any rule
+        // looking for capitals; the speech beneath it is then attributed to a character
+        // called SILENCE, and the real speaker's name is left in the dialogue.
+        let (lines, r) = parsed("NADIA : Bonjour.\nSILENCE.\nÉRIC : Bonsoir.");
+        assert_eq!(r.characters, ["NADIA", "ÉRIC"], "SILENCE is not a person");
+        assert_eq!(r.stage, 1);
+        assert!(lines[1].stage);
+        assert_eq!(lines[2].character, "char-eric");
+        assert_eq!(lines[2].text, "Bonsoir.");
+    }
+
+    #[test]
+    fn a_line_that_merely_starts_with_a_direction_word_is_still_dialogue() {
+        // Éric says this twenty times in Hécube. Matching the word as a substring would
+        // file every one of them as a stage direction.
+        let (lines, r) = parsed("ÉRIC : Silence, mes amies.\nSilence, mes amies.");
+        assert_eq!(r.stage, 0);
+        assert!(lines.iter().all(|l| !l.stage));
+        assert_eq!(lines[1].character, "char-eric");
+    }
+
+    #[test]
+    fn two_speakers_sharing_a_line_are_recognised() {
+        // The joining word is lower case while the names are not, so a strict
+        // no-lower-case test rejects the whole attribution and the names land in the
+        // script as dialogue — the second way a name turns into a line.
+        let (lines, r) = parsed("NADIA et ÉRIC : Bonjour.\nLE CHŒUR avec NADIA\nEnsemble.");
+        assert_eq!(r.characters, ["NADIA et ÉRIC", "LE CHŒUR avec NADIA"]);
+        assert_eq!(lines[0].text, "Bonjour.");
+        assert_eq!(lines[1].text, "Ensemble.");
+        assert_eq!(lines[1].character, "char-le-choeur-avec-nadia");
+    }
+
+    #[test]
+    fn a_joining_word_alone_is_not_a_speaker() {
+        let (lines, r) = parsed("NADIA : Un.\net\nDeux.");
+        assert_eq!(r.characters, ["NADIA"]);
+        assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
+    fn a_speaker_with_one_line_is_reported_as_worth_checking() {
+        // Long enough for a single line to be unusual. On a short excerpt everybody has
+        // one line, so the warning is suppressed rather than made meaningless.
+        let mut script = String::new();
+        for n in 0..50 {
+            script.push_str(&format!("NADIA : Ligne {n}.\n"));
+        }
+        script.push_str("NADlA : Trois.\n");
+        let (_, r) = parsed(&script);
+        assert_eq!(r.suspect, ["NADlA"], "the misspelling is surfaced, not merged");
+
+        let (_, short) = parsed("NADIA : Un.\nNADlA : Deux.");
+        assert!(short.suspect.is_empty(), "no noise on a short excerpt");
     }
 
     #[test]
