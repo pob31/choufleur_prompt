@@ -35,7 +35,7 @@ use crate::formats::SegmentRecord;
 ///
 /// So the page carries the version it was written against and says so on screen when
 /// they disagree. A silent no-op is the one failure mode worth spending a field on.
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// One script line, as the client needs it. Sent once, in bulk.
 #[derive(Clone, Serialize)]
@@ -54,8 +54,8 @@ pub struct LineView {
     /// `"silence"`, `"music"`, `"adlib"`, or absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hold: Option<String>,
-    /// Bookmarked by the operator. See `ScriptLine::flag`.
-    pub flag: bool,
+    /// Who has bookmarked this line, and when. See `choufleur_core::script::Flag`.
+    pub flags: Vec<choufleur_core::script::Flag>,
 }
 
 /// What a cue list is *for*, and the vocabulary it uses.
@@ -281,7 +281,10 @@ pub enum Update {
     /// correction that has to be possible *during* a show — the moment you notice a
     /// line is wrong is exactly the moment you cannot stop to retype it — and because
     /// it changes no text, so nothing has to be re-read or re-matched.
-    LineFlagged { line_index: usize, flag: bool },
+    LineFlagged {
+        line_index: usize,
+        flags: Vec<choufleur_core::script::Flag>,
+    },
     /// A line was removed for good — an import artefact, not an editing choice. Like
     /// an insert, every later index has moved, so the client rebuilds.
     LineDeleted { line_index: usize },
@@ -510,7 +513,7 @@ mod tests {
                 kind: "dialogue".into(),
                 spoken: true,
                 hold: None,
-                flag: false,
+                flags: Vec::new(),
             }]),
             latest: Mutex::new(None),
             t_audio: Mutex::new(0.0),
@@ -559,12 +562,16 @@ mod tests {
         // record a bookmark is how a stale tab overwrites a correction.
         let s = serde_json::to_string(&Update::LineFlagged {
             line_index: 411,
-            flag: true,
+            flags: vec![choufleur_core::script::Flag {
+                by: "Conduite SON".into(),
+                at: "2026-08-16T22:14:00Z".into(),
+            }],
         })
         .unwrap();
         assert!(s.contains(r#""type":"line_flagged""#), "{s}");
         assert!(s.contains(r#""lineIndex":411"#), "{s}");
-        assert!(s.contains(r#""flag":true"#), "{s}");
+        // Attributed to the *list*, which is the position — no operator identity needed.
+        assert!(s.contains(r#""by":"Conduite SON""#), "{s}");
     }
 
     #[test]

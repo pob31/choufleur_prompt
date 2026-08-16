@@ -78,6 +78,25 @@ pub enum Hold {
     Adlib,
 }
 
+/// Who left a bookmark on a line, and when.
+///
+/// Attributed to the **cue list**, not to a person. A list is a position — the sound
+/// conduite, the LX plot — and "the sound flags" is the granularity anybody actually
+/// asks in. It also means no identity plumbing: a screen already knows which list it is
+/// showing, so a flag is attributed for free, and nothing is authorised by a name.
+///
+/// An array on the line, because two operators noticing the same bad line is
+/// information rather than a duplicate.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Flag {
+    /// The cue list's name, as its operator wrote it.
+    pub by: String,
+    /// ISO 8601, stamped by the client that placed it — a bookmark wants a wall clock,
+    /// not a trusted one.
+    pub at: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScriptLine {
@@ -141,8 +160,8 @@ pub struct ScriptLine {
     /// it tomorrow and rediscovering it at the next rehearsal.
     ///
     /// Kept in the script rather than in a browser tab for exactly that reason.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub flag: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub flags: Vec<Flag>,
     /// Tracking suspends here until something further on is heard. See [`Hold`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hold: Option<Hold>,
@@ -231,8 +250,9 @@ pub struct PreparedLine {
     pub cut: bool,
     /// Dialogue or didascalie; see [`LineKind`].
     pub kind: LineKind,
-    /// Bookmarked by the operator; see `ScriptLine::flag`. Never affects matching.
-    pub flag: bool,
+    /// Who has bookmarked this line; see [`Flag`]. Never affects matching, and carried
+    /// through so a client can be told without re-reading the script file.
+    pub flags: Vec<Flag>,
     /// Someone says this out loud, so the matcher may look for it. Resolved from
     /// `ScriptLine::spoken`, or from the kind when that is unset.
     pub spoken: bool,
@@ -384,7 +404,7 @@ impl PreparedScript {
                 id: line.id.clone(),
                 cut: line.cut,
                 kind: line.kind,
-                flag: line.flag,
+                flags: line.flags.clone(),
                 spoken: line.spoken.unwrap_or(matches!(line.kind, LineKind::Dialogue)),
                 // A hold is never matchable, whatever it was typed as.
                 //
@@ -635,7 +655,7 @@ mod tests {
             cut: false,
             kind: LineKind::Dialogue,
             spoken: None,
-            flag: false,
+            flags: Vec::new(),
             hold: None,
             hold_seconds: None,
             id: id.into(),

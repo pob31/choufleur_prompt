@@ -1828,7 +1828,7 @@
   const $flag = document.getElementById('flag');
   const $flagCount = document.getElementById('flagcount');
 
-  const flagsAt = () => lines.reduce((a, l, i) => (l.flag ? (a.push(i), a) : a), []);
+  const flagsAt = () => lines.reduce((a, l, i) => (l.flags?.length ? (a.push(i), a) : a), []);
 
   // Whatever the operator is looking at: the line being spoken during a run, or the
   // one they last jumped to in prep, where nothing is running and `current` is -1.
@@ -1838,12 +1838,22 @@
     const all = flagsAt();
     $flagCount.textContent = all.length ? String(all.length) : '—';
     const at = subject();
-    $flag.classList.toggle('on', at >= 0 && !!lines[at]?.flag);
+    $flag.classList.toggle('on', at >= 0 && flaggedByMe(lines[at] || {}));
   }
+
+  // The cue list is the identity — "the sound flags", "the LX flags" — so no operator
+  // name is needed and none is trusted. The timestamp is this device's wall clock,
+  // which is what a bookmark wants.
+  const myMark = () => sheetOf(targetSheet())?.name || 'unknown';
+  const flaggedByMe = (l) => (l.flags || []).some((f) => f.by === myMark());
 
   function toggleFlag(index) {
     if (index < 0 || index >= lines.length || !ws || ws.readyState !== 1) return;
-    ws.send(JSON.stringify({ type: 'flag_line', lineIndex: index, flag: !lines[index].flag }));
+    ws.send(JSON.stringify({
+      type: 'flag_line', lineIndex: index,
+      flag: !flaggedByMe(lines[index]),
+      by: myMark(), at: new Date().toISOString(),
+    }));
   }
 
   $flag.addEventListener('click', () => toggleFlag(subject()));
@@ -1992,7 +2002,7 @@
     const bFlag = document.createElement('button');
     bFlag.textContent = 'flag';
     bFlag.onmousedown = (e) => e.preventDefault();
-    const paintFlagBtn = () => bFlag.classList.toggle('flagged', !!lines[i].flag);
+    const paintFlagBtn = () => bFlag.classList.toggle('flagged', flaggedByMe(lines[i]));
     bFlag.onclick = (e) => {
       e.preventDefault();
       toggleFlag(i);
@@ -2156,7 +2166,13 @@
       + (stage ? ' stage' : '')
       + (stage && l.spoken ? ' voiced' : '')
       + (l.hold ? ' holding' : '')
-      + (l.flag ? ' flagged' : '');
+      + (l.flags?.length ? ' flagged' : '');
+    // Who and when, on hover — a shared mark is worth being able to ask about.
+    if (l.flags?.length) {
+      el.title = l.flags.map((f) => `${f.by}${f.at ? ' · ' + f.at.slice(0, 16).replace('T', ' ') : ''}`).join('\n');
+    } else {
+      el.removeAttribute('title');
+    }
     el.textContent = '';
     if (l.hold) {
       el.dataset.hold = l.hold;
@@ -2372,7 +2388,7 @@
   window.addEventListener('resize', () => { lineTops = null; replace(); });
 
   // What this page was written against. See PROTOCOL_VERSION in live.rs.
-  const PROTOCOL = 6;
+  const PROTOCOL = 7;
   // Whether this is a reconnection rather than the first join.
   let joined = false;
 
@@ -2442,7 +2458,7 @@
           if (k >= 0) requestAnimationFrame(() => { goTo(shown[k].lineIndex, true); editCue(k); });
         }
       } else if (m.type === 'line_flagged') {
-        lines[m.lineIndex].flag = m.flag;
+        lines[m.lineIndex].flags = m.flags;
         // An open editor has replaced the line element, so re-rendering it would
         // write into a node that is out of the document. The margin mark reappears
         // when the editor closes and `render` runs there.

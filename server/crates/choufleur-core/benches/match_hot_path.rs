@@ -20,7 +20,7 @@ const LINES: &[&str] = &[
 fn build_script(n: usize) -> Script {
     let lines = (0..n)
         .map(|i| ScriptLine {
-            flag: false,
+            flags: Vec::new(),
             spoken: None,
             kind: Default::default(),
             hold: None,

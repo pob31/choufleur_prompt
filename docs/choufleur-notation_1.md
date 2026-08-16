@@ -405,17 +405,19 @@ This is how visual and musical cues enter the system later without a format brea
   against, the person who notices a bad line is the person who will fix it, and a
   bookmark nobody else can see is a note that gets lost.
 
-  **Attributed and stamped**, so a shared mark can be talked about — *"the ones I flagged
-  after the dress"* is a question the data can answer, and *"who flagged this and when"*
-  is the first thing anybody asks about a mark they did not make. `by` is the operator's
-  self-chosen display name (devplan Pre-Coding Decision 5: client-generated device id
-  plus a display name); it is a label, not an identity claim, and nothing is authorised
-  by it.
+  **`by` is the cue list, not a person.** A list is a position — the sound conduite, the
+  LX plot — and "the sound flags" is the granularity anybody actually asks in. This needs
+  no identity model at all: a screen already knows which list it is showing, so a mark is
+  attributed for free and nothing is authorised by a name. It also sidesteps the question
+  of what happens when two people cover one position across a run: the position is what
+  the note is about.
 
-  Each operator's flags carry their colour in the client, so a page marked up by three
-  people is legible as three people. The colour is a client-side property of the
-  operator, not stored per flag — one person changing their colour must not require
-  rewriting every mark they ever made.
+  `at` is stamped by the client that placed it. A bookmark wants a wall clock, not a
+  trusted one.
+
+  One entry per list, so flagging twice from the same list replaces rather than
+  accumulates, and clearing removes only that list's mark. Where a client shows several
+  lists at once, marks are attributed to the one it would edit.
 
 **Cut and unspoken lines, and any line carrying a hold, are excluded from matching.**
 They are text on the page that will never leave a loudspeaker, and offering them as

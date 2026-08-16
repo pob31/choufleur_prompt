@@ -717,7 +717,7 @@ pub fn run(
             }
             .to_string(),
             spoken: l.spoken,
-            flag: l.flag,
+            flags: l.flags.clone(),
             hold: l.hold.map(|h| {
                 match h {
                     choufleur_core::script::Hold::Silence => "silence",
@@ -1092,7 +1092,13 @@ fn write_line_delete(path: &Path, index: usize) -> Result<()> {
 /// happens mid-run, from a page whose copy of the text may be seconds stale, and
 /// writing the whole line back to record a bookmark is how a stale tab overwrites a
 /// correction. Read-modify-write of one boolean cannot do that.
-fn write_line_flag(path: &Path, index: usize, flag: bool) -> Result<()> {
+fn write_line_flag(
+    path: &Path,
+    index: usize,
+    by: &str,
+    at: &str,
+    on: bool,
+) -> Result<()> {
     let raw = std::fs::read_to_string(path)?;
     let mut doc: serde_json::Value = serde_json::from_str(&raw)?;
     let line = doc
@@ -1100,10 +1106,24 @@ fn write_line_flag(path: &Path, index: usize, flag: bool) -> Result<()> {
         .and_then(|l| l.as_array_mut())
         .and_then(|l| l.get_mut(index))
         .context("no such line in the script")?;
-    if flag {
-        line["flag"] = serde_json::Value::Bool(true);
-    } else if let Some(o) = line.as_object_mut() {
-        o.remove("flag");
+    // One entry per list, so a second list flagging the same line adds rather than
+    // replaces, and clearing removes only this list's mark.
+    let mut flags: Vec<serde_json::Value> = line
+        .get("flags")
+        .and_then(|f| f.as_array())
+        .cloned()
+        .unwrap_or_default();
+    flags.retain(|f| f.get("by").and_then(|b| b.as_str()) != Some(by));
+    if on {
+        flags.push(serde_json::json!({ "by": by, "at": at }));
+    }
+    if let Some(o) = line.as_object_mut() {
+        o.remove("flag");                     // the unattributed boolean, retired
+        if flags.is_empty() {
+            o.remove("flags");
+        } else {
+            o.insert("flags".into(), serde_json::Value::Array(flags));
+        }
     }
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
@@ -1391,7 +1411,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                         .to_string(),
                                                     scene: neighbour.scene.clone(),
                                                     cut: false,
-                                                    flag: false,
+                                                    flags: Vec::new(),
                                                     kind: v
                                                         .get("kind")
                                                         .and_then(|k| k.as_str())
@@ -1472,23 +1492,47 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                         // delete: it moves no indices and changes no
                                         // text, so nothing the run depends on moves.
                                         Some("flag_line") => {
-                                            let flag = {
+                                            // Attributed to the cue list the screen is
+                                            // showing — the list is the position, so no
+                                            // operator identity is needed and none is
+                                            // trusted. The timestamp comes from the
+                                            // client: a bookmark wants a wall clock.
+                                            let by = v
+                                                .get("by")
+                                                .and_then(|b| b.as_str())
+                                                .unwrap_or("unknown")
+                                                .to_string();
+                                            let at = v
+                                                .get("at")
+                                                .and_then(|a| a.as_str())
+                                                .unwrap_or("")
+                                                .to_string();
+                                            let flags = {
                                                 let mut lines = inbound.lines.lock().unwrap();
-                                                let f = v
+                                                let had = lines[i].flags.iter().any(|f| f.by == by);
+                                                let on = v
                                                     .get("flag")
                                                     .and_then(|f| f.as_bool())
-                                                    .unwrap_or(!lines[i].flag);
-                                                lines[i].flag = f;
-                                                f
+                                                    .unwrap_or(!had);
+                                                lines[i].flags.retain(|f| f.by != by);
+                                                if on {
+                                                    lines[i].flags.push(
+                                                        choufleur_core::script::Flag {
+                                                            by: by.clone(),
+                                                            at: at.clone(),
+                                                        },
+                                                    );
+                                                }
+                                                if let Err(e) = write_line_flag(
+                                                    &inbound.script_path, i, &by, &at, on,
+                                                ) {
+                                                    eprintln!("could not save the flag: {e:#}");
+                                                }
+                                                lines[i].flags.clone()
                                             };
-                                            if let Err(e) =
-                                                write_line_flag(&inbound.script_path, i, flag)
-                                            {
-                                                eprintln!("could not save the flag: {e:#}");
-                                            }
                                             let _ = inbound.tx.send(Update::LineFlagged {
                                                 line_index: i,
-                                                flag,
+                                                flags,
                                             });
                                         }
                                         Some("position_jump") => {

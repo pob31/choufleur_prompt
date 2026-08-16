@@ -310,7 +310,7 @@ pub fn load_test_script(n_characters: usize) -> Script {
         let pool = if i % 2 == 0 { LINES_FR } else { LINES_EN };
         for text in pool {
             lines.push(ScriptLine {
-                flag: false,
+                flags: Vec::new(),
                 spoken: None,
                 kind: Default::default(),
                 hold: None,
@@ -494,7 +494,7 @@ pub fn default_script() -> Script {
             .iter()
             .enumerate()
             .map(|(i, (scene, ch, text, lang, lm))| ScriptLine {
-                flag: false,
+                flags: Vec::new(),
                 spoken: None,
                 kind: Default::default(),
                 hold: None,
