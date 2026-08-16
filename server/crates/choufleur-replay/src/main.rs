@@ -188,6 +188,18 @@ enum Command {
         port: u16,
     },
 
+    /// Watch the patched inputs and say whether audio is arriving.
+    ///
+    /// Run it in a terminal you are looking at: if macOS has never been asked for the
+    /// microphone, this is where the prompt appears.
+    Listen {
+        #[arg(long)]
+        library: Option<PathBuf>,
+        /// How long to watch.
+        #[arg(long, default_value_t = 10.0)]
+        seconds: f64,
+    },
+
     /// Check a corpus: files present, hashes intact, script and ground truth agree.
     Verify {
         /// Corpus directory (containing manifest.json) or the manifest itself.
@@ -343,6 +355,10 @@ enum Command {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::Listen { library, seconds } => cmd::listen::run(
+            &library.unwrap_or_else(cmd::show::default_root),
+            seconds,
+        ),
         Command::Ui { library, port } => {
             cmd::ui::run(library.unwrap_or_else(cmd::show::default_root), port)
         }
