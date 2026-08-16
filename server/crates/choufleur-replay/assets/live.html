@@ -1340,7 +1340,14 @@
   const LOOKAHEAD = 2;
 
   function layoutCues() {
-    if (!shown.length) return;
+    // Nothing to place, but there may still be something drawn. Returning here left the
+    // previous list's tendrils on the page: the cards go with the rail, and the leader
+    // lines live in their own SVG which nothing else touches. Switching to a list with
+    // no cues showed the last list's lines pointing into an empty rail.
+    if (!shown.length) {
+      drawLeads([]);
+      return;
+    }
     // Frozen while a cue is open.
     //
     // Two faults, one cause. The card grows when it becomes an editor, so every
