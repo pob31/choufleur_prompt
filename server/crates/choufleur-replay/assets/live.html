@@ -594,6 +594,14 @@
   .member .count { text-align: right; }
   .member input:disabled { opacity: .4; cursor: not-allowed; }
   .member input.set { color: var(--now); }
+  .member .eq {
+    width: 1.7em; height: 1.7em; padding: 0; border-radius: 50%; line-height: 1;
+    font: 600 .9em/1 ui-sans-serif, system-ui, sans-serif;
+  }
+  .member .eq.armed { border-color: var(--now); color: var(--now); }
+  body[data-merging="on"] .member .eq:not(.armed):hover {
+    border-color: var(--now); color: var(--now);
+  }
   #cast .warn {
     font: 400 .78em/1.5 ui-sans-serif, system-ui, sans-serif; color: var(--now);
     border: 1px solid var(--edge); border-radius: 4px; padding: .4em .55em;
@@ -666,8 +674,14 @@
 
   .cuelist {
     padding: .45em 0; border-top: 1px solid var(--edge);
-    display: grid; grid-template-columns: 1fr auto; gap: .4em; align-items: center;
+    display: grid; grid-template-columns: 1fr auto auto; gap: .5em; align-items: center;
   }
+  .cuelist button {
+    border: 1px solid var(--dimmer); background: none; color: var(--dim);
+    border-radius: 999px; padding: .15em .7em; cursor: pointer;
+    font: 400 .8em/1.3 ui-sans-serif, system-ui, sans-serif;
+  }
+  .cuelist button:hover { border-color: var(--now); color: var(--now); }
   .cuelist input {
     min-width: 0; background: #0f1114; color: var(--fg);
     border: 1px solid var(--dimmer); border-radius: 3px; padding: .25em .45em;
@@ -1543,19 +1557,23 @@
   // The list picker. Hidden when a show has only one list, because a control with a
   // single option is furniture.
   const $picker = document.getElementById('picker');
+  /// Show one list, or all of them. Lifted out of the picker because the lists panel
+  /// switches lists too — the targets panel edits whichever is showing, so reaching a
+  /// particular list's targets means showing that list first.
+  function choose(id) {
+    viewing = id;
+    localStorage.setItem('choufleur.list', id);
+    paintPicker();
+    paintCategoryRules();
+    paintFilters();
+    renderRail();
+    replace();
+  }
+
   function paintPicker() {
     $picker.textContent = '';
     $picker.classList.toggle('single', sheets.length < 2);
     if (sheets.length < 2) return;
-    const choose = (id) => {
-      viewing = id;
-      localStorage.setItem('choufleur.list', id);
-      paintPicker();
-      paintCategoryRules();
-      paintFilters();
-      renderRail();
-      replace();
-    };
     // Everything at once is the stage manager's view, and how you check that two lists
     // do not disagree about where a moment sits.
     const options = [...sheets.map((sh) => [sh.id, sh.name]), ['*', 'all']];
@@ -1629,8 +1647,10 @@
 
   function paintTargets() {
     $palette.textContent = '';
+    // Named, because targets belong to one list and the panel used to edit whichever
+    // happened to be showing — silently the first one when viewing them all.
     const h = document.createElement('h4');
-    h.textContent = 'what this cue list drives';
+    h.textContent = `what ${sheetOf(targetSheet())?.name || 'this list'} drives`;
     $palette.appendChild(h);
     draft.forEach((cat, n) => {
       const row = document.createElement('div');
@@ -1653,14 +1673,17 @@
         };
         sw.appendChild(b);
       });
+      // Two steps. Removing a target strips the colour and the meaning from every cue
+      // filed under it — on the sound conduite that is fifty-four of them in one click,
+      // and the click is next to a colour swatch somebody was only browsing.
       const drop = document.createElement('button');
       drop.className = 'drop';
-      drop.textContent = 'remove';
-      drop.onclick = (e) => {
-        e.preventDefault();
-        draft.splice(n, 1);
-        paintTargets();
-      };
+      const used = cues.filter((q) => q.sheet === targetSheet() && q.colour === cat.key).length;
+      App.confirmButton(drop, {
+        label: 'remove',
+        confirm: used ? `remove — ${used} cue${used === 1 ? '' : 's'}?` : 'remove?',
+        onConfirm: () => { draft.splice(n, 1); paintTargets(); },
+      });
       row.append(name, sw, drop);
       $palette.appendChild(row);
     });
@@ -2094,12 +2117,13 @@
     h.textContent = cast.length ? `${cast.length} in the cast` : 'nobody declared yet';
     $cast.appendChild(h);
 
+    document.body.dataset.merging = mergeFrom ? 'on' : 'off';
     if (mergeFrom) {
       const hint = document.createElement('div');
       hint.className = 'warn';
       const who = cast.find((c) => c.id === mergeFrom);
-      hint.textContent = `Who is ${who?.name || mergeFrom} really? Click them, and every `
-        + `line will move across.`;
+      hint.textContent = `Who is ${who?.name || mergeFrom} really? Click the = beside them, `
+        + `and every line moves across.`;
       $cast.appendChild(hint);
     }
 
@@ -2192,19 +2216,18 @@
       count.textContent = n ? `${n} lines` : 'no lines';
       if (!n) count.style.color = 'var(--lost)';
 
-      // Two clicks: the one who should not exist, then the one who should. A label
-      // reading "merge" told nobody which way round that goes.
-      // Two clicks: the one who should not exist, then the one who should. A label
-      // reading "merge" told nobody which way round that goes.
+      // A small round `=`, because this is a repair and not a daily act. Two clicks:
+      // the one who should not exist, then the one who should. The panel says which is
+      // which while it is armed, so the button does not have to carry the explanation.
       const merge = document.createElement('button');
-      merge.textContent = mergeFrom === c.id ? 'cancel'
-        : mergeFrom ? '← is really this' : 'same as…';
+      merge.className = 'eq' + (mergeFrom === c.id ? ' armed' : '');
+      merge.textContent = '=';
       merge.title = mergeFrom === c.id
         ? 'never mind'
         : mergeFrom
           ? `every line of ${mergeFrom} becomes ${c.name || c.id}, and ${mergeFrom} goes`
-          : 'this speaker is really somebody else already in the list — '
-            + 'a misspelling, or a mode like (voix off). Click, then click who they are.';
+          : 'this speaker is really somebody else already in the list — a misspelling, '
+            + 'or a mode like (voix off). Click, then click who they really are.';
       merge.onclick = () => {
         if (!mergeFrom) { mergeFrom = c.id; paintCast(); return; }
         if (mergeFrom === c.id) { mergeFrom = null; paintCast(); return; }
@@ -2401,14 +2424,30 @@
       const n = cues.filter((c) => c.sheet === sh.id).length;
       count.textContent = `${n} cue${n === 1 ? '' : 's'}`;
       count.style.cssText = 'font:400 .78em/1.3 ui-sans-serif,system-ui,sans-serif;color:var(--dimmer)';
-      row.append(name, count);
+
+      // Targets belong to one list, so this is how you reach a particular list's.
+      // There is no shared pool to tick boxes against: each list is its own document
+      // with its own vocabulary, which is why a sound conduite can call something
+      // "QLab" while the lighting list has never heard of it.
+      const edit = document.createElement('button');
+      edit.textContent = 'targets';
+      edit.title = `what ${sh.name} drives`;
+      edit.onclick = () => {
+        // Switch to that list first, or the targets panel would edit the one showing.
+        if (viewing !== sh.id) choose(sh.id);
+        document.body.dataset.lists = 'off';
+        document.getElementById('listsbtn').classList.remove('on');
+        openTargets();
+      };
+
+      row.append(name, count, edit);
 
       const cats = document.createElement('div');
       cats.className = 'cats';
       if (!sh.categories?.length) {
         const none = document.createElement('span');
         none.className = 'none';
-        none.textContent = 'no categories — set them in targets';
+        none.textContent = 'nothing set yet — targets says what this list drives';
         cats.appendChild(none);
       }
       for (const cat of sh.categories || []) {
