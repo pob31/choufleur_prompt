@@ -545,6 +545,12 @@
   #find.miss { border-color: var(--lost); }
   body[data-prep="on"] #heard,
   body[data-prep="on"] #lost,
+  #prephint { display: none; }
+  body[data-prep="on"] #prephint {
+    display: block; position: absolute; z-index: 3; left: 50%; top: 2.4em;
+    transform: translateX(-50%); color: var(--dimmer); pointer-events: none;
+    font: 400 .64em/1.4 ui-sans-serif, system-ui, sans-serif; letter-spacing: .05em;
+  }
   body[data-prep="on"] #hint,
   body[data-prep="on"] #ear,
   body[data-prep="on"] #follow,
@@ -571,6 +577,7 @@
   <div id="palette"></div>
   <div id="view">
       <div id="hint">tap the line being spoken to put it back on track</div>
+    <div id="prephint">click a line to edit it · double-click to give it a cue · alt-click to flag</div>
     <div id="scroller"><div id="lines"></div></div>
 
   </div>
@@ -2140,6 +2147,33 @@
     const el = els[i];
     if (el) decorate(el, lines[i]);
   }
+
+  // Double-click a line to give it a cue.
+  //
+  // Adding one used to mean opening the line editor and finding a button, or opening
+  // somebody else's cue and using "add cue here" — which is fine when a line already
+  // has a cue and absurd when it does not. Pointing at the line is the gesture.
+  //
+  // A double-click is preceded by two ordinary clicks, so the line editor has already
+  // opened by the time this fires. It is cancelled rather than committed: the operator
+  // asked for a cue, not for an edit, and committing here would write back whatever the
+  // editor happened to be showing.
+  $lines.addEventListener('dblclick', (ev) => {
+    if (document.body.dataset.prep !== 'on') return;
+    const el = ev.target.closest('.line');
+    if (!el || !ws || ws.readyState !== 1) return;
+    ev.preventDefault();
+    if (openEditor) openEditor(false);
+    // Selecting a word to make it the trigger also produces a double-click, so the
+    // selection is cleared — otherwise the new cue's editor opens with the operator's
+    // accidental double-click already looking like a chosen trigger phrase.
+    window.getSelection()?.removeAllRanges();
+    const i = Number(el.dataset.i);
+    pendingCueFor = lines[i].id;
+    ws.send(JSON.stringify({
+      type: 'insert_cue', sheet: targetSheet(), lineId: lines[i].id,
+    }));
+  });
 
   $lines.addEventListener('click', (ev) => {
     const el = ev.target.closest('.line');

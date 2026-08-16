@@ -1134,6 +1134,21 @@ struct LineEdit {
     hold: Option<String>,
 }
 
+/// Re-read every sheet and tell the clients, after the *script* has changed shape.
+///
+/// A cue is anchored by line id, which an insert or a delete never touches — but its
+/// `lineIndex` is derived, and every cue after the edit now sits one line out. The rail
+/// positions cards by index, so without this the cue for the line you just typed points
+/// at its neighbour, and so does every cue below it for the rest of the show. Reported
+/// as cue references getting jumbled when a line is added.
+fn republish_cues(state: &Arc<LiveState>) {
+    let ids: Vec<String> = state.sheets.lock().unwrap().iter().map(|s| s.id.clone()).collect();
+    for id in ids {
+        let (cues, list) = reload_cues(state, &id);
+        let _ = state.tx.send(Update::CuesChanged { sheet: id, cues, list });
+    }
+}
+
 /// Re-read the sheet from disk and publish it into the shared state.
 ///
 /// Re-read rather than patched in place: the trigger phrase is derived from the line's
@@ -1422,6 +1437,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                 line_index: i + 1,
                                                 line,
                                             });
+                                            republish_cues(&inbound);
                                         }
                                         // Prep only, for the same reason as the
                                         // insert: it moves every index after it.
@@ -1450,6 +1466,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                             let _ = inbound
                                                 .tx
                                                 .send(Update::LineDeleted { line_index: i });
+                                            republish_cues(&inbound);
                                         }
                                         // Allowed during a show, unlike insert and
                                         // delete: it moves no indices and changes no

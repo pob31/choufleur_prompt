@@ -17,22 +17,72 @@ It **never triggers anything**. Sound, lighting, video, flys — the operator al
 
 ## Status
 
-**Phase 0 — tracking-engine risk spike.** The offline pipeline runs end to end:
-audio in, speech recognised, script position tracked, run scored against the
-go/no-go criteria. On synthesized test audio it passes the gate at 8× real time
-with 351 ms median end-to-end latency.
+**Phase 0 — tracking-engine risk spike, and it has now met real theatre.** Two full
+performances of *Hécube, pas Hécube* (Tiago Rodrigues, Comédie-Française) have been
+tracked end to end against the operator's own script and conduite, and the display has
+been watched and corrected from the chair through several complete runs.
 
-No real theatre audio has been tracked yet, so the question Phase 0 exists to
-answer is still open — synthesized speech is the easiest input this system will
-ever see.
+On the operator's prepped script, tracking both nights:
+
+| | night 16 | night 17 |
+|---|---|---|
+| glances landing inside a 6-line window | **93 %** | **95 %** |
+| p90 position error | 2 lines | 1 line |
+| jumps over 100 lines | **0** | **0** |
+| time without a trustworthy position | 34 s | **0 s** |
+| time at low confidence | 22.6 % | 15.8 % |
+
+Two hours of performance, one mono mixed feed, French, against a script six months
+older than the recordings. End-to-end latency is 351 ms median, and `small` runs at
+6.2× real time — so the compute budget is not the constraint.
+
+**What that took, and what it says.** Almost every gain came from the matcher rather
+than from recognition, and almost every one was found by an operator watching the page
+and describing what felt wrong:
+
+- **Long moves went to zero.** Charging *confirmations* for distance rather than score
+  — a move of a hundred lines must be seen more times before it is believed.
+- **Silence, music and improvisation stop the clock.** A passage the script cannot
+  predict is marked as such, and the tracker waits rather than treating the noise as
+  evidence against where it is.
+- **Long speeches hold their place.** A five-second fragment agrees with a fraction of a
+  173-word line, so consecutive fragments are scored together while the position is
+  stalled. Time at low confidence roughly halved.
+- **A bigger model does not help.** `medium` writes a measurably better transcript —
+  lines recognisable as written 84 → 120 — and tracks no better, three separate ways.
+  The binding constraint is the matcher.
+
+**A prep and live display** is served from the same binary: the script scrolling under a
+continuous follower, an operator's cue sheet on a rail beside it with leader lines to
+the exact phrase that fires each cue, and editors for the script, the cues and the cue
+list's own vocabulary. Several devices join independently — position is shared,
+everything else belongs to a list.
+
+**Still open.** Multitrack has never been tracked against a corpus, which is the case
+with the most to gain since knowing who is speaking should resolve most remaining
+ambiguity. Near-identical lines still cause the one reproducible error. And nothing here
+is installable by anyone who is not holding a Rust toolchain.
+
+Findings, including the ones that failed and why, are in
+[docs/choufleur-phase0-notes.md](docs/choufleur-phase0-notes.md).
 
 ```bash
-cd server && cargo test          # 137 tests; those needing models skip without them
+cd server && cargo test          # 170 tests; those needing models skip without them
 ../scripts/fetch-models.sh       # Whisper + Silero, ~490 MB, once
 cd .. && ./server/target/release/choufleur-replay make-fixture corpus/fixture-smoke
 ./server/target/release/choufleur-replay transcribe corpus/fixture-smoke -o out/segments.jsonl
 ./server/target/release/choufleur-replay track corpus/fixture-smoke --segments out/segments.jsonl -o out/trace.jsonl
 ./server/target/release/choufleur-replay eval corpus/fixture-smoke --trace out/trace.jsonl --segments out/segments.jsonl
+```
+
+Watch it follow a show, with the audio audible and the script on screen:
+
+```bash
+# a live run: sound out of the default device, the page at localhost:8080
+./server/target/release/choufleur-replay serve <manifest> --port 8080
+
+# the same script with no audio, for preparing it and its cue lists
+./server/target/release/choufleur-replay serve <manifest> --prep --port 8080
 ```
 
 | Document | Contents |
