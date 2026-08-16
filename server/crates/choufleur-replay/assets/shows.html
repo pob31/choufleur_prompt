@@ -210,12 +210,19 @@
     openBtn.className = 'pill go';
     openBtn.textContent = isOpen ? 'Open in a tab' : 'Open';
     openBtn.onclick = async () => {
+      // Disabled while it starts, so an impatient second click cannot ask twice.
+      openBtn.disabled = true;
+      openBtn.textContent = isOpen ? 'Opening…' : 'Starting…';
       try {
+        // The server does not answer until the show server is listening, so there is
+        // nothing to time here — if this resolves, the tab will find something.
         const r = isOpen ? open : await App.post(`/api/shows/${encodeURIComponent(s.name)}/open`, {});
-        // The show server takes a moment to read the script before it will answer.
-        setTimeout(() => window.open(`http://${location.hostname}:${r.port}/`, '_blank'), isOpen ? 0 : 900);
+        window.open(`http://${location.hostname}:${r.port}/`, '_blank');
         await load();
-      } catch (e) { say(s, e.message, true); }
+      } catch (e) {
+        openBtn.disabled = false;
+        say(s, e.message, true);
+      }
     };
     acts.appendChild(openBtn);
 

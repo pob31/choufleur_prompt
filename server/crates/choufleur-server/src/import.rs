@@ -486,24 +486,36 @@ fn document(lines: &[Line], report: &Report, title: Option<&str>, lang: &str) ->
             })
         })
         .collect();
-    let scenes: Vec<String> = {
+    // Acts and scenes are `SectionMeta` objects — `{id, title}` — not bare strings.
+    // Written as strings, the whole show became unloadable: `serve` died on
+    // `invalid type: string "act-1", expected struct SectionMeta` before it could bind
+    // a port, so every show this importer made could be created, listed and checked,
+    // and never opened.
+    //
+    // The title is the first line of the section when that line is a stage line, which
+    // is exactly what a heading is emitted as. So `3.TOUGH COOKIES (TEXT boys)` becomes
+    // the scene's name rather than being thrown away.
+    let sections = |pick: fn(&Line) -> &String| -> Vec<serde_json::Value> {
         let mut seen: Vec<String> = Vec::new();
+        let mut out = Vec::new();
         for l in lines {
-            if !seen.contains(&l.scene) {
-                seen.push(l.scene.clone());
+            let id = pick(l);
+            if seen.iter().any(|s| s == id) {
+                continue;
             }
-        }
-        seen
-    };
-    let acts: Vec<String> = {
-        let mut seen: Vec<String> = Vec::new();
-        for l in lines {
-            if !seen.contains(&l.act) {
-                seen.push(l.act.clone());
+            seen.push(id.clone());
+            let mut o = serde_json::Map::new();
+            o.insert("id".into(), id.clone().into());
+            if l.stage && !l.text.trim().is_empty() {
+                o.insert("title".into(), l.text.clone().into());
             }
+            out.push(serde_json::Value::Object(o));
         }
-        seen
+        out
     };
+    let scenes = sections(|l| &l.scene);
+    let acts = sections(|l| &l.act);
+
     serde_json::json!({
         "format": "choufleur-script",
         "formatVersion": "0.1",
@@ -791,10 +803,14 @@ mod tests {
     #[test]
     fn headings_set_the_act_and_scene() {
         let (lines, r) = parsed("ACTE II\nSCÈNE 3\nNADIA : Bonjour.\nSCÈNE 4\nNADIA : Encore.");
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0].act, "act-ii");
-        assert_eq!(lines[0].scene, "scene-3");
-        assert_eq!(lines[1].scene, "scene-4");
+        // Five, not two: the headings stay on the page as stage lines. They are text
+        // somebody wrote, and the operator navigates by them.
+        assert_eq!(lines.len(), 5);
+        let spoken: Vec<&Line> = lines.iter().filter(|l| !l.stage).collect();
+        assert_eq!(spoken.len(), 2);
+        assert_eq!(spoken[0].act, "act-ii");
+        assert_eq!(spoken[0].scene, "scene-3");
+        assert_eq!(spoken[1].scene, "scene-4");
         assert_eq!(r.scenes, 2);
     }
 

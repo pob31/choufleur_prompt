@@ -116,6 +116,26 @@ pub fn script(path: &Path, source: Option<&str>) -> Result<Check> {
     .with_context(|| format!("parsing {} — is it valid JSON?", path.display()))?;
 
     let mut check = Check::default();
+
+    // The first question, and the one this module somehow did not ask: does the file
+    // load as a script at all?
+    //
+    // Everything below inspects a `serde_json::Value`, which is right for the content
+    // checks — it lets a field this build does not model pass through untouched. But it
+    // also means a file can satisfy every one of them and still be refused by the thing
+    // that has to read it. That is not hypothetical: the text importer wrote `acts` and
+    // `scenes` as bare strings where the type wants `{id, title}`, and every show it
+    // made passed this check, listed cleanly, and died on startup with
+    // `invalid type: string "act-1", expected struct SectionMeta` before it could bind
+    // a port. A check that passes a script the show cannot open is worse than no check.
+    if let Err(e) = serde_json::from_value::<choufleur_core::script::Script>(doc.clone()) {
+        check.add(
+            Severity::Fatal,
+            format!("this does not load as a script: {e}"),
+            None,
+        );
+    }
+
     let Some(lines) = doc.get("lines").and_then(|l| l.as_array()) else {
         check.add(Severity::Fatal, "the file has no `lines` array", None);
         return Ok(check);
@@ -354,7 +374,14 @@ fn snippet(s: &str) -> String {
 mod tests {
     use super::*;
 
-    fn write(dir: &Path, doc: serde_json::Value) -> std::path::PathBuf {
+    /// Write a fixture, filling in the envelope a real script always has.
+    ///
+    /// Without this every fixture fails the type check on boilerplate and none of them
+    /// reach the content checks they were written to exercise.
+    fn write(dir: &Path, mut doc: serde_json::Value) -> std::path::PathBuf {
+        let o = doc.as_object_mut().unwrap();
+        o.entry("defaultLang").or_insert(serde_json::json!(["fr"]));
+        o.entry("characters").or_insert(serde_json::json!([]));
         let p = dir.join("script.json");
         std::fs::write(&p, serde_json::to_string(&doc).unwrap()).unwrap();
         p
@@ -364,11 +391,29 @@ mod tests {
         serde_json::json!({
             "characters": [{"id": "char-nadia", "name": "NADIA"}],
             "lines": [
-                {"id": "L-0001", "character": "char-nadia", "text": "Bonjour."},
-                {"id": "L-0002", "character": "", "text": "Elle sort.", "kind": "stage",
+                {"id": "L-0001", "act": "a", "scene": "s",
+                 "character": "char-nadia", "text": "Bonjour."},
+                {"id": "L-0002", "act": "a", "scene": "s",
+                 "character": "", "text": "Elle sort.", "kind": "stage",
                  "spoken": false},
             ],
         })
+    }
+
+    #[test]
+    fn a_file_the_show_cannot_open_is_refused_however_tidy_it_looks() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Every content check below passes on this. Only the type refuses it.
+        let doc = serde_json::json!({
+            "characters": [],
+            "acts": ["act-1"],
+            "scenes": ["scene-1"],
+            "lines": [{"id": "L-0001", "act": "act-1", "scene": "scene-1",
+                       "character": "", "text": "Bonjour."}],
+        });
+        let c = script(&write(tmp.path(), doc), None).unwrap();
+        assert!(!c.ok(), "{c}");
+        assert!(c.problems.iter().any(|p| p.what.contains("does not load as a script")));
     }
 
     #[test]
@@ -405,8 +450,8 @@ mod tests {
         let doc = serde_json::json!({
             "characters": [],
             "lines": [
-                {"id": "L-1", "text": "Bonjour."},
-                {"id": "L-2", "text": "Au revoir."},
+                {"id": "L-1", "act": "a", "scene": "s", "character": "", "text": "Bonjour."},
+                {"id": "L-2", "act": "a", "scene": "s", "character": "", "text": "Au revoir."},
             ],
         });
         let c = script(&write(tmp.path(), doc), Some("Bonjour. Au revoir.")).unwrap();
@@ -419,8 +464,9 @@ mod tests {
         let doc = serde_json::json!({
             "characters": [],
             "lines": [
-                {"id": "L-1", "text": "Bonjour."},
-                {"id": "L-2", "text": "3. A SECTION TITLE", "kind": "stage", "spoken": false},
+                {"id": "L-1", "act": "a", "scene": "s", "character": "", "text": "Bonjour."},
+                {"id": "L-2", "act": "a", "scene": "s", "character": "",
+                 "text": "3. A SECTION TITLE", "kind": "stage", "spoken": false},
             ],
         });
         let c = script(&write(tmp.path(), doc), Some("Bonjour.")).unwrap();
@@ -434,8 +480,8 @@ mod tests {
         let doc = serde_json::json!({
             "characters": [],
             "lines": [
-                {"id": "L-1", "text": "Un."},
-                {"id": "L-1", "text": "Deux."},
+                {"id": "L-1", "act": "a", "scene": "s", "character": "", "text": "Un."},
+                {"id": "L-1", "act": "a", "scene": "s", "character": "", "text": "Deux."},
             ],
         });
         let c = script(&write(tmp.path(), doc), None).unwrap();
@@ -444,15 +490,19 @@ mod tests {
     }
 
     #[test]
-    fn a_speaker_who_is_not_a_character_is_refused() {
+    fn a_speaker_who_is_not_a_character_is_flagged_not_refused() {
         let tmp = tempfile::tempdir().unwrap();
         let doc = serde_json::json!({
             "characters": [{"id": "char-nadia", "name": "NADIA"}],
-            "lines": [{"id": "L-1", "character": "char-eric", "text": "Un."}],
+            "lines": [{"id": "L-1", "act": "a", "scene": "s",
+                       "character": "char-eric", "text": "Un."}],
         });
         let c = script(&write(tmp.path(), doc), None).unwrap();
-        assert!(!c.ok());
-        assert!(c.problems.iter().any(|p| p.what.contains("char-eric")));
+        // Hécube's own prepared script names 23 speakers it never declares, on 81
+        // lines, and it runs. Refusing it would make the check something people skip.
+        assert!(c.ok(), "{c}");
+        assert!(c.problems.iter().any(|p| p.what.contains("char-eric")
+            && p.severity == Severity::Warn));
     }
 
     #[test]
@@ -462,7 +512,8 @@ mod tests {
             "characters": [
                 {"id": "char-choeur", "name": "LE CHŒUR", "members": ["char-ghost"]}
             ],
-            "lines": [{"id": "L-1", "character": "char-choeur", "text": "Un."}],
+            "lines": [{"id": "L-1", "act": "a", "scene": "s",
+                       "character": "char-choeur", "text": "Un."}],
         });
         let c = script(&write(tmp.path(), doc), None).unwrap();
         assert!(!c.ok());
@@ -474,7 +525,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let doc = serde_json::json!({
             "characters": [],
-            "lines": [{"id": "L-1", "text": "Musique.", "kind": "stage",
+            "lines": [{"id": "L-1", "act": "a", "scene": "s", "character": "",
+                       "text": "Musique.", "kind": "stage",
                        "hold": "music", "spoken": true}],
         });
         let c = script(&write(tmp.path(), doc), None).unwrap();

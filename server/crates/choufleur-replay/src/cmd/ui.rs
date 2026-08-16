@@ -315,29 +315,53 @@ async fn open(
     Json(req): Json<OpenReq>,
 ) -> Reply<Json<OpenDto>> {
     let e = ui.entry(&name)?;
-    let mut slot = ui.show.lock().unwrap();
-    // One show at a time. Whatever was open closes first, so there is never a second
-    // server quietly holding a lock on a different show's files.
-    if let Some(mut old) = slot.take() {
-        let _ = old.child.kill();
-        let _ = old.child.wait();
-    }
     let port = ui.port + 1;
-    let exe = std::env::current_exe().context("finding this binary")?;
-    let mut cmd = std::process::Command::new(exe);
-    cmd.arg("serve").arg(&e.manifest).arg("--port").arg(port.to_string());
-    if req.prep {
-        cmd.arg("--prep");
+    // The lock is scoped rather than dropped, because a `MutexGuard` is not `Send` and
+    // a handler that holds one across an await will not compile — which is the right
+    // rule, and here it also keeps the spawn and the wait properly separated.
+    {
+        let mut slot = ui.show.lock().unwrap();
+        // One show at a time. Whatever was open closes first, so there is never a
+        // second server quietly holding a lock on a different show's files.
+        if let Some(mut old) = slot.take() {
+            let _ = old.child.kill();
+            let _ = old.child.wait();
+        }
+        let exe = std::env::current_exe().context("finding this binary")?;
+        let mut cmd = std::process::Command::new(exe);
+        cmd.arg("serve")
+            .arg(&e.manifest)
+            .arg("--port")
+            .arg(port.to_string());
+        if req.prep {
+            cmd.arg("--prep");
+        }
+        let child = cmd
+            .spawn()
+            .with_context(|| format!("starting a show server for {}", e.name))?;
+        *slot = Some(Running {
+            name: e.name.clone(),
+            port,
+            child,
+        });
     }
-    let child = cmd
-        .spawn()
-        .with_context(|| format!("starting a show server for {}", e.name))?;
-    *slot = Some(Running {
-        name: e.name.clone(),
-        port,
-        child,
-    });
+
+    wait_until_listening(port, &e.name).await?;
     Ok(Json(OpenDto { name: e.name, port }))
+}
+
+/// Poll until the show server answers, or give up and say so.
+async fn wait_until_listening(port: u16, name: &str) -> Result<()> {
+    for _ in 0..120 {
+        if tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    anyhow::bail!(
+        "{name} did not start. Its script may not load — try Check, which reads it the \
+         same way the show server does."
+    )
 }
 
 async fn close(State(ui): State<Arc<Ui>>) -> Reply<Json<Report>> {
