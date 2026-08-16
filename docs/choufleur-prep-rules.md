@@ -24,33 +24,44 @@ So: **never drop text.** If you cannot decide what a paragraph is, make it a dia
 line and leave it. Every paragraph of the source must appear somewhere in the output.
 This is checked mechanically and the import is refused if text has gone missing.
 
-## Read the script. Do not write a program to read it.
+## Copy the text. Judge the structure.
 
-The temptation, faced with six hundred paragraphs, is to write a script that finds the
-speakers with a regular expression and emits the JSON. Resist it.
+These are two jobs with opposite failure modes, and the commonest mistake is doing both
+the same way.
 
-Choufleur already has that program. It is deliberately simple, it handles the explicit
-cases — a colon, a bracket, a leading number — and you are being asked instead precisely
-because those rules break on material like this. `SILENCE` looks like a name. `1.AM I A
-HUMAN (Presenting everyone)` looks like a name. Three consecutive lines reading `S`, `O`
-and `S` look like three characters, and cost 344 of 589 lines when a rule believed them.
-Writing your own rules reproduces those failures in a new language, with the added
-disadvantage that nobody can see what they were.
+**Never retype a line.** Whatever else you do, the text must reach the output exactly as
+it appears in the source — same words, same punctuation, same typos. Writing out six
+hundred paragraphs by hand invites paraphrase, tidying and quiet omission, and those are
+the failures nobody sees. Copy mechanically, always. This half *should* be automated.
 
-The value you add is judgement, and judgement does not survive being compiled into a
-regular expression. So read the text. Where a passage is irregular — and it will be,
-because scripts are written by people over years, under pressure — decide about that
-passage, not about a pattern it might belong to.
+**Classification is the part that needs you**, and how much depends on the document.
 
-Automation is fine for the mechanical half: extracting the words from a document,
-counting paragraphs, checking your own output. It is the classification that must not be
-automated.
+So look first: is the formatting consistent? Sample a dozen places across the script, not
+just the opening. Is every speaker marked the same way? Is every direction bracketed, or
+italic, or indented? Are the section headings uniform?
+
+- **If it is consistent, automate it.** A rule that genuinely holds across the document
+  is faster and more exact than reading, and the coverage check will confirm it. There is
+  no virtue in doing by hand what the formatting already tells you.
+- **If it is not, classify by reading** — and decide about the passage in front of you,
+  rather than about a pattern it might belong to.
+
+Choufleur already contains the simple version of the automated path: it handles colons,
+brackets and leading numbers, and nothing else. If the script is regular enough for
+rules, that importer will have got most of it and your job is the residue. You are being
+asked instead when the rules break, and they break in ways worth knowing: `SILENCE` looks
+like a name, so does `1.AM I A HUMAN (Presenting everyone)`, and three lines reading `S`,
+`O` and `S` cost 344 of 589 lines when a rule believed them.
+
+The trap is a rule that holds for the first fifty paragraphs and fails quietly after
+that. Check it against the end of the document as well as the beginning, and count the
+result.
 
 **Say what you were unsure about.** After the JSON, in a separate message, list the
 decisions you would want a human to look at: passages you could not classify, names you
-suspect are the same person spelled two ways, sections where you guessed. An operator
-will rework the script anyway; a short list of where to start is worth more than a
-confident silence.
+suspect are the same person spelled two ways, sections where you guessed, and any rule
+you applied along with where you checked that it held. An operator will rework the script
+anyway; a short list of where to start is worth more than a confident silence.
 
 ## Two shapes you will meet
 
