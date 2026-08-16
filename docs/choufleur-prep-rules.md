@@ -24,6 +24,49 @@ So: **never drop text.** If you cannot decide what a paragraph is, make it a dia
 line and leave it. Every paragraph of the source must appear somewhere in the output.
 This is checked mechanically and the import is refused if text has gone missing.
 
+## Read the script. Do not write a program to read it.
+
+The temptation, faced with six hundred paragraphs, is to write a script that finds the
+speakers with a regular expression and emits the JSON. Resist it.
+
+Choufleur already has that program. It is deliberately simple, it handles the explicit
+cases — a colon, a bracket, a leading number — and you are being asked instead precisely
+because those rules break on material like this. `SILENCE` looks like a name. `1.AM I A
+HUMAN (Presenting everyone)` looks like a name. Three consecutive lines reading `S`, `O`
+and `S` look like three characters, and cost 344 of 589 lines when a rule believed them.
+Writing your own rules reproduces those failures in a new language, with the added
+disadvantage that nobody can see what they were.
+
+The value you add is judgement, and judgement does not survive being compiled into a
+regular expression. So read the text. Where a passage is irregular — and it will be,
+because scripts are written by people over years, under pressure — decide about that
+passage, not about a pattern it might belong to.
+
+Automation is fine for the mechanical half: extracting the words from a document,
+counting paragraphs, checking your own output. It is the classification that must not be
+automated.
+
+**Say what you were unsure about.** After the JSON, in a separate message, list the
+decisions you would want a human to look at: passages you could not classify, names you
+suspect are the same person spelled two ways, sections where you guessed. An operator
+will rework the script anyway; a short list of where to start is worth more than a
+confident silence.
+
+## Two shapes you will meet
+
+They want different things from you.
+
+**A dialogue play** — *Hécube, pas Hécube* is one — has many short lines, named speakers
+alternating, stage directions woven through, and cut passages. The work is attribution
+and typing: who says this, is that a didascalie, is this line struck. Nine hundred lines,
+twenty-three characters. Most of the difficulty is here.
+
+**A devised piece** — *Lovedoll* — is big slabs of text under section headings, one or
+two performers per section, no dialogue and often no attribution at all. The work is
+structure: where the sections begin, which passages are lists rather than prose. Do not
+manufacture speakers for it. An empty `character` is the correct answer far more often
+than it looks.
+
 ## Lines
 
 One paragraph of the source is one line. Do not merge lines, and do not split them.
