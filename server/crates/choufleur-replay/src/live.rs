@@ -360,6 +360,13 @@ pub struct LiveState {
     pub sheet_paths: std::collections::HashMap<String, std::path::PathBuf>,
     /// Every cue list this show carries, each owning its own file. See [`CueSheet`].
     pub sheets: Mutex<Vec<CueSheet>>,
+    /// The one gate every write to this show passes through.
+    ///
+    /// Held here rather than reached for per-write because its whole value is being
+    /// shared: it is what serialises two operators' edits, remembers what the files
+    /// looked like when we read them, and takes the session's snapshot before the
+    /// first change. A second `Store` over the same show would defeat all three.
+    pub store: choufleur_server::Store,
     /// Prep mode: the script is served for editing and nothing is running.
     ///
     /// Everything the operator has to set — which lines are cut, which are stage
@@ -523,6 +530,7 @@ mod tests {
             steer: Mutex::new(Vec::new()),
             cues: Mutex::new(Vec::new()),
             sheet_paths: std::collections::HashMap::new(),
+            store: choufleur_server::Store::new(".", Vec::new()),
             sheets: Mutex::new(Vec::new()),
             prep: false,
         };

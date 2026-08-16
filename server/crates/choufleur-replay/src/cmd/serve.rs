@@ -32,6 +32,8 @@ use choufleur_core::tracker::Tracker;
 
 use crate::engine::{Engine, EngineConfig};
 use crate::live::{Broadcast, CueCategory, CueSheet, CueView, LineView, LiveState, Update};
+use choufleur_server::Store;
+
 use crate::manifest::Corpus;
 use crate::monitor::Monitor;
 
@@ -284,12 +286,9 @@ fn trigger_phrase(evidence: &str, line: &str) -> Option<String> {
 /// sheet is an aid, and a display that refuses to start because one cue points at a
 /// line that was deleted this afternoon would be worse than no cue sheet at all — so
 /// the dangling ones are counted, named on the console, and dropped.
-fn load_cues(path: &Path, lines: &[LineView], sheet: &str) -> Vec<CueView> {
-    let Ok(raw) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    let Ok(mut doc) = serde_json::from_str::<serde_json::Value>(&raw) else {
-        eprintln!("cues: {} could not be parsed; carrying on without", path.display());
+fn load_cues(store: &Store, path: &Path, lines: &[LineView], sheet: &str) -> Vec<CueView> {
+    let Ok(doc) = store.read(path) else {
+        eprintln!("cues: {} could not be read; carrying on without", path.display());
         return Vec::new();
     };
     // Give every cue an id, once, and write them back.
@@ -299,28 +298,56 @@ fn load_cues(path: &Path, lines: &[LineView], sheet: &str) -> Vec<CueView> {
     // position will not do — the rail sorts by line while the file is in page order,
     // and either can change under the other. Written back rather than assigned per
     // run so an id means the same thing tomorrow.
-    if let Some(arr) = doc.get_mut("cues").and_then(|c| c.as_array_mut()) {
-        let mut next = 1usize;
-        let mut assigned = false;
-        for c in arr.iter_mut() {
-            if c.get("id").and_then(|v| v.as_str()).is_some() {
-                continue;
-            }
-            if let Some(o) = c.as_object_mut() {
-                o.insert("id".into(), format!("Q-{next:04}").into());
-                assigned = true;
-            }
-            next += 1;
-        }
-        if assigned {
-            if let Ok(text) = serde_json::to_string_pretty(&doc) {
-                let tmp = path.with_extension("json.tmp");
-                if std::fs::write(&tmp, text + "\n").is_ok() && std::fs::rename(&tmp, path).is_ok() {
-                    println!("cues:    assigned ids to {} cues", next - 1);
+    // A sheet that mixes id'd and un-id'd cues used to be handed duplicates: the
+    // counter only advanced for cues it had just named, so the first unnamed cue in a
+    // sheet already containing `Q-0001` was given `Q-0001` again — and `write_cue`
+    // edits the first positional match. Skipping ids already taken is the whole fix.
+    let needs_ids = doc
+        .get("cues")
+        .and_then(|c| c.as_array())
+        .is_some_and(|a| a.iter().any(|c| c.get("id").and_then(|v| v.as_str()).is_none()));
+    if needs_ids {
+        let assigned = store.edit(path, |doc| {
+            let Some(arr) = doc.get_mut("cues").and_then(|c| c.as_array_mut()) else {
+                return Ok(0);
+            };
+            let mut taken: std::collections::HashSet<String> = arr
+                .iter()
+                .filter_map(|c| c.get("id").and_then(|v| v.as_str()).map(str::to_string))
+                .collect();
+            let mut next = 1usize;
+            let mut count = 0usize;
+            for c in arr.iter_mut() {
+                if c.get("id").and_then(|v| v.as_str()).is_some() {
+                    continue;
+                }
+                let id = loop {
+                    let id = format!("Q-{next:04}");
+                    next += 1;
+                    if taken.insert(id.clone()) {
+                        break id;
+                    }
+                };
+                if let Some(o) = c.as_object_mut() {
+                    o.insert("id".into(), id.into());
+                    count += 1;
                 }
             }
+            Ok(count)
+        });
+        match assigned {
+            Ok(n) if n > 0 => println!("cues:    assigned ids to {n} cues"),
+            // Loud, where it used to be swallowed. A sheet that could not be given ids
+            // is a sheet whose cues cannot be edited, and finding that out by clicking
+            // one during a show is the wrong moment.
+            Err(e) => eprintln!("cues: could not assign ids in {}: {e:#}", path.display()),
+            _ => {}
         }
     }
+    // Re-read so the ids just written are the ones we index.
+    let Ok(doc) = store.read(path) else {
+        return Vec::new();
+    };
     let index: std::collections::HashMap<&str, usize> = lines
         .iter()
         .enumerate()
@@ -465,6 +492,7 @@ fn load_cues(path: &Path, lines: &[LineView], sheet: &str) -> Vec<CueView> {
 /// the property that matters during a show: the file on disk is never half a cue.
 #[allow(clippy::too_many_arguments)]
 fn write_cue(
+    store: &Store,
     path: &Path,
     id: &str,
     cue: Option<&str>,
@@ -478,8 +506,7 @@ fn write_cue(
     line_id: Option<&str>,
     delete: bool,
 ) -> Result<()> {
-    let raw = std::fs::read_to_string(path)?;
-    let mut doc: serde_json::Value = serde_json::from_str(&raw)?;
+    store.edit(path, |doc| {
     let arr = doc
         .get_mut("cues")
         .and_then(|c| c.as_array_mut())
@@ -550,10 +577,8 @@ fn write_cue(
         // A cue the operator has been through is a cue somebody has checked.
         c.remove("needsReview");
     }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
-    std::fs::rename(&tmp, path)?;
     Ok(())
+    })
 }
 
 /// Replace the list's categories, keeping the cues that use them working.
@@ -565,9 +590,8 @@ fn write_cue(
 /// Keys are never rewritten here. A cue stores its category by key, so renaming
 /// "QLab" to "QLab 5" must not orphan seventy cues; only the label and the swatch are
 /// the operator's to change freely.
-fn write_categories(path: &Path, cats: &[serde_json::Value]) -> Result<()> {
-    let raw = std::fs::read_to_string(path)?;
-    let mut doc: serde_json::Value = serde_json::from_str(&raw)?;
+fn write_categories(store: &Store, path: &Path, cats: &[serde_json::Value]) -> Result<()> {
+    store.edit(path, |doc| {
     let obj = doc.as_object_mut().context("cue sheet is not an object")?;
     let clean: Vec<serde_json::Value> = cats
         .iter()
@@ -586,16 +610,13 @@ fn write_categories(path: &Path, cats: &[serde_json::Value]) -> Result<()> {
         })
         .collect();
     obj.insert("categories".into(), serde_json::Value::Array(clean));
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
-    std::fs::rename(&tmp, path)?;
     Ok(())
+    })
 }
 
 /// Add a cue against a line, and return its id.
-fn append_cue(path: &Path, line_id: &str) -> Result<String> {
-    let raw = std::fs::read_to_string(path)?;
-    let mut doc: serde_json::Value = serde_json::from_str(&raw)?;
+fn append_cue(store: &Store, path: &Path, line_id: &str) -> Result<String> {
+    store.edit(path, |doc| {
     let arr = doc
         .get_mut("cues")
         .and_then(|c| c.as_array_mut())
@@ -615,10 +636,8 @@ fn append_cue(path: &Path, line_id: &str) -> Result<String> {
         "trigger": "text",
         "source": "operator",
     }));
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
-    std::fs::rename(&tmp, path)?;
     Ok(id)
+    })
 }
 
 /// Play a file to the monitor, on a thread that does nothing else.
@@ -737,12 +756,25 @@ pub fn run(
     } else {
         cues_path.iter().map(|p| p.to_path_buf()).collect()
     };
+    // The show's write gate, built before anything is loaded so that the very first
+    // read records what the files looked like. Everything it guards is listed up
+    // front: a snapshot has to hold the script *and* its cue sheets together, because
+    // a sheet restored on its own anchors to lines that have since moved.
+    let script_path = corpus.script_path();
+    let mut guarded = vec![script_path.clone()];
+    guarded.extend(cue_paths.iter().cloned());
+    let store = Store::new(
+        script_path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+        guarded,
+    );
+    store.arm();
+
     let mut cues: Vec<CueView> = Vec::new();
     let mut sheets: Vec<CueSheet> = Vec::new();
     let mut sheet_paths = std::collections::HashMap::new();
     for path in &cue_paths {
         let id = sheet_id(path);
-        let found = load_cues(path, &lines, &id);
+        let found = load_cues(&store, path, &lines, &id);
         let Some(meta) = read_sheet_meta(path, &id) else {
             continue;
         };
@@ -768,6 +800,7 @@ pub fn run(
         cues: Mutex::new(cues),
         sheet_paths,
         sheets: Mutex::new(sheets),
+        store,
         prep,
     });
 
@@ -962,9 +995,8 @@ fn run_engine(
 /// The running matcher keeps the text it was prepared with: `PreparedScript` is built
 /// once and borrowed by the tracker for the length of the run. So a correction reaches
 /// every screen immediately and reaches the *matching* from the next run.
-fn write_line_edit(path: &Path, index: usize, edit: &LineEdit) -> Result<()> {
-    let raw = std::fs::read_to_string(path)?;
-    let mut doc: serde_json::Value = serde_json::from_str(&raw)?;
+fn write_line_edit(store: &Store, path: &Path, index: usize, edit: &LineEdit) -> Result<()> {
+    store.edit(path, |doc| {
     let line = doc
         .get_mut("lines")
         .and_then(|l| l.as_array_mut())
@@ -991,10 +1023,8 @@ fn write_line_edit(path: &Path, index: usize, edit: &LineEdit) -> Result<()> {
             }
         }
     }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
-    std::fs::rename(&tmp, path)?;
     Ok(())
+    })
 }
 
 /// Add a line to the script, after `after`, and give it an id of its own.
@@ -1004,9 +1034,8 @@ fn write_line_edit(path: &Path, index: usize, edit: &LineEdit) -> Result<()> {
 /// because every cue, note and annotation in the show is anchored to an id. Renumbering
 /// to keep them tidy is precisely this morning's cue-sheet drift, performed
 /// deliberately. So an insert after `L-0075` becomes `L-0075-1`, then `L-0075-2`.
-fn write_line_insert(path: &Path, after: usize, line: &LineView) -> Result<()> {
-    let raw = std::fs::read_to_string(path)?;
-    let mut doc: serde_json::Value = serde_json::from_str(&raw)?;
+fn write_line_insert(store: &Store, path: &Path, after: usize, line: &LineView) -> Result<()> {
+    store.edit(path, |doc| {
     let lines = doc
         .get_mut("lines")
         .and_then(|l| l.as_array_mut())
@@ -1033,10 +1062,8 @@ fn write_line_insert(path: &Path, after: usize, line: &LineView) -> Result<()> {
         new.insert("hold".into(), h.clone().into());
     }
     lines.insert(at, serde_json::Value::Object(new));
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
-    std::fs::rename(&tmp, path)?;
     Ok(())
+    })
 }
 
 /// Remove a line from the script for good, keeping a copy where it can be found.
@@ -1053,9 +1080,8 @@ fn write_line_insert(path: &Path, after: usize, line: &LineView) -> Result<()> {
 /// no-silent-data-loss rule is about not being able to *find out* what happened, not
 /// about keeping rubbish on the page — and a deletion made at eleven at night is
 /// exactly the one somebody will want to inspect at the next rehearsal.
-fn write_line_delete(path: &Path, index: usize) -> Result<()> {
-    let raw = std::fs::read_to_string(path)?;
-    let mut doc: serde_json::Value = serde_json::from_str(&raw)?;
+fn write_line_delete(store: &Store, path: &Path, index: usize) -> Result<()> {
+    store.edit(path, |doc| {
     let lines = doc
         .get_mut("lines")
         .and_then(|l| l.as_array_mut())
@@ -1078,12 +1104,11 @@ fn write_line_delete(path: &Path, index: usize) -> Result<()> {
         .and_then(|r| serde_json::from_str(&r).ok())
         .unwrap_or_default();
     log.push(serde_json::json!({ "wasAfter": after, "line": removed }));
+    // The sidecar is the deletion's only trace, so it is written before the script
+    // loses the line — not after, where a failure would take the line with it.
     std::fs::write(&sidecar, serde_json::to_string_pretty(&log)? + "\n")?;
-
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
-    std::fs::rename(&tmp, path)?;
     Ok(())
+    })
 }
 
 /// Set or clear a line's flag on disk, touching nothing else.
@@ -1093,14 +1118,14 @@ fn write_line_delete(path: &Path, index: usize) -> Result<()> {
 /// writing the whole line back to record a bookmark is how a stale tab overwrites a
 /// correction. Read-modify-write of one boolean cannot do that.
 fn write_line_flag(
+    store: &Store,
     path: &Path,
     index: usize,
     by: &str,
     at: &str,
     on: bool,
 ) -> Result<()> {
-    let raw = std::fs::read_to_string(path)?;
-    let mut doc: serde_json::Value = serde_json::from_str(&raw)?;
+    store.edit(path, |doc| {
     let line = doc
         .get_mut("lines")
         .and_then(|l| l.as_array_mut())
@@ -1125,10 +1150,8 @@ fn write_line_flag(
             o.insert("flags".into(), serde_json::Value::Array(flags));
         }
     }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(&doc)? + "\n")?;
-    std::fs::rename(&tmp, path)?;
     Ok(())
+    })
 }
 
 /// An id unique in the whole script, derived from the line it follows.
@@ -1187,7 +1210,7 @@ fn reload_cues(state: &Arc<LiveState>, changed: &str) -> (Vec<CueView>, CueSheet
         let Some(path) = state.sheet_paths.get(&sheet.id) else {
             continue;
         };
-        cues.extend(load_cues(path, &lines, &sheet.id));
+        cues.extend(load_cues(&state.store, path, &lines, &sheet.id));
         sheets.push(read_sheet_meta(path, &sheet.id).unwrap_or_else(|| sheet.clone()));
     }
     cues.sort_by_key(|c| c.line_index);
@@ -1298,7 +1321,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                             .and_then(|c| c.as_array())
                                             .cloned()
                                             .unwrap_or_default();
-                                        if let Err(e) = write_categories(&path, &cats) {
+                                        if let Err(e) = write_categories(&inbound.store, &path, &cats) {
                                             eprintln!("could not save the targets: {e:#}");
                                         }
                                         let (fresh, list) = reload_cues(&inbound, &id);
@@ -1323,9 +1346,10 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                 .get("lineId")
                                                 .and_then(|x| x.as_str())
                                                 .context("insert_cue needs a lineId")
-                                                .and_then(|lid| append_cue(&path, lid))
+                                                .and_then(|lid| append_cue(&inbound.store, &path, lid))
                                                 .map(|_| ()),
                                             Some("delete_cue") => write_cue(
+                                                &inbound.store,
                                                 &path,
                                                 &id,
                                                 None,
@@ -1338,6 +1362,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                 true,
                                             ),
                                             _ => write_cue(
+                                                &inbound.store,
                                                 &path,
                                                 &id,
                                                 str_of("cue").as_deref(),
@@ -1394,7 +1419,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                         // move; adding one is not.
                                         Some("insert_line") if inbound.prep => {
                                             let line = {
-                                                let mut lines = inbound.lines.lock().unwrap();
+                                                let lines = inbound.lines.lock().unwrap();
                                                 let after = i.min(lines.len().saturating_sub(1));
                                                 let neighbour = &lines[after];
                                                 let line = LineView {
@@ -1441,18 +1466,27 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                         })
                                                         .map(str::to_string),
                                                 };
-                                                lines.insert(after + 1, line.clone());
                                                 line
                                             };
+                                            // Same rule as the delete: the file gains
+                                            // the line before memory does, so a refused
+                                            // write cannot leave the two disagreeing
+                                            // about where every line below it lives.
                                             if let Err(e) = write_line_insert(
+                                                &inbound.store,
                                                 &inbound.script_path,
                                                 i,
                                                 &line,
                                             ) {
                                                 eprintln!("could not save the new line: {e:#}");
-                                            } else {
-                                                println!("inserted {} after line {}", line.id, i + 1);
+                                                continue;
                                             }
+                                            inbound
+                                                .lines
+                                                .lock()
+                                                .unwrap()
+                                                .insert(i + 1, line.clone());
+                                            println!("inserted {} after line {}", line.id, i + 1);
                                             let _ = inbound.tx.send(Update::LineInserted {
                                                 line_index: i + 1,
                                                 line,
@@ -1463,26 +1497,33 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                         // insert: it moves every index after it.
                                         Some("delete_line") if inbound.prep => {
                                             let gone = {
-                                                let mut lines = inbound.lines.lock().unwrap();
+                                                let lines = inbound.lines.lock().unwrap();
                                                 // The last line has to stay: an empty
                                                 // script is a state with no way back
                                                 // through this interface.
                                                 if lines.len() <= 1 {
                                                     continue;
                                                 }
-                                                lines.remove(i)
+                                                lines[i].clone()
                                             };
+                                            // The file loses the line first. If memory
+                                            // dropped it and the write then failed,
+                                            // every later edit would be one index out
+                                            // against the script on disk — the exact
+                                            // shape of corruption this whole path is
+                                            // here to prevent.
                                             if let Err(e) =
-                                                write_line_delete(&inbound.script_path, i)
+                                                write_line_delete(&inbound.store, &inbound.script_path, i)
                                             {
                                                 eprintln!("could not delete the line: {e:#}");
-                                            } else {
-                                                println!(
-                                                    "deleted {} — {:?}",
-                                                    gone.id,
-                                                    gone.text.chars().take(48).collect::<String>()
-                                                );
+                                                continue;
                                             }
+                                            inbound.lines.lock().unwrap().remove(i);
+                                            println!(
+                                                "deleted {} — {:?}",
+                                                gone.id,
+                                                gone.text.chars().take(48).collect::<String>()
+                                            );
                                             let _ = inbound
                                                 .tx
                                                 .send(Update::LineDeleted { line_index: i });
@@ -1514,19 +1555,28 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                     .get("flag")
                                                     .and_then(|f| f.as_bool())
                                                     .unwrap_or(!had);
-                                                lines[i].flags.retain(|f| f.by != by);
-                                                if on {
-                                                    lines[i].flags.push(
-                                                        choufleur_core::script::Flag {
-                                                            by: by.clone(),
-                                                            at: at.clone(),
-                                                        },
-                                                    );
-                                                }
-                                                if let Err(e) = write_line_flag(
+                                                // Disk first. A mark the file does not
+                                                // carry is worse than no mark: the whole
+                                                // reason to leave one is that it will
+                                                // still be there tomorrow.
+                                                match write_line_flag(
+                                                    &inbound.store,
                                                     &inbound.script_path, i, &by, &at, on,
                                                 ) {
-                                                    eprintln!("could not save the flag: {e:#}");
+                                                    Ok(()) => {
+                                                        lines[i].flags.retain(|f| f.by != by);
+                                                        if on {
+                                                            lines[i].flags.push(
+                                                                choufleur_core::script::Flag {
+                                                                    by: by.clone(),
+                                                                    at: at.clone(),
+                                                                },
+                                                            );
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!("could not save the flag: {e:#}");
+                                                    }
                                                 }
                                                 lines[i].flags.clone()
                                             };
@@ -1573,9 +1623,19 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                 .filter(|k| *k == "stage" || *k == "dialogue")
                                                 .map(str::to_string);
                                             let spoken = v.get("spoken").and_then(|b| b.as_bool());
+                                            // Merged against the line as it stands,
+                                            // but on a copy: the change is committed to
+                                            // memory only once it is safely on disk.
+                                            // The two used to be the other way round,
+                                            // so a refused write left every screen —
+                                            // and the server's own copy — showing text
+                                            // the show did not contain. A correction
+                                            // nobody can see is a bug; a correction
+                                            // everybody can see and the file does not
+                                            // have is a much worse one.
                                             let edit = {
-                                                let mut lines = inbound.lines.lock().unwrap();
-                                                let l = &mut lines[i];
+                                                let lines = inbound.lines.lock().unwrap();
+                                                let mut l = lines[i].clone();
                                                 l.text = text.clone();
                                                 if let Some(c) = &character {
                                                     l.character = c.clone();
@@ -1609,22 +1669,58 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                     hold: l.hold.clone(),
                                                 }
                                             };
-                                            if let Err(e) =
-                                                write_line_edit(&inbound.script_path, i, &edit)
-                                            {
-                                                eprintln!("could not save the edit: {e:#}");
-                                            } else {
-                                                println!("edited line {}: {text}", i + 1);
+                                            match write_line_edit(
+                                                &inbound.store,
+                                                &inbound.script_path,
+                                                i,
+                                                &edit,
+                                            ) {
+                                                Ok(()) => {
+                                                    println!("edited line {}: {text}", i + 1);
+                                                    let mut lines =
+                                                        inbound.lines.lock().unwrap();
+                                                    let l = &mut lines[i];
+                                                    l.text = edit.text.clone();
+                                                    if let Some(c) = &character {
+                                                        l.character = c.clone();
+                                                    }
+                                                    l.cut = edit.cut;
+                                                    l.kind = edit.kind.clone();
+                                                    l.spoken = edit.spoken;
+                                                    l.hold = edit.hold.clone();
+                                                    drop(lines);
+                                                    let _ = inbound.tx.send(Update::LineEdited {
+                                                        line_index: i,
+                                                        text,
+                                                        character,
+                                                        cut: edit.cut,
+                                                        kind: edit.kind,
+                                                        spoken: edit.spoken,
+                                                        hold: edit.hold,
+                                                    });
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("could not save the edit: {e:#}");
+                                                    // Broadcast the truth rather than
+                                                    // the attempt. The sending page has
+                                                    // already applied its own edit
+                                                    // optimistically, so saying nothing
+                                                    // would leave that one screen
+                                                    // disagreeing with the show; sending
+                                                    // the line as it actually stands
+                                                    // snaps it back.
+                                                    let l = inbound.lines.lock().unwrap()[i].clone();
+                                                    let _ = inbound.tx.send(Update::LineEdited {
+                                                        line_index: i,
+                                                        text: l.text,
+                                                        character: Some(l.character),
+                                                        cut: l.cut,
+                                                        kind: l.kind,
+                                                        spoken: l.spoken,
+                                                        hold: l.hold,
+                                                    });
+                                                }
                                             }
-                                            let _ = inbound.tx.send(Update::LineEdited {
-                                                line_index: i,
-                                                text,
-                                                character,
-                                                cut: edit.cut,
-                                                kind: edit.kind,
-                                                spoken: edit.spoken,
-                                                hold: edit.hold,
-                                            });
                                         }
                                         _ => {}
                                     }
