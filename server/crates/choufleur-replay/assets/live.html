@@ -674,7 +674,7 @@
 
   .cuelist {
     padding: .45em 0; border-top: 1px solid var(--edge);
-    display: grid; grid-template-columns: 1fr auto auto; gap: .5em; align-items: center;
+    display: grid; grid-template-columns: 1fr auto auto auto; gap: .5em; align-items: center;
   }
   .cuelist button {
     border: 1px solid var(--dimmer); background: none; color: var(--dim);
@@ -682,6 +682,9 @@
     font: 400 .8em/1.3 ui-sans-serif, system-ui, sans-serif;
   }
   .cuelist button:hover { border-color: var(--now); color: var(--now); }
+  .cuelist button.danger:hover, .cuelist button.armed {
+    border-color: var(--lost); color: var(--lost);
+  }
   .cuelist input {
     min-width: 0; background: #0f1114; color: var(--fg);
     border: 1px solid var(--dimmer); border-radius: 3px; padding: .25em .45em;
@@ -1453,7 +1456,7 @@
   // may repeat, which is exactly why a cue is painted from *its own* sheet's set.
   const catFor = (cue) => (sheetOf(cue.sheet)?.categories || []).find((c) => c.key === cue.colour);
   const CUE_STROKE = (cue) => catFor(cue)?.swatch || '';
-  let cueCats = [];
+
 
   // Where the rendered text of a line stops, as opposed to where its box stops.
   // Only ever called for the handful of cues in view.
@@ -1527,7 +1530,13 @@
       $leads.append(path, dot);
       leadEls.push([path, dot]);
     }
-    for (let n = jobs.length; n < leadEls.length; n++) leadEls[n][0].setAttribute('d', '');
+    // Both halves. Blanking the path and leaving its end dot behind is why a list with
+    // no cues still showed marks: the curves vanished and the dots stayed exactly where
+    // the previous list's phrases had been.
+    for (let n = jobs.length; n < leadEls.length; n++) {
+      leadEls[n][0].setAttribute('d', '');
+      leadEls[n][1].setAttribute('r', '0');
+    }
 
     jobs.forEach((j, n) => {
       const [path] = leadEls[n];
@@ -1633,8 +1642,7 @@
   const targetSheet = () => (viewing === '*' ? (sheets[0]?.id || '') : viewing);
 
   function openTargets() {
-    cueCats = sheetOf(targetSheet())?.categories || [];
-    draft = cueCats.map((c) => ({ ...c }));
+    draft = (sheetOf(targetSheet())?.categories || []).map((c) => ({ ...c }));
     document.body.dataset.palette = 'on';
     $targets.classList.add('on');
     paintTargets();
@@ -1851,6 +1859,11 @@
     const bText = mk('text', 'trigger:text', () => { trigger = 'text'; });
     const bVis  = mk('visual', 'trigger:visual', () => { trigger = 'visual'; });
     // One button per category the list defines, in the list's own words.
+    // From the cue's own list, not from whichever list the targets panel last looked
+    // at. `cueCats` was set once, globally, by opening the targets panel — so a cue in
+    // a newly made lighting list offered the sound conduite's targets, which is exactly
+    // the confusion reported. A list's vocabulary is its own.
+    const cueCats = sheetOf(c.sheet)?.categories || [];
     const catBtns = cueCats.map((cat) =>
       mk(cat.label, 'never', () => { colour = colour === cat.key ? '' : cat.key; })
     );
@@ -2096,6 +2109,7 @@
   let cast = [];
   let channels = [];
   let mergeFrom = null;
+  let pendingSheet = null;   // a list just created, to switch to when it appears
 
   const lineCount = (id) => lines.filter((l) => l.character === id).length;
 
@@ -2440,7 +2454,21 @@
         openTargets();
       };
 
-      row.append(name, count, edit);
+      // Two steps, and it says how many cues it is about to put away. The file is
+      // moved to cues/removed/ rather than deleted, but nobody should have to know
+      // that to feel safe clicking it.
+      const drop = document.createElement('button');
+      App.confirmButton(drop, {
+        label: 'remove',
+        confirm: n ? `remove — ${n} cue${n === 1 ? '' : 's'}?` : 'remove?',
+        onConfirm: () => {
+          ws?.send(JSON.stringify({ type: 'delete_sheet', sheet: sh.id }));
+          if (viewing === sh.id) choose('*');
+        },
+      });
+      drop.className = 'danger';
+
+      row.append(name, count, edit, drop);
 
       const cats = document.createElement('div');
       cats.className = 'cats';
@@ -2472,6 +2500,10 @@
     const make = () => {
       const v = field.value.trim();
       if (!v) return;
+      // Switch to it once it arrives. Making a lighting list while looking at the sound
+      // one and then opening targets edited the sound list's vocabulary — which is
+      // where the impression that a new list inherits targets came from.
+      pendingSheet = v;
       ws?.send(JSON.stringify({ type: 'new_sheet', name: v }));
       field.value = '';
     };
@@ -3173,6 +3205,10 @@
         render(m.lineIndex);
         replace();
       } else if (m.type === 'cues_changed') {
+        if (pendingSheet && m.list?.name === pendingSheet) {
+          pendingSheet = null;
+          setTimeout(() => { choose(m.sheet); if (document.body.dataset.lists === 'on') paintLists(); }, 0);
+        }
         // A delta for one list: drop that sheet's cues and splice the new set in.
         // The server sends only the sheet that changed, because a full board is a
         // dozen lists and re-sending all of them on every edit is bytes nobody reads.

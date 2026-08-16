@@ -1339,6 +1339,34 @@ fn new_sheet(dir: &Path, name: &str, taken: &[CueSheet]) -> Result<(String, Path
     Ok((id, path))
 }
 
+/// Retire a cue list — moved aside, never destroyed.
+///
+/// A list is somebody's evening: a hundred cues, their categories, the phrases they are
+/// anchored to. `remove_file` on that is not a thing this program should be able to do,
+/// however many times it asked first. The file goes to `cues/removed/` with the time on
+/// it, where discovery will never find it and a person always will.
+fn retire_sheet(dir: &Path, path: &Path) -> Result<PathBuf> {
+    let out = dir.join("cues").join("removed");
+    std::fs::create_dir_all(&out)?;
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "cues".into());
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut dest = out.join(format!("{stem}.{stamp}.json"));
+    for n in 2.. {
+        if !dest.exists() {
+            break;
+        }
+        dest = out.join(format!("{stem}.{stamp}.{n}.json"));
+    }
+    std::fs::rename(path, &dest).with_context(|| format!("moving {} aside", path.display()))?;
+    Ok(dest)
+}
+
 /// Rename a list, keeping its categories and its cues.
 fn rename_sheet(store: &Store, path: &Path, name: &str) -> Result<()> {
     let name = name.trim().to_string();
@@ -1846,6 +1874,41 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                             Err(e) => eprintln!("could not make the list: {e:#}"),
                                         }
                                     }
+                                    Some("delete_sheet") if inbound.prep => {
+                                        let Some(id) = v.get("sheet").and_then(|s| s.as_str())
+                                        else {
+                                            continue;
+                                        };
+                                        let Some(path) =
+                                            inbound.sheet_paths.lock().unwrap().get(id).cloned()
+                                        else {
+                                            continue;
+                                        };
+                                        let dir = inbound
+                                            .script_path
+                                            .parent()
+                                            .unwrap_or(Path::new("."))
+                                            .to_path_buf();
+                                        match retire_sheet(&dir, &path) {
+                                            Ok(dest) => {
+                                                inbound.sheet_paths.lock().unwrap().remove(id);
+                                                inbound.sheets.lock().unwrap().retain(|s| s.id != id);
+                                                inbound.cues.lock().unwrap().retain(|c| c.sheet != id);
+                                                println!("retired cue list {id} → {}", dest.display());
+                                                let _ = inbound.tx.send(Update::CuesChanged {
+                                                    sheet: id.to_string(),
+                                                    cues: Vec::new(),
+                                                    list: CueSheet {
+                                                        id: id.to_string(),
+                                                        name: String::new(),
+                                                        categories: Vec::new(),
+                                                    },
+                                                });
+                                            }
+                                            Err(e) => eprintln!("could not retire the list: {e:#}"),
+                                        }
+                                    }
+
                                     Some("rename_sheet") if inbound.prep => {
                                         let (Some(id), Some(name)) = (
                                             v.get("sheet").and_then(|s| s.as_str()),
@@ -1879,6 +1942,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                             | Some("merge_speaker")
                                             | Some("new_sheet")
                                             | Some("rename_sheet")
+                                            | Some("delete_sheet")
                                     ) {
                                         continue;
                                     }
