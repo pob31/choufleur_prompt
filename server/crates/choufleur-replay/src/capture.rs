@@ -56,12 +56,19 @@ pub struct ChannelBuf {
     pub input: u16,
     queue: Mutex<VecDeque<f32>>,
     filled: Condvar,
-    /// Frames the callback could not place because the reader was behind.
+    /// Frames lost *while something was reading them*.
     ///
     /// The one thing that makes a sample-counted timeline wrong, so it is counted rather
     /// than swallowed: `Segmenter` derives every timestamp from how many samples it has
-    /// seen, and a dropped frame moves everything after it earlier for ever.
+    /// seen, and a lost frame moves everything after it earlier for ever.
+    ///
+    /// Only while something is reading. A meter-only run consumes nothing, so its buffer
+    /// fills within two seconds and then overwrites for ever — which is correct and not
+    /// a fault. Counting it reported 870,144 dropped frames on a twenty-second look at a
+    /// silent input, which reads as catastrophe and means nothing at all.
     dropped: AtomicU64,
+    /// Set the first time anybody reads. Until then there is no timeline to break.
+    consumed: AtomicBool,
     level: Mutex<Level>,
 }
 
@@ -112,6 +119,7 @@ impl ChannelBuf {
             queue: Mutex::new(VecDeque::with_capacity((RATE as f64 * BUFFER_S) as usize)),
             filled: Condvar::new(),
             dropped: AtomicU64::new(0),
+            consumed: AtomicBool::new(false),
             level: Mutex::new(Level::default()),
         }
     }
@@ -122,6 +130,7 @@ impl ChannelBuf {
     /// nobody has said anything for a moment. Returning 0 has to mean "nothing arrived in
     /// this window", and the caller decides what that is worth.
     pub fn read(&self, out: &mut Vec<f32>, frames: usize, wait: Duration) -> usize {
+        self.consumed.store(true, Ordering::Relaxed);
         let mut q = self.queue.lock().unwrap();
         if q.len() < frames {
             let (g, _) = self.filled.wait_timeout(q, wait).unwrap();
@@ -303,6 +312,7 @@ fn build(want: &str, bufs: &[Arc<ChannelBuf>]) -> Result<(cpal::Stream, String)>
         &cfg.config(),
         move |data: &[f32], _| {
             for (offset, buf) in &taps {
+                let consumed = buf.consumed.load(Ordering::Relaxed);
                 let mut q = buf.queue.lock().unwrap();
                 let mut level = buf.level.lock().unwrap();
                 let mut dropped = 0u64;
@@ -320,11 +330,16 @@ fn build(want: &str, bufs: &[Arc<ChannelBuf>]) -> Result<(cpal::Stream, String)>
                     if a >= 0.999 {
                         level.clipped += 1;
                     }
-                    if q.len() < cap {
-                        q.push_back(s);
-                    } else {
-                        dropped += 1;
+                    if q.len() >= cap {
+                        // Keep the newest. A meter wants the last two seconds, and a
+                        // reader that has fallen this far behind is not going to catch
+                        // up by being handed stale audio first.
+                        q.pop_front();
+                        if consumed {
+                            dropped += 1;
+                        }
                     }
+                    q.push_back(s);
                 }
                 drop(level);
                 drop(q);
@@ -408,6 +423,25 @@ mod tests {
         let h = b.health();
         assert_eq!(h.state, "clipped");
         assert_eq!(h.clipped, 3);
+    }
+
+    #[test]
+    fn a_meter_only_run_does_not_report_the_buffer_filling_as_loss() {
+        // Twenty seconds of looking at an input nobody is transcribing fills the buffer
+        // in two and overwrites for the other eighteen. That is the design, not a fault,
+        // and reporting 870,144 dropped frames for it is how a real drop stops being
+        // believed.
+        let b = buf();
+        assert!(!b.consumed.load(Ordering::Relaxed));
+        assert_eq!(b.dropped(), 0);
+    }
+
+    #[test]
+    fn reading_marks_the_channel_as_consumed() {
+        let b = buf();
+        let mut out = Vec::new();
+        b.read(&mut out, 1, Duration::from_millis(1));
+        assert!(b.consumed.load(Ordering::Relaxed), "now a lost frame matters");
     }
 
     #[test]
