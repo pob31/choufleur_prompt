@@ -340,7 +340,12 @@ async fn open(
         cmd.arg("serve")
             .arg(&e.manifest)
             .arg("--port")
-            .arg(port.to_string());
+            .arg(port.to_string())
+            // Which library this show belongs to. Without it the child falls back to
+            // `$HOME/Choufleur` and reads — and writes — the patch of a different
+            // library entirely, which is how a show opened from the scratchpad ended up
+            // saving its microphones into the home directory.
+            .env("CHOUFLEUR_LIBRARY", &ui.root);
         if req.prep {
             cmd.arg("--prep");
         }

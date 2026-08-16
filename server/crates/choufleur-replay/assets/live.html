@@ -599,13 +599,22 @@
     border: 1px solid var(--edge); border-radius: 4px; padding: .4em .55em;
     margin-bottom: .6em; background: #221d12;
   }
+  /* The roster and the assign-all button share a row, and the row keeps its height
+     whether the button is there or not. */
   .chanmap {
+    display: flex; align-items: flex-start; gap: .6em; min-height: 2.1em;
     font: 400 .78em/1.5 ui-sans-serif, system-ui, sans-serif; color: var(--dimmer);
-    margin-bottom: .5em;
+    margin-bottom: .4em;
   }
-  .chanmap span {
-    display: inline-block; margin-right: .5em; padding: 0 .35em;
+  .chanmap .roster { flex: 1 1 auto; min-width: 0; }
+  .chanmap .roster span {
+    display: inline-block; margin-left: .3em; padding: 0 .35em;
     border: 1px solid var(--edge); border-radius: 3px; color: var(--dim);
+  }
+  .chanmap .putall {
+    flex: 0 0 auto; border: 1px solid var(--now); background: none; color: var(--now);
+    border-radius: 999px; padding: .2em .7em; cursor: pointer;
+    font: 400 .95em/1.4 ui-sans-serif, system-ui, sans-serif; white-space: nowrap;
   }
   /* Shown only for a row that is a group, or one being made into one. Every row
      carrying "a group? name the performers in it" said it twenty-two times to answer a
@@ -2097,43 +2106,43 @@
       $cast.appendChild(p);
     }
 
-    // What there is to assign, said plainly. A number on its own means nothing: this
-    // show's only channel is a full mix that carries everybody, and knowing that is the
-    // difference between leaving the column empty on purpose and leaving it empty
-    // because the field looked broken.
+    // What there is to assign, and where it comes from. The button lives on this row
+    // rather than under it, so patching a whole cast makes the button vanish and moves
+    // nothing else — a list that jumps at the moment you click is a list you have to
+    // find your place in again.
     const map = document.createElement('div');
     map.className = 'chanmap';
+    const roster = document.createElement('span');
+    roster.className = 'roster';
     if (!channels.length) {
-      map.textContent = 'No channels yet — patch one in the audio panel, then assign it here. '
-        + 'A show on a single mixed feed still wants everybody on that one channel.';
+      roster.textContent = 'No microphones patched yet — set them in the audio panel, '
+        + 'then assign them here. A show on one mixed feed still wants everybody on it.';
     } else {
-      map.append(document.createTextNode('Microphones: '));
+      roster.append(document.createTextNode('Patched: '));
       for (const c of channels) {
         const b = document.createElement('span');
-        b.textContent = `${c.index} ${c.note || c.file || ''}`.trim();
-        map.appendChild(b);
+        b.textContent = `${c.index} · ${c.note}`;
+        roster.appendChild(b);
       }
     }
-    $cast.appendChild(map);
+    map.appendChild(roster);
 
-    // A show on one mixed feed wants everybody on that feed, and doing it twenty-two
-    // times by hand is the kind of task people abandon halfway through — which leaves a
-    // cast half-patched, which is worse than not starting.
+    // A show on one feed wants everybody on it, and doing that twenty-two times by hand
+    // is the kind of task people abandon halfway — which leaves a cast half-patched.
     if (channels.length && cast.some((c) => !(c.channels || []).length)) {
-      const all = document.createElement('div');
-      all.className = 'newrow';
       const go = document.createElement('button');
       const first = channels[0].index;
       const missing = cast.filter((c) => !(c.channels || []).length).length;
+      go.className = 'putall';
       go.textContent = `Put ${missing === cast.length ? 'everyone' : `the other ${missing}`}`
-        + ` on channel ${first}`;
+        + ` on ${first}`;
       go.onclick = () => {
         for (const c of cast) if (!(c.channels || []).length) c.channels = [first];
         sendCast(); paintCast();
       };
-      all.appendChild(go);
-      $cast.appendChild(all);
+      map.appendChild(go);
     }
+    $cast.appendChild(map);
 
     // Column headings. Three of the four fields are a bare box otherwise, and the one
     // carrying microphone numbers is the least guessable of them.

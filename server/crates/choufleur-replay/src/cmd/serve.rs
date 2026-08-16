@@ -1351,17 +1351,14 @@ fn rename_sheet(store: &Store, path: &Path, name: &str) -> Result<()> {
     })
 }
 
-/// The lowest channel this show has, from the manifest or the patch.
+/// The lowest channel the room is patched to. See the `/cast.json` handler for why the
+/// manifest is not consulted.
 fn first_channel(state: &LiveState) -> Option<u16> {
-    let from_manifest = state
-        .channels
-        .iter()
-        .filter_map(|c| c.get("index").and_then(|i| i.as_u64()).map(|n| n as u16));
-    let from_venue = crate::audio::load(&state.library)
+    crate::audio::load(&state.library)
         .channels
         .into_iter()
-        .map(|p| p.logical);
-    from_manifest.chain(from_venue).min()
+        .map(|p| p.logical)
+        .min()
 }
 
 /// Re-read the cast from disk and tell every screen.
@@ -1550,19 +1547,31 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                     // describes the room. A show created from pasted text has no
                     // recording at all, so without the patch there would be nothing to
                     // assign anybody to and a new show could never be set up.
-                    let mut channels = s.channels.clone();
-                    for p in crate::audio::load(&s.library).channels {
-                        let known = channels.iter().any(|c| {
-                            c.get("index").and_then(|i| i.as_u64()) == Some(p.logical as u64)
-                        });
-                        if !known {
-                            channels.push(serde_json::json!({
+                    // The patch, and only the patch.
+                    //
+                    // The manifest lists the channels of a *recording* — Hécube's says
+                    // "1, full mix, no speaker identity", which is true of a WAV made
+                    // for testing and says nothing about how the show is miked. The
+                    // operator put it plainly: "If we go back on tour and I have the
+                    // occasion to send individual post fader channels then that
+                    // wouldn't make sense anymore." A production's microphones are a
+                    // fact about the room it is in tonight, so the room is the only
+                    // thing asked. The manifest keeps its channels for the replay
+                    // engine, which reads files rather than inputs.
+                    let mut channels: Vec<serde_json::Value> = crate::audio::load(&s.library)
+                        .channels
+                        .into_iter()
+                        .map(|p| {
+                            serde_json::json!({
                                 "index": p.logical,
-                                "note": format!("input {}", p.input),
-                                "file": "",
-                            }));
-                        }
-                    }
+                                "note": if p.note.is_empty() {
+                                    format!("input {}", p.input)
+                                } else {
+                                    format!("input {} · {}", p.input, p.note)
+                                },
+                            })
+                        })
+                        .collect();
                     channels.sort_by_key(|c| c.get("index").and_then(|i| i.as_u64()));
                     axum::Json(serde_json::json!({
                         "characters": s.cast.lock().unwrap().clone(),
