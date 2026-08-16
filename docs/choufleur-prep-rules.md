@@ -115,6 +115,23 @@ sharing a line — give it its own entry in `characters` and list the ids it is 
 
 ## Stage directions
 
+Typography will not tell you what a didascalie is, and this is the clearest place you
+are worth more than a rule.
+
+*Lazzi* sets both its stage directions and the film titles it quotes in italic, on their
+own lines, identically. `Silence.` and `Soupir.` sit beside `Sueurs froides.`, `La
+Rivière rouge.` and `Cendres et diamant.` — Vertigo, Red River, Ashes and Diamonds. No
+parser separates those. Someone who knows what a film is called separates them instantly.
+
+The same script marks its comic turns the same way — `Panique, lazzi.`, `Gueule de bois,
+lazzi.` — which are structure rather than either.
+
+So read what the line *means*, not how it is set. A direction describes what happens on
+the stage, usually with a verb and often with a performer's name. A title is a noun
+phrase and belongs to the dialogue around it. Where you genuinely cannot tell, make it a
+dialogue line and say so in your notes — a title mistaken for a direction stops being
+matched, and a line the tracker cannot hear is the failure that costs.
+
 `kind: "stage"` marks a didascalie. It is shown differently on the page and, by default,
 is not looked for in the audio.
 
