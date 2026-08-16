@@ -53,6 +53,14 @@ pub struct Report {
     /// rename or retype — and the importer guessing is how the mistake became invisible
     /// in the first place.
     pub suspect: Vec<String>,
+    /// Speakers that name more than one person — `LE CHŒUR et NADIA`.
+    ///
+    /// Listed, never split. Whether that is two characters sharing a line or one chorus
+    /// that happens to include her is a fact about this production, and the operator
+    /// said it plainly: *"this is real specific to the script of this show. No hard
+    /// rules here. It's not a csv."* So the importer keeps them whole and hands over a
+    /// checklist instead of a guess.
+    pub shared: Vec<String>,
 }
 
 impl fmt::Display for Report {
@@ -90,6 +98,15 @@ impl fmt::Display for Report {
                  read as a name, or a name spelled two ways",
                 if self.suspect.len() == 1 { "this speaker" } else { "these speakers" },
                 self.suspect.join(", ")
+            )?;
+        }
+        if !self.shared.is_empty() {
+            writeln!(
+                f,
+                "{} shared line{}: {} — kept whole, retouch to whoever actually speaks",
+                self.shared.len(),
+                if self.shared.len() == 1 { "" } else { "s" },
+                self.shared.join(", ")
             )?;
         }
         write!(f, "nothing was dropped silently; {} blank paragraphs skipped", self.skipped)
@@ -198,6 +215,14 @@ fn parse(text: &str) -> (Vec<Line>, Report) {
         .filter(|name| {
             let id = slug(name);
             out.iter().filter(|l| l.character == id).count() <= 1
+        })
+        .cloned()
+        .collect();
+    report.shared = characters
+        .iter()
+        .filter(|name| {
+            name.split_whitespace()
+                .any(|w| JOINERS.contains(&fold(w).trim()))
         })
         .cloned()
         .collect();
@@ -652,6 +677,16 @@ mod tests {
         assert_eq!(lines[0].text, "Bonjour.");
         assert_eq!(lines[1].text, "Ensemble.");
         assert_eq!(lines[1].character, "char-le-choeur-avec-nadia");
+    }
+
+    #[test]
+    fn shared_speakers_are_listed_for_retouching_and_never_split() {
+        let (lines, r) = parsed("NADIA et ÉRIC : Bonjour.\nGAËL : Seul.");
+        // One character, because whether that is two people or a group is a fact about
+        // the production and not something a rule can know.
+        assert_eq!(lines[0].character, "char-nadia-et-eric");
+        assert_eq!(r.shared, ["NADIA et ÉRIC"]);
+        assert!(!r.shared.contains(&"GAËL".to_string()));
     }
 
     #[test]
