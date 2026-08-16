@@ -1225,7 +1225,7 @@ fn write_cast(store: &Store, path: &Path, cast: &[serde_json::Value]) -> Result<
 ///
 /// The display name is reconstructed from the id, which is what the editor showed the
 /// operator in the first place. Renaming properly is the panel's job.
-fn declare_if_new(store: &Store, path: &Path, id: &str) -> Result<bool> {
+fn declare_if_new(store: &Store, path: &Path, id: &str, first_channel: Option<u16>) -> Result<bool> {
     if id.is_empty() {
         return Ok(false);
     }
@@ -1245,7 +1245,15 @@ fn declare_if_new(store: &Store, path: &Path, id: &str) -> Result<bool> {
             .unwrap_or(id)
             .replace('-', " ")
             .to_uppercase();
-        chars.push(serde_json::json!({ "id": id, "name": name, "channels": [] }));
+        // Put them on the first channel there is. On a show with one mixed feed that
+        // is the right answer and saves twenty-two identical edits; on a patched show
+        // it is a starting point one field away from being right. Either beats a new
+        // performer arriving on no microphone at all.
+        let channels = match first_channel {
+            Some(n) => vec![n],
+            None => vec![],
+        };
+        chars.push(serde_json::json!({ "id": id, "name": name, "channels": channels }));
         Ok(true)
     })
 }
@@ -1341,6 +1349,19 @@ fn rename_sheet(store: &Store, path: &Path, name: &str) -> Result<()> {
             .insert("name".into(), name.clone().into());
         Ok(())
     })
+}
+
+/// The lowest channel this show has, from the manifest or the patch.
+fn first_channel(state: &LiveState) -> Option<u16> {
+    let from_manifest = state
+        .channels
+        .iter()
+        .filter_map(|c| c.get("index").and_then(|i| i.as_u64()).map(|n| n as u16));
+    let from_venue = crate::audio::load(&state.library)
+        .channels
+        .into_iter()
+        .map(|p| p.logical);
+    from_manifest.chain(from_venue).min()
 }
 
 /// Re-read the cast from disk and tell every screen.
@@ -2136,10 +2157,12 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                     // and makes the operator go and
                                                     // tidy up after themselves.
                                                     if let Some(c) = &character {
+                                                        let first = first_channel(&inbound);
                                                         match declare_if_new(
                                                             &inbound.store,
                                                             &inbound.script_path,
                                                             c,
+                                                            first,
                                                         ) {
                                                             Ok(true) => {
                                                                 reload_cast(&inbound, false)

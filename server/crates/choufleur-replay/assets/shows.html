@@ -217,7 +217,16 @@
         // The server does not answer until the show server is listening, so there is
         // nothing to time here — if this resolves, the tab will find something.
         const r = isOpen ? open : await App.post(`/api/shows/${encodeURIComponent(s.name)}/open`, {});
-        window.open(`http://${location.hostname}:${r.port}/`, '_blank');
+        // One window, named, and carrying the show in its URL.
+        //
+        // Every show is served at the same address, so `_blank` on an address the
+        // browser already has open refocuses that tab instead of loading anything —
+        // which is why opening Lovedoll showed Hécube. A named target navigates the
+        // window it already has, and the query makes the address differ so it actually
+        // reloads rather than deciding it is already there.
+        const url = `http://${location.hostname}:${r.port}/?show=${encodeURIComponent(r.name)}`;
+        const w = window.open(url, 'choufleur-show');
+        w?.focus();
         await load();
       } catch (e) {
         openBtn.disabled = false;

@@ -546,7 +546,11 @@
   body[data-lists="on"] #lists,
   body[data-audio="on"] #audio {
     display: block; position: absolute; z-index: 7; right: 1.2em; bottom: 3.4em;
-    width: 34em; max-height: 66vh; overflow-y: auto; padding: .8em .9em;
+    width: 34em; max-height: 66vh; overflow-y: auto; overflow-x: hidden;
+    /* Room for the scrollbar reserved up front. Without it the bar appears, takes its
+       width out of the grid, and the grid answers with a horizontal scrollbar nobody
+       asked for. */
+    scrollbar-gutter: stable; padding: .8em .9em;
     border-radius: 5px; background: #14171c; border: 1px solid var(--edge);
     box-shadow: 0 10px 40px rgba(0,0,0,.6);
   }
@@ -558,7 +562,7 @@
      one performer was called SECRETAIRE-D'ETAT, and a column that moves is a column
      nobody can scan down. */
   .member {
-    display: grid; grid-template-columns: 13em 6em 4.5em 4.5em auto; gap: .4em;
+    display: grid; grid-template-columns: 12em 5.5em 4.5em auto; gap: .4em;
     align-items: center; padding: .25em 0; border-top: 1px solid var(--edge);
   }
   .member input {
@@ -606,11 +610,10 @@
   /* Shown only for a row that is a group, or one being made into one. Every row
      carrying "a group? name the performers in it" said it twenty-two times to answer a
      question about two of them. */
-  .memberof { grid-column: 1 / -1; padding: .1em 0 .3em; }
-  .memberof input { width: 100%; background: #0f1114; color: var(--fg);
-    border: 1px solid var(--edge); border-radius: 3px; padding: .2em .45em;
-    font: 400 .8em/1.4 ui-sans-serif, system-ui, sans-serif; }
-  .memberof input:focus { outline: none; border-color: var(--now); }
+  .memberof {
+    grid-column: 1 / -1; padding: 0 0 .25em .2em;
+    font: 400 .76em/1.4 ui-sans-serif, system-ui, sans-serif; color: var(--speaker);
+  }
 
   .patch {
     display: grid; grid-template-columns: 5.5em 5.5em 1fr auto; gap: .4em;
@@ -2057,7 +2060,6 @@
   let cast = [];
   let channels = [];
   let mergeFrom = null;
-  let openGroup = null;   // the one row showing its members field
 
   const lineCount = (id) => lines.filter((l) => l.character === id).length;
 
@@ -2114,11 +2116,30 @@
     }
     $cast.appendChild(map);
 
+    // A show on one mixed feed wants everybody on that feed, and doing it twenty-two
+    // times by hand is the kind of task people abandon halfway through — which leaves a
+    // cast half-patched, which is worse than not starting.
+    if (channels.length && cast.some((c) => !(c.channels || []).length)) {
+      const all = document.createElement('div');
+      all.className = 'newrow';
+      const go = document.createElement('button');
+      const first = channels[0].index;
+      const missing = cast.filter((c) => !(c.channels || []).length).length;
+      go.textContent = `Put ${missing === cast.length ? 'everyone' : `the other ${missing}`}`
+        + ` on channel ${first}`;
+      go.onclick = () => {
+        for (const c of cast) if (!(c.channels || []).length) c.channels = [first];
+        sendCast(); paintCast();
+      };
+      all.appendChild(go);
+      $cast.appendChild(all);
+    }
+
     // Column headings. Three of the four fields are a bare box otherwise, and the one
     // carrying microphone numbers is the least guessable of them.
     const head = document.createElement('div');
     head.className = 'member heading';
-    for (const t of ['Name', 'Microphones', 'Lines', 'Group', '']) {
+    for (const t of ['Name', 'Microphones', 'Lines', '']) {
       const c = document.createElement('span');
       c.textContent = t;
       head.appendChild(c);
@@ -2178,37 +2199,21 @@
         mergeFrom = null;
       };
 
-      // A group names the performers it is made of — the chorus that is really Éric,
-      // Gaël, Élissa and Séphora. Never inferred; typed by whoever knows. Folded away
-      // unless this row is one, because most rows are not.
-      const grp = document.createElement('button');
-      const isGroup = (c.members || []).length > 0;
-      grp.textContent = isGroup ? `${c.members.length} in it` : 'group';
-      grp.className = isGroup ? 'armed' : '';
-      grp.title = 'this name covers several performers — a chorus, "the boys"';
-      grp.onclick = () => {
-        openGroup = openGroup === c.id ? null : c.id;
-        paintCast();
-      };
+      row.append(name, chan, count, merge);
 
-      row.append(name, chan, count, grp, merge);
-
-      if (isGroup || openGroup === c.id) {
+      // Groups are not edited here. The operator's judgement: "It's just as easy to
+      // type in the names rather than groups. Even in Hécube Choeur doesn't come up
+      // that often." The format still carries `members`, and the matcher still honours
+      // it, so a chorus set during prep keeps working — it is simply shown rather than
+      // given a column of its own on every row that will never use one.
+      if ((c.members || []).length) {
         const of = document.createElement('div');
         of.className = 'memberof';
-        const members = document.createElement('input');
-        members.value = (c.members || []).join(', ');
-        members.placeholder = 'who is in it — names from this list, separated by commas';
-        members.onchange = () => {
-          const known = new Set(cast.map((x) => x.id));
-          c.members = members.value.split(/\s*,\s*/).map((x) => x.trim()).filter(Boolean)
-            .map((x) => (known.has(x) ? x : 'char-' + App.slug(x)))
-            .filter((x) => known.has(x) && x !== c.id);
-          members.value = c.members.join(', ');
-          sendCast();
-          paintCast();
-        };
-        of.appendChild(members);
+        const names = c.members.map((m) => {
+          const who = cast.find((x) => x.id === m);
+          return who ? (who.name || m) : m;
+        });
+        of.textContent = `a group: ${names.join(', ')}`;
         row.appendChild(of);
       }
       $cast.appendChild(row);
