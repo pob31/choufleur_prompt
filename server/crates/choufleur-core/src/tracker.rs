@@ -1480,7 +1480,10 @@ impl<'a> Tracker<'a> {
         let char_factor = match seg.character.as_deref() {
             None => self.cfg.zone_factor,
             Some(c) => {
-                if span.iter().all(|i| script.lines[i].character == c) {
+                if span
+                    .iter()
+                    .all(|i| script.speaks(&script.lines[i].character, c))
+                {
                     1.0
                 } else {
                     self.cfg.char_mismatch_penalty

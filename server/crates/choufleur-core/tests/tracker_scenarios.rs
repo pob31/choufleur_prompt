@@ -66,12 +66,14 @@ fn toy_script() -> Script {
                 name: "MARIE".into(),
                 lang: None,
                 channels: vec![1],
+                members: Vec::new(),
             },
             Character {
                 id: B.into(),
                 name: "JEAN".into(),
                 lang: None,
                 channels: vec![2],
+                members: Vec::new(),
             },
         ],
         lines: rows
@@ -785,6 +787,7 @@ fn long_script(n: usize) -> Script {
             name: "MARIE".into(),
             lang: None,
             channels: vec![1],
+            members: Vec::new(),
         }],
         lines,
     }

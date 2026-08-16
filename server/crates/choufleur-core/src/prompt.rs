@@ -209,6 +209,7 @@ mod tests {
                 name: "A".into(),
                 lang: None,
                 channels: vec![1],
+                members: Vec::new(),
             }],
             lines: vec![
                 mk("L-0001", "char-a", "Bonjour."),

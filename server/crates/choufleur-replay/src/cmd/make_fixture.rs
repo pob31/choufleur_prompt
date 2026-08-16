@@ -301,6 +301,7 @@ pub fn load_test_script(n_characters: usize) -> Script {
             name: format!("SPEAKER{i}"),
             lang: Some(vec![LangCode::new(if i % 2 == 0 { "fr" } else { "en" })]),
             channels: vec![(i + 1) as u16],
+            members: Vec::new(),
         })
         .collect();
 
@@ -476,18 +477,21 @@ pub fn default_script() -> Script {
                 name: "MARIE".into(),
                 lang: Some(vec![LangCode::new("fr")]),
                 channels: vec![1],
+            members: Vec::new(),
             },
             Character {
                 id: "char-john".into(),
                 name: "JOHN".into(),
                 lang: Some(vec![LangCode::new("en")]),
                 channels: vec![2],
+            members: Vec::new(),
             },
             Character {
                 id: "char-sarah".into(),
                 name: "SARAH".into(),
                 lang: Some(vec![LangCode::new("en")]),
                 channels: vec![3],
+            members: Vec::new(),
             },
         ],
         lines: rows

@@ -30,6 +30,19 @@ pub struct Character {
     /// separate concern — see the devplan's venue-vs-show config split).
     #[serde(default)]
     pub channels: Vec<u16>,
+    /// The characters this one is made of, when it is a group.
+    ///
+    /// *Hécube, pas Hécube* gives lines to `LE CHŒUR`, and the chorus is Éric, Gaël,
+    /// Élissa and Séphora. On one zone mic that costs nothing; on a patched multitrack
+    /// show it is the difference between a chorus line matching all four of their
+    /// channels and matching none of them, because a segment arrives stamped with the
+    /// performer's name and `LE CHŒUR` is not it.
+    ///
+    /// **Never inferred.** No rule can know who a chorus is — the operator said so:
+    /// *"the converter can't guess this."* It is written down during prep, by the
+    /// person who knows, and left empty until then.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -355,6 +368,8 @@ pub struct PreparedScript {
     section_starts: Vec<usize>,
     /// Every landmark index (explicit and implicit), ascending.
     landmarks: Vec<usize>,
+    /// Group character id → the ids it is made of. Empty on almost every show.
+    groups: HashMap<String, Vec<String>>,
 }
 
 impl PreparedScript {
@@ -363,6 +378,12 @@ impl PreparedScript {
         let mut by_id = HashMap::with_capacity(script.lines.len());
         let mut section_starts = Vec::new();
         let mut landmarks = Vec::new();
+        let groups: HashMap<String, Vec<String>> = script
+            .characters
+            .iter()
+            .filter(|c| !c.members.is_empty())
+            .map(|c| (c.id.clone(), c.members.clone()))
+            .collect();
         let (mut prev_act, mut prev_scene) = (None::<&str>, None::<&str>);
 
         for (index, line) in script.lines.iter().enumerate() {
@@ -439,7 +460,23 @@ impl PreparedScript {
             by_id,
             section_starts,
             landmarks,
+            groups,
         }
+    }
+
+    /// Does a line owned by `line_character` come out of a mic labelled `heard`?
+    ///
+    /// Identity first, which is the answer on every show that has no groups and is a
+    /// plain string comparison. The map is consulted only when the two names differ,
+    /// and skipped entirely when nothing declared members — so a show without a chorus
+    /// pays nothing for one, and the traces prove it: byte-identical on Hécube.
+    pub fn speaks(&self, line_character: &str, heard: &str) -> bool {
+        line_character == heard
+            || (!self.groups.is_empty()
+                && self
+                    .groups
+                    .get(line_character)
+                    .is_some_and(|m| m.iter().any(|id| id == heard)))
     }
 
     pub fn len(&self) -> usize {
@@ -492,7 +529,7 @@ impl PreparedScript {
                 continue;
             }
             if let Some(c) = character {
-                if self.lines[start].character != c {
+                if !self.speaks(&self.lines[start].character, c) {
                     continue;
                 }
             }
@@ -526,8 +563,9 @@ impl PreparedScript {
             // short one, or a span could reach halfway across the scene.
             Some(c) => {
                 let limit = (start + MAX_SPAN * 2).min(self.lines.len().saturating_sub(1));
-                ((after + 1)..=limit)
-                    .find(|&i| self.lines[i].matchable && self.lines[i].character == c)
+                ((after + 1)..=limit).find(|&i| {
+                    self.lines[i].matchable && self.speaks(&self.lines[i].character, c)
+                })
             }
         }
     }
@@ -650,7 +688,7 @@ impl PreparedScript {
 mod tests {
     use super::*;
 
-    fn line(id: &str, act: &str, scene: &str, ch: &str, text: &str) -> ScriptLine {
+    pub(crate) fn line(id: &str, act: &str, scene: &str, ch: &str, text: &str) -> ScriptLine {
         ScriptLine {
             cut: false,
             kind: LineKind::Dialogue,
@@ -669,7 +707,7 @@ mod tests {
         }
     }
 
-    fn toy() -> Script {
+    pub(crate) fn toy() -> Script {
         Script {
             format: script_format(),
             format_version: script_format_version(),
@@ -683,12 +721,14 @@ mod tests {
                     name: "A".into(),
                     lang: None,
                     channels: vec![1],
+                    members: Vec::new(),
                 },
                 Character {
                     id: "char-b".into(),
                     name: "B".into(),
                     lang: Some(vec![LangCode::new("en")]),
                     channels: vec![2],
+                    members: Vec::new(),
                 },
             ],
             lines: vec![
@@ -811,5 +851,63 @@ mod tests {
         assert_eq!(back.lines.len(), s.lines.len());
         assert_eq!(back.lines[0].id, "L-0001");
         assert_eq!(back.default_lang, vec![LangCode::new("fr")]);
+    }
+}
+
+#[cfg(test)]
+mod group_tests {
+    use super::tests::{line, toy};
+    use super::*;
+
+    fn script_with_chorus() -> Script {
+        let mut s = toy();
+        s.characters.push(Character {
+            id: "char-le-choeur".into(),
+            name: "LE CHŒUR".into(),
+            lang: None,
+            channels: vec![],
+            // In *Hécube, pas Hécube* the chorus is Éric, Gaël, Élissa and Séphora —
+            // a fact about the production that nothing can derive from the text.
+            members: vec!["char-a".into(), "char-b".into()],
+        });
+        s.lines = vec![
+            line("L-1", "act-1", "scene-1", "char-le-choeur", "Nous sommes le choeur."),
+            line("L-2", "act-1", "scene-1", "char-a", "Et moi je suis seul."),
+        ];
+        s
+    }
+
+    #[test]
+    fn a_chorus_line_is_heard_on_any_members_mic() {
+        let prepared =
+            PreparedScript::build(&script_with_chorus(), &mut NormalizerRegistry::with_defaults());
+        assert!(prepared.speaks("char-le-choeur", "char-a"));
+        assert!(prepared.speaks("char-le-choeur", "char-b"));
+        // Not the other way round: A's own lines are his, not the chorus's.
+        assert!(!prepared.speaks("char-a", "char-le-choeur"));
+        // And nobody outside it.
+        assert!(!prepared.speaks("char-le-choeur", "char-z"));
+    }
+
+    #[test]
+    fn a_show_with_no_groups_compares_names_and_nothing_else() {
+        let mut s = script_with_chorus();
+        for c in &mut s.characters {
+            c.members.clear();
+        }
+        let prepared = PreparedScript::build(&s, &mut NormalizerRegistry::with_defaults());
+        assert!(prepared.speaks("char-a", "char-a"));
+        assert!(!prepared.speaks("char-le-choeur", "char-a"));
+    }
+
+    #[test]
+    fn a_chorus_line_is_a_candidate_for_a_members_channel() {
+        let prepared =
+            PreparedScript::build(&script_with_chorus(), &mut NormalizerRegistry::with_defaults());
+        let mut spans = Vec::new();
+        prepared.spans_into(0, prepared.len(), 1, Some("char-a"), &mut spans);
+        let starts: Vec<usize> = spans.iter().map(|s| s.first()).collect();
+        assert!(starts.contains(&0), "the chorus line is reachable from A's mic");
+        assert!(starts.contains(&1), "and so is his own");
     }
 }
