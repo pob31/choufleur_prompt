@@ -625,7 +625,7 @@
   }
 
   .patch {
-    display: grid; grid-template-columns: 5.5em 5.5em 1fr auto; gap: .4em;
+    display: grid; grid-template-columns: 4.5em 5em 9em 1fr auto; gap: .4em;
     align-items: center; padding: .3em 0; border-top: 1px solid var(--edge);
   }
   .patch.heading { border-top: none; padding-bottom: 0; }
@@ -639,6 +639,10 @@
     font: 400 .84em/1.4 ui-sans-serif, system-ui, sans-serif;
   }
   .patch input:focus { outline: none; border-color: var(--now); }
+  .patch .fixed {
+    font: 600 .95em/1.4 ui-sans-serif, system-ui, sans-serif; color: var(--now);
+    text-align: center; font-variant-numeric: tabular-nums;
+  }
   .patch .who { font: 400 .8em/1.4 ui-sans-serif, system-ui, sans-serif;
                 color: var(--speaker); overflow: hidden; text-overflow: ellipsis;
                 white-space: nowrap; }
@@ -2295,7 +2299,7 @@
 
     const head = document.createElement('div');
     head.className = 'patch heading';
-    for (const t of ['Channel', 'Input', 'Carries', '']) {
+    for (const t of ['Channel', 'Input', 'Name', 'Carries', '']) {
       const c = document.createElement('span');
       c.textContent = t;
       head.appendChild(c);
@@ -2306,13 +2310,19 @@
       const el = document.createElement('div');
       el.className = 'patch';
 
-      const logical = document.createElement('input');
-      logical.value = row.logical;
-      logical.title = 'the channel number the cast refers to';
-      logical.onchange = () => {
-        row.logical = parseInt(logical.value, 10) || 0;
-        sendVenue(); paintAudio();
-      };
+      // The channel number is the application's, not the operator's: it is what the
+      // cast refers to, it is handed out in order, and it is never typed. Two editable
+      // number fields side by side, one meaning "the app's channel" and one meaning
+      // "the desk's input", is an invitation to put the desk's number in the app's box.
+      //
+      // Deleting a row leaves the others' numbers alone. Renumbering would be tidier
+      // and would silently repoint every performer assigned below the gap — and the
+      // cast lives in the show while the patch lives in the room, so a deletion here
+      // must not rewrite the script.
+      const logical = document.createElement('span');
+      logical.className = 'fixed';
+      logical.textContent = row.logical;
+      logical.title = 'the channel number the cast refers to — assigned in order';
 
       const input = document.createElement('input');
       input.value = row.input;
@@ -2322,10 +2332,16 @@
         sendVenue(); paintAudio();
       };
 
+      // A name, because "input 17" is a number and "Éric headset" is a microphone.
+      const note = document.createElement('input');
+      note.value = row.note || '';
+      note.placeholder = 'name it';
+      note.onchange = () => { row.note = note.value.trim(); sendVenue(); };
+
       const who = document.createElement('span');
       const names = onChannel(row.logical);
       who.className = 'who' + (names.length ? '' : ' nobody');
-      who.textContent = names.length ? names.join(', ') : 'nobody on this channel yet';
+      who.textContent = names.length ? names.join(', ') : 'nobody yet';
       who.title = 'set in the cast panel';
 
       const drop = document.createElement('button');
@@ -2333,7 +2349,7 @@
       drop.title = 'remove this patch';
       drop.onclick = () => { venue.channels.splice(n, 1); sendVenue(); paintAudio(); };
 
-      el.append(logical, input, who, drop);
+      el.append(logical, input, note, who, drop);
       $audio.appendChild(el);
     }
 
@@ -2342,8 +2358,9 @@
     const go = document.createElement('button');
     go.textContent = '+ Patch a channel';
     go.onclick = () => {
-      // The next free channel, fed by the next input up — a guess that is right when
-      // patching a run of mics in order and one edit away when it is not.
+      // The next free channel number, handed out by the app, and the next input up —
+      // a guess that is right when patching a run of mics in order and one edit away
+      // when it is not.
       const used = venue.channels.map((c) => c.logical);
       let logical = 1;
       while (used.includes(logical)) logical += 1;
@@ -3141,7 +3158,12 @@
         }
       } else if (m.type === 'venue_changed') {
         venue = m.venue || venue;
-        if (document.body.dataset.audio === 'on') paintAudio();
+        // The cast panel lists the patched channels too, and used to go stale the
+        // moment one was deleted — it was reading a roster fetched when it opened.
+        loadCast().then(() => {
+          if (document.body.dataset.audio === 'on') paintAudio();
+          if (document.body.dataset.cast === 'on') paintCast();
+        });
       } else if (m.type === 'cast_changed') {
         cast = m.cast || [];
         if (document.body.dataset.cast === 'on') paintCast();
