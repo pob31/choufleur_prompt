@@ -643,7 +643,7 @@
   }
 
   .patch {
-    display: grid; grid-template-columns: 4.5em 5em 9em 1fr auto; gap: .4em;
+    display: grid; grid-template-columns: 4.5em 5em 8em 1fr 7em auto; gap: .4em;
     align-items: center; padding: .3em 0; border-top: 1px solid var(--edge);
   }
   .patch.heading { border-top: none; padding-bottom: 0; }
@@ -676,6 +676,26 @@
     border-radius: 3px; padding: .3em .45em; margin-bottom: .6em;
     font: 400 .84em/1.4 ui-sans-serif, system-ui, sans-serif;
   }
+  .listenbar { display: flex; align-items: center; gap: .7em; margin-bottom: .7em; }
+  .listenbar .note { flex: 1 1 auto; font: 400 .78em/1.4 ui-sans-serif, system-ui, sans-serif;
+                     color: var(--dimmer); }
+  /* A meter reads as a meter: a bar that moves, not a number to decode. Colour carries
+     the state so a clipped channel is visible without reading anything. */
+  .meter {
+    position: relative; height: 1em; border: 1px solid var(--edge); border-radius: 2px;
+    background: #0f1114; overflow: hidden;
+  }
+  .meter i { position: absolute; inset: 0 auto 0 0; background: var(--dim); }
+  .meter[data-state="ok"] i { background: #5fbf7f; }
+  .meter[data-state="silent"] i { background: var(--dimmer); }
+  .meter[data-state="clipped"] i { background: var(--lost); }
+  .meter[data-state="no audio"] { border-color: var(--lost); }
+  .meter b {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    font: 600 .6em/1 ui-sans-serif, system-ui, sans-serif; color: var(--lost);
+    letter-spacing: .06em; text-transform: uppercase;
+  }
+  #audio .warn.bad { color: var(--lost); background: #1a0d0b; }
   #audio .warn {
     font: 400 .78em/1.5 ui-sans-serif, system-ui, sans-serif; color: var(--now);
     border: 1px solid var(--edge); border-radius: 4px; padding: .4em .55em;
@@ -2309,6 +2329,8 @@
   let inputs = [];
   let venue = { device: '', channels: [] };
   let capture = false;
+  let health = [];            // per-channel levels, while listening
+  let audioTrouble = null;
 
   async function loadAudio() {
     try {
@@ -2331,13 +2353,30 @@
     h.textContent = 'Audio input';
     $audio.appendChild(h);
 
-    // Said plainly rather than implied by a dead meter. The patch is set in the
-    // afternoon and is worth getting right long before there is anything to route.
-    if (!capture) {
+    // Listening is deliberate: holding an interface open is rude to whatever else the
+    // operator has running, so it starts when asked and stops when they are done.
+    const bar = document.createElement('div');
+    bar.className = 'listenbar';
+    const listen = document.createElement('button');
+    listen.className = 'pill' + (capture ? ' on' : '');
+    listen.textContent = capture ? 'Stop listening' : 'Listen';
+    listen.onclick = () => {
+      ws?.send(JSON.stringify({ type: capture ? 'stop_listening' : 'listen' }));
+      listen.disabled = true;
+      listen.textContent = capture ? 'stopping…' : 'opening…';
+    };
+    const said = document.createElement('span');
+    said.className = 'note';
+    said.textContent = capture
+      ? 'Meters are live. Nothing is being recognised yet.'
+      : 'Open the inputs and watch the meters — a patched channel with nothing on it '
+        + 'looks exactly like one patched to the wrong input.';
+    bar.append(listen, said);
+    $audio.appendChild(bar);
+    if (audioTrouble) {
       const w = document.createElement('div');
-      w.className = 'warn';
-      w.textContent = 'Live capture is not built yet — this patch is saved and will be '
-        + 'used when it is. Nothing is being listened to.';
+      w.className = 'warn bad';
+      w.textContent = audioTrouble;
       $audio.appendChild(w);
     }
 
@@ -2359,7 +2398,7 @@
 
     const head = document.createElement('div');
     head.className = 'patch heading';
-    for (const t of ['Channel', 'Input', 'Name', 'Carries', '']) {
+    for (const t of ['Channel', 'Input', 'Name', 'Carries', 'Level', '']) {
       const c = document.createElement('span');
       c.textContent = t;
       head.appendChild(c);
@@ -2404,12 +2443,35 @@
       who.textContent = names.length ? names.join(', ') : 'nobody yet';
       who.title = 'set in the cast panel';
 
+      // The meter, when there is one. Drawn from −60 dBFS up, because everything below
+      // that is a question about the room rather than about the signal.
+      const meter = document.createElement('span');
+      meter.className = 'meter';
+      const h = health.find((x) => x.channel === row.logical);
+      if (h) {
+        const bar = document.createElement('i');
+        const pct = Math.max(0, Math.min(1, (h.rmsDbfs + 60) / 60));
+        bar.style.width = `${(pct * 100).toFixed(1)}%`;
+        meter.dataset.state = h.state;
+        meter.title = h.state === 'no audio'
+          ? 'the device is open but delivering nothing — on macOS, check microphone '
+            + 'permission before checking the patch'
+          : `peak ${h.peakDbfs.toFixed(1)} dBFS · rms ${h.rmsDbfs.toFixed(1)}`
+            + (h.dropped ? ` · ${h.dropped} frames dropped` : '');
+        meter.appendChild(bar);
+        if (h.dropped || h.state === 'no audio') {
+          const d = document.createElement('b');
+          d.textContent = h.dropped ? 'dropped' : 'no audio';
+          meter.appendChild(d);
+        }
+      }
+
       const drop = document.createElement('button');
       drop.textContent = '×';
       drop.title = 'remove this patch';
       drop.onclick = () => { venue.channels.splice(n, 1); sendVenue(); paintAudio(); };
 
-      el.append(logical, input, note, who, drop);
+      el.append(logical, input, note, who, meter, drop);
       $audio.appendChild(el);
     }
 
@@ -3259,6 +3321,15 @@
           pendingCueFor = null;
           if (k >= 0) requestAnimationFrame(() => { goTo(shown[k].lineIndex, true); editCue(k); });
         }
+      } else if (m.type === 'input_health') {
+        health = m.channels || [];
+        capture = health.length > 0;
+        audioTrouble = null;
+        if (document.body.dataset.audio === 'on') paintAudio();
+      } else if (m.type === 'trouble') {
+        audioTrouble = m.what;
+        capture = false;
+        if (document.body.dataset.audio === 'on') paintAudio();
       } else if (m.type === 'venue_changed') {
         venue = m.venue || venue;
         // The cast panel lists the patched channels too, and used to go stale the

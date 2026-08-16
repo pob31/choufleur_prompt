@@ -4,6 +4,7 @@
 #[macro_use]
 pub mod assets;
 pub mod audio;
+pub mod capture;
 pub mod clock;
 pub mod cmd;
 pub mod engine;

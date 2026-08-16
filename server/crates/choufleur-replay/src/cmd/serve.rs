@@ -777,6 +777,7 @@ pub fn run(
         sheet_paths: Mutex::new(sheet_paths),
         sheets: Mutex::new(sheets),
         library: super::show::default_root(),
+        capture: Mutex::new(None),
         channels: corpus
             .manifest
             .channels
@@ -1389,6 +1390,30 @@ fn first_channel(state: &LiveState) -> Option<u16> {
         .min()
 }
 
+/// Report levels while somebody is listening, then stop.
+///
+/// Ten a second: fast enough that a meter reads as a meter rather than a series of
+/// numbers, slow enough that it is a rounding error beside a Whisper decode. Each read
+/// resets the window, so the peak shown is the peak since the last frame drawn rather
+/// than the loudest thing that has ever happened.
+fn spawn_meters(state: Arc<LiveState>) {
+    std::thread::Builder::new()
+        .name("choufleur-meters".into())
+        .spawn(move || loop {
+            let health = match state.capture.lock().unwrap().as_ref() {
+                Some(cap) => cap.health(),
+                // Somebody stopped listening, or the patch changed. The thread goes with
+                // the stream rather than outliving it and reporting an empty room.
+                None => return,
+            };
+            if state.tx.send(Update::InputHealth { channels: health }).is_err() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        })
+        .ok();
+}
+
 /// Re-read the cast from disk and tell every screen.
 ///
 /// From disk rather than from what was just sent, so what the room sees is what the file
@@ -1561,7 +1586,10 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                     axum::Json(serde_json::json!({
                         "inputs": crate::audio::inputs(),
                         "venue": crate::audio::load(&s.library),
-                        "capture": false,
+                        // Whether anything is actually listening, not whether capture
+                        // is built. The panel says one thing when it can listen and
+                        // another when it is.
+                        "capture": s.capture.lock().unwrap().is_some(),
                     }))
                 }),
             )
@@ -1741,6 +1769,39 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                     // merge and a new cue list are all about the show.
                                     // The cue messages sit above for the same reason.
                                     match kind {
+                                        // Listening is deliberate. Holding an interface
+                                        // open is rude to whatever else is using it, so
+                                        // it starts when somebody asks and stops when
+                                        // they are done — or when the patch changes
+                                        // underneath, since the stream was built from it.
+                                        Some("listen") => {
+                                            let venue = crate::audio::load(&inbound.library);
+                                            match crate::capture::Capture::open(&venue) {
+                                                Ok(cap) => {
+                                                    println!(
+                                                        "listening on {} — {} channel(s)",
+                                                        cap.device,
+                                                        cap.channels.len()
+                                                    );
+                                                    *inbound.capture.lock().unwrap() = Some(cap);
+                                                    spawn_meters(Arc::clone(&inbound));
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("could not listen: {e:#}");
+                                                    let _ = inbound.tx.send(Update::Trouble {
+                                                        what: format!("{e:#}"),
+                                                    });
+                                                }
+                                            }
+                                        }
+                                        Some("stop_listening") => {
+                                            if inbound.capture.lock().unwrap().take().is_some() {
+                                                println!("stopped listening");
+                                            }
+                                            let _ = inbound
+                                                .tx
+                                                .send(Update::InputHealth { channels: vec![] });
+                                        }
                                         Some("set_venue") if inbound.prep => {
                                             let venue = crate::audio::Venue {
                                                 device: v
@@ -1757,6 +1818,9 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                     .unwrap_or_default(),
                                                 ),
                                             };
+                                            if inbound.capture.lock().unwrap().take().is_some() {
+                                                println!("patch changed — stopped listening");
+                                            }
                                             match crate::audio::save(&inbound.library, &venue) {
                                                 Ok(()) => {
                                                     println!(
@@ -1937,7 +2001,9 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                     }
                                     if matches!(
                                         kind,
-                                        Some("set_venue")
+                                        Some("listen")
+                                            | Some("stop_listening")
+                                            | Some("set_venue")
                                             | Some("edit_cast")
                                             | Some("merge_speaker")
                                             | Some("new_sheet")

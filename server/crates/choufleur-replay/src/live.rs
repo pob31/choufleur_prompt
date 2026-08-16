@@ -296,6 +296,18 @@ pub enum Update {
     VenueChanged {
         venue: serde_json::Value,
     },
+    /// Per-channel levels while capture is running.
+    ///
+    /// The PRD's `input_health`. A patched input carrying nothing and a patched input
+    /// carrying the wrong thing look identical on paper; this is the difference, and it
+    /// is the first thing capture can tell anybody — long before a word is recognised.
+    InputHealth {
+        channels: Vec<crate::capture::Health>,
+    },
+    /// Something the operator asked for did not work, in words they can act on.
+    Trouble {
+        what: String,
+    },
     CastChanged {
         cast: Vec<CharacterView>,
         reload: bool,
@@ -405,6 +417,10 @@ pub struct LiveState {
     pub sheets: Mutex<Vec<CueSheet>>,
     /// The declared cast. See [`CharacterView`].
     pub cast: Mutex<Vec<CharacterView>>,
+    /// The input stream, while somebody is listening. `None` means nothing is open —
+    /// which is most of the time, because holding an interface open is rude to whatever
+    /// else the operator has running.
+    pub capture: Mutex<Option<crate::capture::Capture>>,
     /// Where the patch lives. The venue belongs to the machine, not to the show — see
     /// [`crate::audio`] — so it is found beside the library rather than in the show.
     pub library: std::path::PathBuf,
@@ -584,6 +600,7 @@ mod tests {
             cast: Mutex::new(Vec::new()),
             channels: Vec::new(),
             library: std::path::PathBuf::new(),
+            capture: Mutex::new(None),
             store: choufleur_server::Store::new(".", Vec::new()),
             sheets: Mutex::new(Vec::new()),
             prep: false,
