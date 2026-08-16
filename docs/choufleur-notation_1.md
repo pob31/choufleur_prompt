@@ -394,9 +394,28 @@ This is how visual and musical cues enter the system later without a format brea
   because a company does not hit its music cue to the second.
 - **`cut`** — struck from this production, kept in the file, shown struck through. A cut
   is a decision about tonight and it gets reversed; deletion is a different act.
-- **`flag`** — the operator's bookmark. Kept on the shared line rather than in a personal
-  subtree: on the shows this was built against, the person who notices a bad line is the
-  person who will fix it, and a bookmark nobody else can see is a note that gets lost.
+- **`flags`** — bookmarks, shared and attributed. An array, because two people notice the
+  same bad line:
+
+  ```json
+  "flags": [ { "by": "pierre", "at": "2026-08-16T22:14:00Z" } ]
+  ```
+
+  Kept on the shared line rather than in a personal subtree: on the shows this was built
+  against, the person who notices a bad line is the person who will fix it, and a
+  bookmark nobody else can see is a note that gets lost.
+
+  **Attributed and stamped**, so a shared mark can be talked about — *"the ones I flagged
+  after the dress"* is a question the data can answer, and *"who flagged this and when"*
+  is the first thing anybody asks about a mark they did not make. `by` is the operator's
+  self-chosen display name (devplan Pre-Coding Decision 5: client-generated device id
+  plus a display name); it is a label, not an identity claim, and nothing is authorised
+  by it.
+
+  Each operator's flags carry their colour in the client, so a page marked up by three
+  people is legible as three people. The colour is a client-side property of the
+  operator, not stored per flag — one person changing their colour must not require
+  rewriting every mark they ever made.
 
 **Cut and unspoken lines, and any line carrying a hold, are excluded from matching.**
 They are text on the page that will never leave a loudspeaker, and offering them as

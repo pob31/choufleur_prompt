@@ -336,6 +336,13 @@ flag, holds, `spoken`, per-list targets, and setting a trigger phrase by selecti
 the script rather than typing it. Also the cue re-anchoring tool, which moves a sheet
 between two versions of a script by sequence alignment.
 
+*Carries forward from Phase 0:* flags are attributed and time-stamped (`{by, at}`, an
+array — two people notice the same line), with a colour per operator so a page marked up
+by three people reads as three people. This is the first thing needing the display name
+from Pre-Coding Decision 5, so the two land together. Phase 0 shipped an unattributed
+boolean; migrating it is a one-way rewrite with no information to recover, so do it
+before a production accumulates flags worth keeping.
+
 *Tasks:* Browser-served prep: .docx upload + import report display; re-import with orphan-resolution UI (reattach / confirm-delete, honoring the §3.4 consent rules); cue/landmark/lead editing; character↔channel assignment; audio device + level check page.
 
 *Done when:* A show goes from `.docx` to show-ready entirely in the browser, and a rewritten `.docx` re-imports with orphans resolved through the UI, backup verified on disk.

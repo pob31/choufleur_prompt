@@ -468,6 +468,18 @@
   #picker select:focus { outline: none; border-color: var(--now); }
   #picker.single { display: none; }
 
+  /* Screen a list's own targets in and out. What a category *is* stays the operator's
+     to name, so the filter never needs a registered vocabulary to work against. */
+  #filters { display: inline-flex; gap: .25em; margin-left: .6em; align-items: center; }
+  #filters.single { display: none; }
+  #filters .cat {
+    border: 1px solid var(--edge); border-left-width: 3px; background: none;
+    color: var(--dim); border-radius: 3px; padding: .28em .6em; cursor: pointer;
+    font: 400 .82em/1.4 ui-sans-serif, system-ui, sans-serif;
+  }
+  #filters .cat.off { opacity: .38; text-decoration: line-through; }
+  #filters .cat:hover { color: var(--fg); }
+
   #targets { display: none; margin-left: .6em; }
   body[data-prep="on"] #targets {
     display: inline-block; border: 1px solid var(--dimmer); background: none;
@@ -589,6 +601,7 @@
     <span id="clock">0:00</span>
     <span id="gap">—</span>
     <input id="find" placeholder="find a line, or a number" spellcheck="false">
+    <span id="filters"></span>
     <span id="picker"></span>
     <button id="targets" title="what this cue list drives">targets</button>
     <span id="flags">
@@ -969,11 +982,55 @@
     if (!viewing) viewing = sheets.length === 1 ? sheets[0].id : '*';
     paintCategoryRules();
     paintPicker();
+    paintFilters();
     renderRail();
   }
 
   // Cues on the list this screen is showing, in script order.
-  const mine = () => (viewing === '*' ? cues : cues.filter((c) => c.sheet === viewing));
+  // Categories switched off on this screen. Per sheet, because a key means different
+  // things on different lists — `blue` is QLab here and nothing at all over there.
+  const muted = new Set(JSON.parse(localStorage.getItem('choufleur.muted') || '[]'));
+  const isMuted = (c) => muted.has(`${c.sheet}/${c.colour || ''}`);
+
+  const mine = () =>
+    (viewing === '*' ? cues : cues.filter((c) => c.sheet === viewing)).filter((c) => !isMuted(c));
+
+  // One toggle per category the showing list defines, plus one for cues with none.
+  //
+  // This is what replaces the production-wide cue-type registry the notation spec used
+  // to carry. A list names its own targets, so filtering on them leaves the vocabulary
+  // open — a lighting operator screens out followspot cues by the name they gave them,
+  // without anyone having had to register `FOLLOW` as a type first.
+  function paintFilters() {
+    const $f = document.getElementById('filters');
+    $f.textContent = '';
+    const sheetsShown = viewing === '*' ? sheets : sheets.filter((sh) => sh.id === viewing);
+    const cats = sheetsShown.flatMap((sh) => (sh.categories || []).map((c) => [sh.id, c]));
+    // Nothing to filter on when a list has one target or none.
+    $f.classList.toggle('single', cats.length < 2);
+    if (cats.length < 2) return;
+    const add = (key, label, swatch, count) => {
+      const b = document.createElement('button');
+      b.className = 'cat';
+      b.textContent = count === null ? label : `${label} ${count}`;
+      b.style.borderLeftColor = swatch || 'var(--dimmer)';
+      b.classList.toggle('off', muted.has(key));
+      b.onclick = () => {
+        muted.has(key) ? muted.delete(key) : muted.add(key);
+        localStorage.setItem('choufleur.muted', JSON.stringify([...muted]));
+        paintFilters();
+        renderRail();
+        replace();
+      };
+      $f.appendChild(b);
+    };
+    for (const [sid, c] of cats) {
+      const n = cues.filter((q) => q.sheet === sid && q.colour === c.key).length;
+      add(`${sid}/${c.key}`, c.label, c.swatch, n);
+    }
+    const none = cues.filter((q) => sheetsShown.some((sh) => sh.id === q.sheet) && !q.colour);
+    if (none.length) add(`${sheetsShown[0].id}/`, 'uncategorised', null, none.length);
+  }
 
   // Paint the marks and cards from the list, so a department that does not use these
   // colours is not stuck with them.
@@ -1304,6 +1361,7 @@
       localStorage.setItem('choufleur.list', id);
       paintPicker();
       paintCategoryRules();
+      paintFilters();
       renderRail();
       replace();
     };

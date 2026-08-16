@@ -171,8 +171,15 @@ Beyond its text and speaker, a line records:
   stage directions out loud. Euripides' didascalies are heard; Rodrigues' own are not.
 - **`cut`** — struck from this production but kept, shown struck through. A cut is a
   decision about tonight, and it gets reversed.
-- **`flag`** — the operator's bookmark: *come back to this*. The moment you notice a line
-  is wrong is almost never the moment you can stop and fix it.
+- **`flags`** — bookmarks: *come back to this*. The moment you notice a line is wrong is
+  almost never the moment you can stop and fix it, so a flag costs one tap and disturbs
+  nothing — during a show as well as in prep, since it moves no indices and changes no
+  text.
+
+  Flags are **shared, attributed and time-stamped**, and each operator's show in their
+  own colour. A page marked up by three people should read as three people, and *"the
+  ones I flagged after the dress"* should be answerable. The name is the operator's
+  self-chosen label, not an identity claim — nothing is authorised by it.
 
 Cut and unspoken lines are excluded from matching. They are text on the operator's page
 that will never leave a loudspeaker, and every moment the matcher spends offering them
