@@ -174,6 +174,12 @@ fn parse(text: &str) -> (Vec<Line>, Report) {
                     report.scenes += 1;
                 }
             }
+            // Kept on the page, like a numbered section. It used to be consumed, and
+            // the coverage check found what that costs: Lovedoll has a paragraph
+            // reading `Act` and it simply disappeared. A heading is text somebody put
+            // in the script, and text is never dropped.
+            push(&mut out, &act, &scene, "", para, true);
+            report.stage += 1;
             continue;
         }
 

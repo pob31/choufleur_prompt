@@ -106,6 +106,18 @@ enum ShowCmd {
         #[arg(long)]
         name: Option<String>,
     },
+    /// Print the rules a preparer works to, for handing to an AI.
+    Rules,
+
+    /// Check a prepared script: ids, speakers, holds, and whether any text went missing.
+    Check {
+        /// The script to check.
+        script: PathBuf,
+        /// The text it was prepared from. Without it, the coverage check cannot run.
+        #[arg(long)]
+        source: Option<PathBuf>,
+    },
+
     /// Bring a cue list into a show, re-anchored against its script.
     ///
     /// Ids do not survive the crossing between shows, so every cue is placed by the
@@ -326,6 +338,13 @@ fn main() -> Result<()> {
                 ShowCmd::New { name, from } => cmd::show::new(&root, &name, from.as_deref()),
                 ShowCmd::Import { manifest, name } => {
                     cmd::show::import_show(&root, &manifest, name.as_deref())
+                }
+                ShowCmd::Rules => {
+                    cmd::show::rules();
+                    Ok(())
+                }
+                ShowCmd::Check { script, source } => {
+                    cmd::show::check(&script, source.as_deref())
                 }
                 ShowCmd::Cues { show, from, name } => {
                     cmd::show::cues_in(&show, &from, name.as_deref())

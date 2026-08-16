@@ -76,6 +76,33 @@ pub fn import_show(root: &Path, manifest: &Path, name: Option<&str>) -> Result<(
     Ok(())
 }
 
+/// The rules a preparer works to — printed so they can be handed to an AI.
+///
+/// Prep is judgement work and the heuristic importer is deliberately bad at it. Handing
+/// that judgement to a model is a good division of labour, and this is its half of the
+/// contract: what the file is for, what the two failure modes cost, and the shape of the
+/// answer. `show check` is the other half.
+pub fn rules() {
+    print!("{}", include_str!("../../../../../docs/choufleur-prep-rules.md"));
+}
+
+/// Check a prepared script before trusting it.
+pub fn check(script: &Path, source: Option<&Path>) -> Result<()> {
+    let text = match source {
+        Some(p) => Some(
+            std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?,
+        ),
+        None => None,
+    };
+    let report = choufleur_server::check::script(script, text.as_deref())?;
+    println!("{report}");
+    if source.is_none() {
+        println!("\n(pass --source to check that no text went missing — the check that matters)");
+    }
+    anyhow::ensure!(report.ok(), "{} problem(s) must be fixed first", report.fatal());
+    Ok(())
+}
+
 /// Bring a cue list in from anywhere, re-anchored against this show's script.
 pub fn cues_in(show: &Path, from: &Path, name: Option<&str>) -> Result<()> {
     let report = choufleur_server::transfer::import_sheet(show, from, name)?;
