@@ -554,9 +554,12 @@
     margin: 0 0 .6em; font: 600 .64em/1.4 ui-sans-serif, system-ui, sans-serif;
     letter-spacing: .12em; text-transform: uppercase; color: var(--dimmer);
   }
+  /* Fixed columns. `1fr` on the name meant every row was a different shape as soon as
+     one performer was called SECRETAIRE-D'ETAT, and a column that moves is a column
+     nobody can scan down. */
   .member {
-    display: grid; grid-template-columns: 1fr 7em auto auto; gap: .4em;
-    align-items: center; padding: .3em 0; border-top: 1px solid var(--edge);
+    display: grid; grid-template-columns: 13em 6em 4.5em 4.5em auto; gap: .4em;
+    align-items: center; padding: .25em 0; border-top: 1px solid var(--edge);
   }
   .member input {
     min-width: 0; background: #0f1114; color: var(--fg);
@@ -574,12 +577,19 @@
   .member button:hover { border-color: var(--now); color: var(--now); }
   .member button.armed { border-color: var(--lost); color: var(--lost); }
   .member.group { background: #16181d; }
-  .member.heading { border-top: none; padding-bottom: 0; }
+  /* The panel scrolls, so the headings travel with it — twenty-two rows in and a
+     column of bare numbers means nothing on its own. */
+  .member.heading {
+    border-top: none; padding: .3em 0 .2em; position: sticky; top: 0; z-index: 1;
+    background: #14171c; box-shadow: 0 1px 0 var(--edge);
+  }
   .member.heading span {
     font: 600 .6em/1.4 ui-sans-serif, system-ui, sans-serif; letter-spacing: .12em;
     text-transform: uppercase; color: var(--dimmer);
   }
+  .member .count { text-align: right; }
   .member input:disabled { opacity: .4; cursor: not-allowed; }
+  .member input.set { color: var(--now); }
   #cast .warn {
     font: 400 .78em/1.5 ui-sans-serif, system-ui, sans-serif; color: var(--now);
     border: 1px solid var(--edge); border-radius: 4px; padding: .4em .55em;
@@ -593,9 +603,14 @@
     display: inline-block; margin-right: .5em; padding: 0 .35em;
     border: 1px solid var(--edge); border-radius: 3px; color: var(--dim);
   }
-  .memberof { grid-column: 1 / -1; font: 400 .76em/1.4 ui-sans-serif, system-ui, sans-serif;
-              color: var(--dimmer); padding-left: .2em; }
-  .memberof b { color: var(--speaker); font-weight: 400; }
+  /* Shown only for a row that is a group, or one being made into one. Every row
+     carrying "a group? name the performers in it" said it twenty-two times to answer a
+     question about two of them. */
+  .memberof { grid-column: 1 / -1; padding: .1em 0 .3em; }
+  .memberof input { width: 100%; background: #0f1114; color: var(--fg);
+    border: 1px solid var(--edge); border-radius: 3px; padding: .2em .45em;
+    font: 400 .8em/1.4 ui-sans-serif, system-ui, sans-serif; }
+  .memberof input:focus { outline: none; border-color: var(--now); }
 
   .patch {
     display: grid; grid-template-columns: 5.5em 5.5em 1fr auto; gap: .4em;
@@ -2042,6 +2057,7 @@
   let cast = [];
   let channels = [];
   let mergeFrom = null;
+  let openGroup = null;   // the one row showing its members field
 
   const lineCount = (id) => lines.filter((l) => l.character === id).length;
 
@@ -2102,7 +2118,7 @@
     // carrying microphone numbers is the least guessable of them.
     const head = document.createElement('div');
     head.className = 'member heading';
-    for (const t of ['Name', 'Microphones', 'Lines', '']) {
+    for (const t of ['Name', 'Microphones', 'Lines', 'Group', '']) {
       const c = document.createElement('span');
       c.textContent = t;
       head.appendChild(c);
@@ -2122,6 +2138,7 @@
       // than a picker because several is normal and a show may have eighteen.
       const chan = document.createElement('input');
       chan.value = (c.channels || []).join(', ');
+      chan.className = (c.channels || []).length ? 'set' : '';
       // Not a range: `1–1` on a one-channel show reads as a broken field rather than
       // as a choice of one. The roster above says what there is.
       chan.placeholder = channels.length ? 'none' : '—';
@@ -2143,6 +2160,8 @@
 
       // Two clicks: the one who should not exist, then the one who should. A label
       // reading "merge" told nobody which way round that goes.
+      // Two clicks: the one who should not exist, then the one who should. A label
+      // reading "merge" told nobody which way round that goes.
       const merge = document.createElement('button');
       merge.textContent = mergeFrom === c.id ? 'cancel'
         : mergeFrom ? '← is really this' : 'same as…';
@@ -2159,27 +2178,39 @@
         mergeFrom = null;
       };
 
-      row.append(name, chan, count, merge);
-
       // A group names the performers it is made of — the chorus that is really Éric,
-      // Gaël, Élissa and Séphora. Never inferred; typed by whoever knows.
-      const of = document.createElement('div');
-      of.className = 'memberof';
-      const members = document.createElement('input');
-      members.value = (c.members || []).join(', ');
-      members.placeholder = 'a group? name the performers in it';
-      members.style.cssText = 'width:100%;background:#0f1114;color:var(--fg);'
-        + 'border:1px solid var(--edge);border-radius:3px;padding:.2em .4em;font:inherit';
-      members.onchange = () => {
-        const known = new Set(cast.map((x) => x.id));
-        c.members = members.value.split(/\s*,\s*/).map((x) => x.trim()).filter(Boolean)
-          .map((x) => (known.has(x) ? x : 'char-' + App.slug(x)))
-          .filter((x) => known.has(x) && x !== c.id);
-        members.value = c.members.join(', ');
-        sendCast();
+      // Gaël, Élissa and Séphora. Never inferred; typed by whoever knows. Folded away
+      // unless this row is one, because most rows are not.
+      const grp = document.createElement('button');
+      const isGroup = (c.members || []).length > 0;
+      grp.textContent = isGroup ? `${c.members.length} in it` : 'group';
+      grp.className = isGroup ? 'armed' : '';
+      grp.title = 'this name covers several performers — a chorus, "the boys"';
+      grp.onclick = () => {
+        openGroup = openGroup === c.id ? null : c.id;
+        paintCast();
       };
-      of.appendChild(members);
-      row.appendChild(of);
+
+      row.append(name, chan, count, grp, merge);
+
+      if (isGroup || openGroup === c.id) {
+        const of = document.createElement('div');
+        of.className = 'memberof';
+        const members = document.createElement('input');
+        members.value = (c.members || []).join(', ');
+        members.placeholder = 'who is in it — names from this list, separated by commas';
+        members.onchange = () => {
+          const known = new Set(cast.map((x) => x.id));
+          c.members = members.value.split(/\s*,\s*/).map((x) => x.trim()).filter(Boolean)
+            .map((x) => (known.has(x) ? x : 'char-' + App.slug(x)))
+            .filter((x) => known.has(x) && x !== c.id);
+          members.value = c.members.join(', ');
+          sendCast();
+          paintCast();
+        };
+        of.appendChild(members);
+        row.appendChild(of);
+      }
       $cast.appendChild(row);
     }
   }

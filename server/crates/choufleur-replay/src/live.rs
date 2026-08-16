@@ -348,6 +348,12 @@ pub struct CharacterView {
     /// The characters this one is made of, when it is a group. See
     /// [`choufleur_core::script::Character::members`].
     pub members: Vec<String>,
+    /// Which logical channels carry this performer.
+    ///
+    /// Its absence was a good bug: the panel sent an assignment, the server saved it,
+    /// and the reply came back without it — so the field emptied itself a moment after
+    /// being filled and the patch looked like it had not taken.
+    pub channels: Vec<u16>,
 }
 
 // What the HTTP side needs to answer a new connection.

@@ -798,6 +798,7 @@ pub fn run(
                     id: c.id.clone(),
                     name: c.name.clone(),
                     members: c.members.clone(),
+                    channels: c.channels.clone(),
                 })
                 .collect(),
         ),
@@ -1367,6 +1368,15 @@ fn reload_cast(state: &LiveState, reload: bool) {
                     .map(|a| {
                         a.iter()
                             .filter_map(|m| m.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                channels: c
+                    .get("channels")
+                    .and_then(|m| m.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|m| m.as_u64().map(|n| n as u16))
                             .collect()
                     })
                     .unwrap_or_default(),
