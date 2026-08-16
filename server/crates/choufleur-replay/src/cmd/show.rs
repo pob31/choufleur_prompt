@@ -76,6 +76,20 @@ pub fn import_show(root: &Path, manifest: &Path, name: Option<&str>) -> Result<(
     Ok(())
 }
 
+/// Bring a cue list in from anywhere, re-anchored against this show's script.
+pub fn cues_in(show: &Path, from: &Path, name: Option<&str>) -> Result<()> {
+    let report = choufleur_server::transfer::import_sheet(show, from, name)?;
+    println!("{report}\n\nwrote {}", report.sheet.display());
+    Ok(())
+}
+
+/// Copy a cue list out, to carry to another show.
+pub fn cues_out(sheet: &Path, to: &Path) -> Result<()> {
+    let dest = choufleur_server::transfer::export_sheet(sheet, to)?;
+    println!("wrote {}", dest.display());
+    Ok(())
+}
+
 /// Read a text file into an existing show's script, replacing whatever was there.
 pub fn add_text(script: &Path, text: &Path) -> Result<()> {
     let report = import::text_file(script, text)?;

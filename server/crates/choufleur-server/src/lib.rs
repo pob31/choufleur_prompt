@@ -13,6 +13,7 @@
 pub mod import;
 pub mod library;
 pub mod store;
+pub mod transfer;
 
 pub use library::{Library, Entry};
 pub use store::{Store, Version};

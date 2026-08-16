@@ -480,6 +480,52 @@ mod tests {
         assert!(!lines[2].stage);
     }
 
+    // Scripts are written by people, under pressure, over years. A quote opens and
+    // never closes; a stage direction gets pasted into the middle of a speech; a
+    // parenthesis is left hanging. The importer's job is not to guess its way through
+    // that — it is to leave every one of them visible and one click from being fixed.
+    // These tests pin the behaviour so a later cleverness cannot quietly swallow them.
+
+    #[test]
+    fn an_unclosed_bracket_stays_dialogue_rather_than_becoming_a_direction() {
+        let (lines, r) = parsed("NADIA : Bonjour.\n(Elle sort et ne revient jamais\nÉRIC : Bon.");
+        assert_eq!(r.stage, 0, "an unclosed bracket is not a stage direction");
+        assert_eq!(lines.len(), 3);
+        // Attributed to whoever spoke last, where it is visible on the page.
+        assert_eq!(lines[1].character, "char-nadia");
+        assert!(lines[1].text.starts_with("(Elle sort"));
+    }
+
+    #[test]
+    fn an_unclosed_quote_does_not_swallow_the_rest_of_the_script() {
+        let (lines, _) = parsed(
+            "SÉPHORA : « Polymestor s'avance.\nNADIA : Et alors ?\nÉRIC : Rien.",
+        );
+        assert_eq!(lines.len(), 3, "the quote does not run on into the next lines");
+        assert_eq!(lines[1].character, "char-nadia");
+        assert_eq!(lines[2].character, "char-eric");
+    }
+
+    #[test]
+    fn a_direction_spliced_into_a_speech_is_left_whole_for_a_human() {
+        // Splitting this would need to know that `(Elle sort.)` is not something Nadia
+        // says, and getting that wrong invents a line nobody wrote. One line the
+        // operator can split in the editor beats two the importer invented.
+        let (lines, r) = parsed("NADIA : Bonjour. (Elle sort.) Au revoir.");
+        assert_eq!(lines.len(), 1);
+        assert_eq!(r.stage, 0);
+        assert_eq!(lines[0].text, "Bonjour. (Elle sort.) Au revoir.");
+    }
+
+    #[test]
+    fn a_speaker_named_inconsistently_stays_two_characters_to_be_merged_by_hand() {
+        // `NADIA` and `NADlA` (with an ell) are one person and no rule can know it.
+        // Two characters on the page is a visible problem; silently folding them on a
+        // similarity guess would put a line in the wrong mouth invisibly.
+        let (_, r) = parsed("NADIA : Un.\nNADLA : Deux.");
+        assert_eq!(r.characters.len(), 2);
+    }
+
     #[test]
     fn headings_set_the_act_and_scene() {
         let (lines, r) = parsed("ACTE II\nSCÈNE 3\nNADIA : Bonjour.\nSCÈNE 4\nNADIA : Encore.");

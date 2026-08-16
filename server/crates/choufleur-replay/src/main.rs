@@ -106,6 +106,29 @@ enum ShowCmd {
         #[arg(long)]
         name: Option<String>,
     },
+    /// Bring a cue list into a show, re-anchored against its script.
+    ///
+    /// Ids do not survive the crossing between shows, so every cue is placed by the
+    /// text it recorded. Anything that cannot be placed keeps its old anchor and is
+    /// marked for review rather than guessed at.
+    Cues {
+        /// The show's directory.
+        show: PathBuf,
+        /// The cue list to bring in.
+        from: PathBuf,
+        /// What to call the list.
+        #[arg(long)]
+        name: Option<String>,
+    },
+
+    /// Copy a cue list out of a show, to carry to another.
+    Export {
+        /// The cue list file.
+        sheet: PathBuf,
+        /// Where to put it — a directory or a filename.
+        to: PathBuf,
+    },
+
     /// Replace a show's script with a plain-text one, keeping a snapshot.
     Text {
         /// The show's `script.json`.
@@ -304,6 +327,10 @@ fn main() -> Result<()> {
                 ShowCmd::Import { manifest, name } => {
                     cmd::show::import_show(&root, &manifest, name.as_deref())
                 }
+                ShowCmd::Cues { show, from, name } => {
+                    cmd::show::cues_in(&show, &from, name.as_deref())
+                }
+                ShowCmd::Export { sheet, to } => cmd::show::cues_out(&sheet, &to),
                 ShowCmd::Text { script, from } => cmd::show::add_text(&script, &from),
             }
         }
