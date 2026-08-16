@@ -315,7 +315,15 @@ async fn open(
     Json(req): Json<OpenReq>,
 ) -> Reply<Json<OpenDto>> {
     let e = ui.entry(&name)?;
-    let port = ui.port + 1;
+    // A port nothing else is on.
+    //
+    // This used to be `ui.port + 1` and that was a trap. A show server outlives its
+    // parent if the parent is killed rather than asked to stop, and the orphan keeps
+    // the port — so the next spawn failed to bind, the readiness check found the
+    // *orphan* listening and reported success, and the browser was handed a stale
+    // server running older code and a different show. Both symptoms reported — a patch
+    // that reverted, and every show opening as Hécube — were that one orphan.
+    let port = free_port(ui.port + 1)?;
     // The lock is scoped rather than dropped, because a `MutexGuard` is not `Send` and
     // a handler that holds one across an await will not compile — which is the right
     // rule, and here it also keeps the spawn and the wait properly separated.
@@ -348,6 +356,16 @@ async fn open(
 
     wait_until_listening(port, &e.name).await?;
     Ok(Json(OpenDto { name: e.name, port }))
+}
+
+/// The first port from `from` upward that nothing is listening on.
+fn free_port(from: u16) -> Result<u16> {
+    for port in from..from.saturating_add(40) {
+        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return Ok(port);
+        }
+    }
+    anyhow::bail!("no free port near {from} — something else is using them")
 }
 
 /// Poll until the show server answers, or give up and say so.
@@ -417,7 +435,18 @@ pub fn run(root: PathBuf, port: u16) -> Result<()> {
         println!("\n  open it at http://localhost:{port}   (ctrl-c to stop)\n");
         axum::serve(listener, app)
             .with_graceful_shutdown(async {
-                let _ = tokio::signal::ctrl_c().await;
+                // Ctrl-C *and* a plain kill. Only handling ctrl-c is how a show server
+                // outlived its parent and sat on a port for half an hour serving stale
+                // code — `pkill` on the parent left the child running, and nothing was
+                // left that knew about it.
+                let mut term = tokio::signal::unix::signal(
+                    tokio::signal::unix::SignalKind::terminate(),
+                )
+                .expect("SIGTERM handler");
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = term.recv() => {}
+                }
             })
             .await?;
         // A show server started from here is this process's child, and leaving it
