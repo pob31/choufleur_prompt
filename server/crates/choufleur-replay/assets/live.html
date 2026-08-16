@@ -466,13 +466,16 @@
   #filters .cat.off { opacity: .38; text-decoration: line-through; }
   #filters .cat:hover { color: var(--fg); }
 
-  #targets { display: none; margin-left: .6em; }
+  #targets { display: none; margin: 0 .6em 0 .4em; }
   body[data-prep="on"] #targets {
     display: inline-block; border: 1px solid var(--dimmer); background: none;
     color: var(--dim); border-radius: 999px; padding: .3em .9em; font: inherit;
     cursor: pointer;
   }
-  #targets.on { border-color: var(--now); color: var(--now); }
+  /* Scoped to match `body[data-prep="on"] #targets` above, which is more specific than
+     a bare `#targets.on` and was quietly winning — so this toggle never lit at all,
+     whatever state the panel was in. */
+  body[data-prep="on"] #targets.on { border-color: var(--now); color: var(--now); }
   #palette {
     display: none; position: absolute; z-index: 7; right: 1.2em; bottom: 3.4em;
     width: 24em; padding: .8em .9em; border-radius: 5px;
@@ -810,11 +813,13 @@
     <span id="clock">0:00</span>
     <span id="gap">—</span>
     <input id="find" placeholder="find a line, or a number" spellcheck="false">
+    <!-- Each control beside what it acts on: `targets` next to the target chips it
+         edits, `lists` next to the list picker it manages. -->
     <span id="filters"></span>
-    <span id="picker"></span>
     <button id="targets" title="what this cue list drives">targets</button>
-    <button id="castbtn" title="who is in this show, and on which microphone">cast</button>
+    <span id="picker"></span>
     <button id="listsbtn" title="the cue lists this show carries">lists</button>
+    <button id="castbtn" title="who is in this show, and on which microphone">cast</button>
     <button id="audiobtn" title="the input device, and which channel each input feeds">audio</button>
     <span id="flags">
       <button id="flagprev" title="previous flag">&#9664;</button>
