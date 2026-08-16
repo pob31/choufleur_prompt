@@ -540,7 +540,32 @@
   #flags button:hover { color: var(--fg); border-color: var(--dim); }
   #flag.on { border-color: var(--flag); color: var(--flag); }
   #flagcount { font-variant-numeric: tabular-nums; color: var(--dimmer); min-width: 2.4em;
-               text-align: center; font-size: .85em; }
+               text-align: center; font-size: .85em; cursor: pointer; }
+  #flagcount:hover { color: var(--flag); }
+  #flaglist { display: none; }
+  body[data-flaglist="on"] #flaglist {
+    display: block; position: absolute; z-index: 7; right: 1.2em; bottom: 3.4em;
+    width: 34em; max-height: 60vh; overflow-y: auto; padding: .8em .9em;
+    border-radius: 5px; background: #14171c; border: 1px solid var(--edge);
+    box-shadow: 0 10px 40px rgba(0,0,0,.6);
+  }
+  #flaglist h4 {
+    margin: 0 0 .6em; font: 600 .64em/1.4 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .12em; text-transform: uppercase; color: var(--dimmer);
+  }
+  .flagrow {
+    display: grid; grid-template-columns: 1fr auto auto auto; gap: .5em;
+    align-items: baseline; padding: .3em 0; border-top: 1px solid var(--edge);
+    font: 400 .82em/1.4 ui-sans-serif, system-ui, sans-serif;
+  }
+  .flagrow .what { color: var(--dim); overflow: hidden; text-overflow: ellipsis;
+                   white-space: nowrap; }
+  .flagrow .who { color: var(--flag); font-size: .88em; white-space: nowrap; }
+  .flagrow button {
+    border: 1px solid var(--dimmer); background: none; color: var(--dim);
+    border-radius: 999px; padding: .1em .55em; cursor: pointer; font: inherit;
+  }
+  .flagrow button.clear:hover { border-color: var(--lost); color: var(--lost); }
   .editor button.flagged { border-color: var(--flag); color: var(--flag); }
   #dot { width: .5em; height: .5em; border-radius: 50%; background: var(--dimmer); }
   body[data-running="true"] #dot { background: #5fbf7f; }
@@ -587,6 +612,7 @@
   <svg id="leads"></svg>
   <div id="rail"></div>
   <div id="palette"></div>
+  <div id="flaglist"></div>
   <div id="view">
       <div id="hint">tap the line being spoken to put it back on track</div>
     <div id="prephint">click a line to edit it · double-click to give it a cue · alt-click to flag</div>
@@ -1857,6 +1883,65 @@
   }
 
   $flag.addEventListener('click', () => toggleFlag(subject()));
+
+  // The flag list.
+  //
+  // Flags exist to be cleared. A mark nobody can review is a mark that rots, and a
+  // script carrying last month's forgotten flags is worse than one carrying none —
+  // the operator stops believing them, which costs the ones that matter. So every
+  // flag is listed with who left it and when, jumps to its line on click, and can be
+  // cleared from here without hunting for it.
+  //
+  // Who and when are the point: they are what lets somebody decide whether a mark is
+  // still live. "Conduite SON, three weeks ago" answers itself.
+  const $flagList = document.getElementById('flaglist');
+  let flagListOpen = false;
+
+  function paintFlagList() {
+    $flagList.textContent = '';
+    const all = flagsAt();
+    const h = document.createElement('h4');
+    h.textContent = all.length ? `${all.length} flagged` : 'nothing flagged';
+    $flagList.appendChild(h);
+    for (const i of all) {
+      const l = lines[i];
+      const row = document.createElement('div');
+      row.className = 'flagrow';
+      const who = document.createElement('span');
+      who.className = 'who';
+      who.textContent = (l.flags || [])
+        .map((f) => `${f.by}${f.at ? ' · ' + f.at.slice(0, 16).replace('T', ' ') : ''}`)
+        .join('  ·  ');
+      const what = document.createElement('span');
+      what.className = 'what';
+      what.textContent = `${l.id}  ${l.text.slice(0, 46)}`;
+      const go = document.createElement('button');
+      go.className = 'go';
+      go.textContent = 'go';
+      go.onclick = (e) => { e.stopPropagation(); jumpedTo = i; goTo(i, true); };
+      const clear = document.createElement('button');
+      clear.className = 'clear';
+      clear.textContent = flaggedByMe(l) ? 'clear mine' : 'clear all';
+      clear.onclick = (e) => {
+        e.stopPropagation();
+        // Only ever your own list's mark, unless there is none of yours to clear —
+        // removing somebody else's note by accident is how they stop leaving them.
+        for (const f of flaggedByMe(l) ? [{ by: myMark() }] : (l.flags || [])) {
+          ws.send(JSON.stringify({
+            type: 'flag_line', lineIndex: i, flag: false, by: f.by, at: '',
+          }));
+        }
+      };
+      row.append(what, who, go, clear);
+      $flagList.appendChild(row);
+    }
+  }
+
+  $flagCount.addEventListener('click', () => {
+    flagListOpen = !flagListOpen;
+    document.body.dataset.flaglist = flagListOpen ? 'on' : 'off';
+    if (flagListOpen) paintFlagList();
+  });
   // Step to the flag before or after where the *reader* is, not where the show is:
   // walking a list of things to fix is a different activity from following a run,
   // and during a run the position moves under you while you work.
@@ -2261,6 +2346,16 @@
     // the edit branch so it works while editing is on, which is when you are most
     // likely to be triaging rather than typing.
     if (ev.altKey) { ev.preventDefault(); jumpedTo = Number(el.dataset.i); toggleFlag(jumpedTo); return; }
+    // The margin mark itself: a tap reports who and when, rather than editing. Hover
+    // does it on a laptop and does nothing at all on the tablet in the wings.
+    if (ev.offsetX < 0 && lines[Number(el.dataset.i)]?.flags?.length) {
+      ev.preventDefault();
+      jumpedTo = Number(el.dataset.i);
+      flagListOpen = true;
+      document.body.dataset.flaglist = 'on';
+      paintFlagList();
+      return;
+    }
     if (editing) { beginEdit(el, ev); return; }
     const i = Number(el.dataset.i);
     ws.send(JSON.stringify({ type: 'position_jump', lineIndex: i }));
@@ -2465,6 +2560,7 @@
         if (els[m.lineIndex]?.isConnected) render(m.lineIndex);
         if (repaintOpenFlag) repaintOpenFlag();
         paintFlags();
+        if (flagListOpen) paintFlagList();
         lineTops = null;
       } else if (m.type === 'line_deleted') {
         lines.splice(m.lineIndex, 1);
