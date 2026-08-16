@@ -529,22 +529,25 @@
                text-align: center; font-size: .85em; cursor: pointer; }
   #flagcount:hover { color: var(--flag); }
   /* Prep-only, like the targets panel: a cast is set at a table, not during a show. */
-  #castbtn, #listsbtn { display: none; }
+  #castbtn, #listsbtn, #audiobtn { display: none; }
   body[data-prep="on"] #castbtn,
-  body[data-prep="on"] #listsbtn {
+  body[data-prep="on"] #listsbtn,
+  body[data-prep="on"] #audiobtn {
     display: inline-block;
     border: 1px solid var(--dimmer); background: none; color: var(--dim);
     border-radius: 999px; padding: .25em .8em; cursor: pointer;
     font: 400 .84em/1.4 ui-sans-serif, system-ui, sans-serif;
   }
-  #cast, #lists { display: none; }
-  body[data-cast="on"] #cast, body[data-lists="on"] #lists {
+  #cast, #lists, #audio { display: none; }
+  body[data-cast="on"] #cast,
+  body[data-lists="on"] #lists,
+  body[data-audio="on"] #audio {
     display: block; position: absolute; z-index: 7; right: 1.2em; bottom: 3.4em;
     width: 34em; max-height: 66vh; overflow-y: auto; padding: .8em .9em;
     border-radius: 5px; background: #14171c; border: 1px solid var(--edge);
     box-shadow: 0 10px 40px rgba(0,0,0,.6);
   }
-  #cast h4, #lists h4 {
+  #cast h4, #lists h4, #audio h4 {
     margin: 0 0 .6em; font: 600 .64em/1.4 ui-sans-serif, system-ui, sans-serif;
     letter-spacing: .12em; text-transform: uppercase; color: var(--dimmer);
   }
@@ -585,6 +588,42 @@
   .memberof { grid-column: 1 / -1; font: 400 .76em/1.4 ui-sans-serif, system-ui, sans-serif;
               color: var(--dimmer); padding-left: .2em; }
   .memberof b { color: var(--speaker); font-weight: 400; }
+
+  .patch {
+    display: grid; grid-template-columns: 5.5em 5.5em 1fr auto; gap: .4em;
+    align-items: center; padding: .3em 0; border-top: 1px solid var(--edge);
+  }
+  .patch.heading { border-top: none; padding-bottom: 0; }
+  .patch.heading span {
+    font: 600 .6em/1.4 ui-sans-serif, system-ui, sans-serif; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--dimmer);
+  }
+  .patch input {
+    min-width: 0; background: #0f1114; color: var(--fg);
+    border: 1px solid var(--dimmer); border-radius: 3px; padding: .25em .45em;
+    font: 400 .84em/1.4 ui-sans-serif, system-ui, sans-serif;
+  }
+  .patch input:focus { outline: none; border-color: var(--now); }
+  .patch .who { font: 400 .8em/1.4 ui-sans-serif, system-ui, sans-serif;
+                color: var(--speaker); overflow: hidden; text-overflow: ellipsis;
+                white-space: nowrap; }
+  .patch .who.nobody { color: var(--dimmer); }
+  .patch button {
+    border: 1px solid var(--dimmer); background: none; color: var(--dimmer);
+    border-radius: 999px; padding: .1em .55em; cursor: pointer;
+    font: 400 .76em/1.3 ui-sans-serif, system-ui, sans-serif;
+  }
+  .patch button:hover { border-color: var(--lost); color: var(--lost); }
+  #audio select {
+    width: 100%; background: #0f1114; color: var(--fg); border: 1px solid var(--dimmer);
+    border-radius: 3px; padding: .3em .45em; margin-bottom: .6em;
+    font: 400 .84em/1.4 ui-sans-serif, system-ui, sans-serif;
+  }
+  #audio .warn {
+    font: 400 .78em/1.5 ui-sans-serif, system-ui, sans-serif; color: var(--now);
+    border: 1px solid var(--edge); border-radius: 4px; padding: .4em .55em;
+    margin-bottom: .7em; background: #221d12;
+  }
 
   .cuelist {
     padding: .45em 0; border-top: 1px solid var(--edge);
@@ -695,6 +734,7 @@
   <div id="flaglist"></div>
   <div id="cast"></div>
   <div id="lists"></div>
+  <div id="audio"></div>
   <div id="view">
       <div id="hint">tap the line being spoken to put it back on track</div>
     <div id="prephint">click a line to edit it · double-click to give it a cue · alt-click to flag</div>
@@ -714,6 +754,7 @@
     <button id="targets" title="what this cue list drives">targets</button>
     <button id="castbtn" title="who is in this show, and on which microphone">cast</button>
     <button id="listsbtn" title="the cue lists this show carries">lists</button>
+    <button id="audiobtn" title="the input device, and which channel each input feeds">audio</button>
     <span id="flags">
       <button id="flagprev" title="previous flag">&#9664;</button>
       <button id="flag" title="flag the current line (alt-click any line)">&#9873;</button>
@@ -2121,6 +2162,134 @@
     }
   }
 
+  // The input device, and which input feeds which channel.
+  //
+  // Two halves that must not be confused. The cast panel says which *logical* channel
+  // carries a performer; this says which *physical input* feeds that logical channel.
+  // Shows travel between houses and venues do not, so the patch lives beside the
+  // library rather than inside the show — otherwise taking a production to the next
+  // theatre would mean editing the script, and a script edited to move a microphone is
+  // a script broken by somebody who never meant to touch it.
+  //
+  // Inputs are free to start anywhere. A desk sends the cast on 17–24 as often as on
+  // 1–8; numbering that begins at one is a convenience for whoever wrote the software,
+  // not a fact about any room.
+  const $audio = document.getElementById('audio');
+  let inputs = [];
+  let venue = { device: '', channels: [] };
+  let capture = false;
+
+  async function loadAudio() {
+    try {
+      const d = await (await fetch('/audio.json')).json();
+      inputs = d.inputs || [];
+      venue = d.venue || { device: '', channels: [] };
+      capture = !!d.capture;
+    } catch { inputs = []; }
+  }
+
+  const sendVenue = () => ws?.send(JSON.stringify({ type: 'set_venue', ...venue }));
+
+  /// Who the cast has put on this logical channel.
+  const onChannel = (n) =>
+    cast.filter((c) => (c.channels || []).includes(n)).map((c) => c.name || c.id);
+
+  function paintAudio() {
+    $audio.textContent = '';
+    const h = document.createElement('h4');
+    h.textContent = 'Audio input';
+    $audio.appendChild(h);
+
+    // Said plainly rather than implied by a dead meter. The patch is set in the
+    // afternoon and is worth getting right long before there is anything to route.
+    if (!capture) {
+      const w = document.createElement('div');
+      w.className = 'warn';
+      w.textContent = 'Live capture is not built yet — this patch is saved and will be '
+        + 'used when it is. Nothing is being listened to.';
+      $audio.appendChild(w);
+    }
+
+    const pick = document.createElement('select');
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = inputs.length ? 'Default input' : 'No input devices found';
+    pick.appendChild(none);
+    for (const i of inputs) {
+      const o = document.createElement('option');
+      o.value = i.name;
+      o.textContent = `${i.name} — ${i.channels} ch, ${(i.sample_rate ?? i.sampleRate) / 1000} kHz`
+        + (i.default ? '  (default)' : '');
+      pick.appendChild(o);
+    }
+    pick.value = venue.device || '';
+    pick.onchange = () => { venue.device = pick.value; sendVenue(); paintAudio(); };
+    $audio.appendChild(pick);
+
+    const head = document.createElement('div');
+    head.className = 'patch heading';
+    for (const t of ['Channel', 'Input', 'Carries', '']) {
+      const c = document.createElement('span');
+      c.textContent = t;
+      head.appendChild(c);
+    }
+    $audio.appendChild(head);
+
+    for (const [n, row] of venue.channels.entries()) {
+      const el = document.createElement('div');
+      el.className = 'patch';
+
+      const logical = document.createElement('input');
+      logical.value = row.logical;
+      logical.title = 'the channel number the cast refers to';
+      logical.onchange = () => {
+        row.logical = parseInt(logical.value, 10) || 0;
+        sendVenue(); paintAudio();
+      };
+
+      const input = document.createElement('input');
+      input.value = row.input;
+      input.title = 'the input number on the device, as the desk counts them';
+      input.onchange = () => {
+        row.input = parseInt(input.value, 10) || 0;
+        sendVenue(); paintAudio();
+      };
+
+      const who = document.createElement('span');
+      const names = onChannel(row.logical);
+      who.className = 'who' + (names.length ? '' : ' nobody');
+      who.textContent = names.length ? names.join(', ') : 'nobody on this channel yet';
+      who.title = 'set in the cast panel';
+
+      const drop = document.createElement('button');
+      drop.textContent = '×';
+      drop.title = 'remove this patch';
+      drop.onclick = () => { venue.channels.splice(n, 1); sendVenue(); paintAudio(); };
+
+      el.append(logical, input, who, drop);
+      $audio.appendChild(el);
+    }
+
+    const add = document.createElement('div');
+    add.className = 'newrow';
+    const go = document.createElement('button');
+    go.textContent = '+ Patch a channel';
+    go.onclick = () => {
+      // The next free channel, fed by the next input up — a guess that is right when
+      // patching a run of mics in order and one edit away when it is not.
+      const used = venue.channels.map((c) => c.logical);
+      let logical = 1;
+      while (used.includes(logical)) logical += 1;
+      const input = venue.channels.length
+        ? Math.max(...venue.channels.map((c) => c.input)) + 1
+        : 1;
+      venue.channels.push({ logical, input, note: '' });
+      sendVenue(); paintAudio();
+    };
+    add.appendChild(go);
+    $audio.appendChild(add);
+  }
+
   // The cue lists this show carries, and what each one drives.
   //
   // The lists are independent documents — never merged, never renumbered against one
@@ -2193,6 +2362,7 @@
     const on = document.body.dataset[which] === 'on';
     document.body.dataset.cast = 'off';
     document.body.dataset.lists = 'off';
+    document.body.dataset.audio = 'off';
     if (!on) { document.body.dataset[which] = 'on'; paint(); }
   }
   document.getElementById('castbtn').addEventListener('click', async () => {
@@ -2201,6 +2371,14 @@
     togglePanel('cast', paintCast);
   });
   document.getElementById('listsbtn').addEventListener('click', () => togglePanel('lists', paintLists));
+  document.getElementById('audiobtn').addEventListener('click', async () => {
+    // The cast is needed to say who each channel carries, and the devices are
+    // re-enumerated every time: an interface unplugged since the afternoon is exactly
+    // what this panel is for noticing.
+    if (!cast.length) await loadCast();
+    await loadAudio();
+    togglePanel('audio', paintAudio);
+  });
 
   // The flag list.
   //
@@ -2888,6 +3066,9 @@
           pendingCueFor = null;
           if (k >= 0) requestAnimationFrame(() => { goTo(shown[k].lineIndex, true); editCue(k); });
         }
+      } else if (m.type === 'venue_changed') {
+        venue = m.venue || venue;
+        if (document.body.dataset.audio === 'on') paintAudio();
       } else if (m.type === 'cast_changed') {
         cast = m.cast || [];
         if (document.body.dataset.cast === 'on') paintCast();

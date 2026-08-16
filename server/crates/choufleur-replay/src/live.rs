@@ -288,6 +288,14 @@ pub enum Update {
     /// to re-read the script rather than the server sending one edit per line. It is a
     /// prep-time operation on a page that is not following anything, and a quarter of a
     /// megabyte is cheaper than nine hundred messages.
+    /// The audio patch changed — a different input device, or a channel repatched.
+    ///
+    /// Broadcast so a second screen showing the patch does not go stale, and because
+    /// noticing that somebody else just repatched an input is worth more during a fit-up
+    /// than almost anything else this protocol carries.
+    VenueChanged {
+        venue: serde_json::Value,
+    },
     CastChanged {
         cast: Vec<CharacterView>,
         reload: bool,
@@ -391,6 +399,9 @@ pub struct LiveState {
     pub sheets: Mutex<Vec<CueSheet>>,
     /// The declared cast. See [`CharacterView`].
     pub cast: Mutex<Vec<CharacterView>>,
+    /// Where the patch lives. The venue belongs to the machine, not to the show — see
+    /// [`crate::audio`] — so it is found beside the library rather than in the show.
+    pub library: std::path::PathBuf,
     /// The microphones this show has, as the manifest describes them — index, the note
     /// the corpus author left, and the file. What the cast panel offers to assign.
     pub channels: Vec<serde_json::Value>,
@@ -566,6 +577,7 @@ mod tests {
             sheet_paths: Mutex::new(std::collections::HashMap::new()),
             cast: Mutex::new(Vec::new()),
             channels: Vec::new(),
+            library: std::path::PathBuf::new(),
             store: choufleur_server::Store::new(".", Vec::new()),
             sheets: Mutex::new(Vec::new()),
             prep: false,

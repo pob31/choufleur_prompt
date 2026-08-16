@@ -776,6 +776,7 @@ pub fn run(
         cues: Mutex::new(cues),
         sheet_paths: Mutex::new(sheet_paths),
         sheets: Mutex::new(sheets),
+        library: super::show::default_root(),
         channels: corpus
             .manifest
             .channels
@@ -1496,6 +1497,19 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                 }),
             )
             .route(
+                "/audio.json",
+                get(|State(s): State<Arc<LiveState>>| async move {
+                    // Enumerated live rather than remembered, because an interface that
+                    // was unplugged between the afternoon and the half is exactly what
+                    // this screen is for noticing.
+                    axum::Json(serde_json::json!({
+                        "inputs": crate::audio::inputs(),
+                        "venue": crate::audio::load(&s.library),
+                        "capture": false,
+                    }))
+                }),
+            )
+            .route(
                 "/cast.json",
                 get(|State(s): State<Arc<LiveState>>| async move {
                     // The cast, and the channels there are to assign it to. Both, in one
@@ -1641,6 +1655,44 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                     // merge and a new cue list are all about the show.
                                     // The cue messages sit above for the same reason.
                                     match kind {
+                                        Some("set_venue") if inbound.prep => {
+                                            let venue = crate::audio::Venue {
+                                                device: v
+                                                    .get("device")
+                                                    .and_then(|d| d.as_str())
+                                                    .unwrap_or_default()
+                                                    .to_string(),
+                                                channels: crate::audio::tidy(
+                                                    serde_json::from_value(
+                                                        v.get("channels").cloned().unwrap_or(
+                                                            serde_json::Value::Array(vec![]),
+                                                        ),
+                                                    )
+                                                    .unwrap_or_default(),
+                                                ),
+                                            };
+                                            match crate::audio::save(&inbound.library, &venue) {
+                                                Ok(()) => {
+                                                    println!(
+                                                        "patch: {} channel(s) on {}",
+                                                        venue.channels.len(),
+                                                        if venue.device.is_empty() {
+                                                            "the default input"
+                                                        } else {
+                                                            &venue.device
+                                                        }
+                                                    );
+                                                    let _ =
+                                                        inbound.tx.send(Update::VenueChanged {
+                                                            venue: serde_json::to_value(&venue)
+                                                                .unwrap_or_default(),
+                                                        });
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("could not save the patch: {e:#}")
+                                                }
+                                            }
+                                        }
                                     // Prep only, both of them: a merge rewrites
                                     // hundreds of lines and a cast edit can
                                     // unassign a microphone, and neither is
@@ -1764,7 +1816,8 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                     }
                                     if matches!(
                                         kind,
-                                        Some("edit_cast")
+                                        Some("set_venue")
+                                            | Some("edit_cast")
                                             | Some("merge_speaker")
                                             | Some("new_sheet")
                                             | Some("rename_sheet")
