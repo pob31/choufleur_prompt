@@ -568,6 +568,20 @@
   .member button:hover { border-color: var(--now); color: var(--now); }
   .member button.armed { border-color: var(--lost); color: var(--lost); }
   .member.group { background: #16181d; }
+  .member.heading { border-top: none; padding-bottom: 0; }
+  .member.heading span {
+    font: 600 .6em/1.4 ui-sans-serif, system-ui, sans-serif; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--dimmer);
+  }
+  .member input:disabled { opacity: .4; cursor: not-allowed; }
+  .chanmap {
+    font: 400 .78em/1.5 ui-sans-serif, system-ui, sans-serif; color: var(--dimmer);
+    margin-bottom: .5em;
+  }
+  .chanmap span {
+    display: inline-block; margin-right: .5em; padding: 0 .35em;
+    border: 1px solid var(--edge); border-radius: 3px; color: var(--dim);
+  }
   .memberof { grid-column: 1 / -1; font: 400 .76em/1.4 ui-sans-serif, system-ui, sans-serif;
               color: var(--dimmer); padding-left: .2em; }
   .memberof b { color: var(--speaker); font-weight: 400; }
@@ -1997,9 +2011,7 @@
   function paintCast() {
     $cast.textContent = '';
     const h = document.createElement('h4');
-    h.textContent = cast.length
-      ? `${cast.length} in the cast · ${channels.length} channel${channels.length === 1 ? '' : 's'}`
-      : 'nobody declared yet';
+    h.textContent = cast.length ? `${cast.length} in the cast` : 'nobody declared yet';
     $cast.appendChild(h);
 
     if (!cast.length) {
@@ -2008,6 +2020,35 @@
       p.textContent = 'Type a name on a line and it appears here.';
       $cast.appendChild(p);
     }
+
+    // What there is to assign, said plainly. A number on its own means nothing: this
+    // show's only channel is a full mix that carries everybody, and knowing that is the
+    // difference between leaving the column empty on purpose and leaving it empty
+    // because the field looked broken.
+    const map = document.createElement('div');
+    map.className = 'chanmap';
+    if (!channels.length) {
+      map.textContent = 'No channel map — this show is one feed, so there is nothing to assign.';
+    } else {
+      map.append(document.createTextNode('Microphones: '));
+      for (const c of channels) {
+        const b = document.createElement('span');
+        b.textContent = `${c.index} ${c.note || c.file || ''}`.trim();
+        map.appendChild(b);
+      }
+    }
+    $cast.appendChild(map);
+
+    // Column headings. Three of the four fields are a bare box otherwise, and the one
+    // carrying microphone numbers is the least guessable of them.
+    const head = document.createElement('div');
+    head.className = 'member heading';
+    for (const t of ['Name', 'Microphones', 'Lines', '']) {
+      const c = document.createElement('span');
+      c.textContent = t;
+      head.appendChild(c);
+    }
+    $cast.appendChild(head);
 
     for (const c of cast) {
       const row = document.createElement('div');
@@ -2022,10 +2063,13 @@
       // than a picker because several is normal and a show may have eighteen.
       const chan = document.createElement('input');
       chan.value = (c.channels || []).join(', ');
-      chan.placeholder = channels.length ? `1–${channels.length}` : 'no channels';
+      // Not a range: `1–1` on a one-channel show reads as a broken field rather than
+      // as a choice of one. The roster above says what there is.
+      chan.placeholder = channels.length ? 'none' : '—';
+      chan.disabled = !channels.length;
       chan.title = channels.length
-        ? channels.map((h) => `${h.index}  ${h.note || h.file}`).join('\n')
-        : 'this show has no channel map — it is a single feed';
+        ? 'which microphones carry this performer, by number — several is normal'
+        : 'this show is a single feed, so there is nothing to assign';
       chan.onchange = () => {
         c.channels = chan.value.split(/[,\s]+/)
           .map((n) => parseInt(n, 10)).filter((n) => Number.isFinite(n));
