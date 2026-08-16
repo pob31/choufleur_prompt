@@ -357,6 +357,44 @@ fn build(want: &str, bufs: &[Arc<ChannelBuf>]) -> Result<(cpal::Stream, String)>
     Ok((stream, name))
 }
 
+/// One captured channel, read the way the engine reads a file.
+///
+/// The engine pulls a quarter-second at a time and expects to get it. A room does not
+/// always have a quarter-second ready, so the wait is bounded and a short read is normal
+/// — [`BlockSource::ends`] is false, so the loop treats nothing-arrived as a pause
+/// rather than as the end of the show.
+pub struct LiveSource {
+    buf: Arc<ChannelBuf>,
+    /// Longer than a block, so an ordinary jitter costs nothing, and short enough that a
+    /// device that has genuinely stopped does not hang the run.
+    wait: Duration,
+}
+
+impl LiveSource {
+    pub fn new(buf: Arc<ChannelBuf>) -> Self {
+        LiveSource {
+            buf,
+            wait: Duration::from_millis(400),
+        }
+    }
+}
+
+impl crate::engine::BlockSource for LiveSource {
+    fn read_block(&mut self, out: &mut Vec<f32>, frames: usize) -> anyhow::Result<usize> {
+        Ok(self.buf.read(out, frames, self.wait))
+    }
+    fn sample_rate(&self) -> u32 {
+        RATE
+    }
+    /// No total. A show is over when somebody says so.
+    fn duration_seconds(&self) -> Option<f64> {
+        None
+    }
+    fn ends(&self) -> bool {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

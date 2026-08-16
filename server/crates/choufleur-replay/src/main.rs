@@ -263,6 +263,12 @@ enum Command {
         /// playback to reach the passage you want to fix makes it work nobody does.
         #[arg(long)]
         prep: bool,
+        /// Listen to the patched inputs instead of the corpus audio.
+        ///
+        /// The same VAD, recognition and tracking as a replay — only where a block of
+        /// audio comes from differs, which is exactly the seam this exists to prove.
+        #[arg(long)]
+        live: bool,
         /// Cue lists to display. Repeatable — a show has one per operator, and they
         /// are independent documents rather than views of one another. Defaults to
         /// every `cues.json` and `cues-*.json` beside the script.
@@ -432,6 +438,7 @@ fn main() -> Result<()> {
             buffer_ms,
             out,
             prep,
+            live,
             cues,
         } => cmd::serve::run(
             &corpus,
@@ -449,11 +456,12 @@ fn main() -> Result<()> {
             audio.no_lexicon,
             audio.realtime,
             port,
-            !no_monitor && !prep,
+            !no_monitor && !prep && !live,
             output_device,
             buffer_ms,
             out,
             prep,
+            live,
             &cues,
         ),
         Command::Track {

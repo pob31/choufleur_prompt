@@ -123,13 +123,46 @@ impl EngineConfig {
 }
 
 /// One channel being read: its audio, its identity, and its front end.
+/// Where a channel's audio comes from.
+///
+/// A file and a microphone differ in three ways the loop has to know about, and every
+/// one of them is a way a live run would otherwise end early or hang: a live source has
+/// no total duration, a moment of quiet is not the end of it, and nothing ever finishes.
+/// Not `Send`, deliberately. `WavBlockReader` holds a boxed iterator that is not, and
+/// the engine has always been one blocking thread that owns everything it touches — the
+/// live source hands its audio across a queue rather than crossing the boundary itself.
+pub trait BlockSource {
+    /// Up to `frames` mono samples. Zero means nothing arrived, which for a file is the
+    /// end and for a room is a pause.
+    fn read_block(&mut self, out: &mut Vec<f32>, frames: usize) -> Result<usize>;
+    fn sample_rate(&self) -> u32;
+    /// How long it runs, when that is a knowable thing.
+    fn duration_seconds(&self) -> Option<f64>;
+    /// Whether an empty read means this source is done. False for anything live.
+    fn ends(&self) -> bool {
+        true
+    }
+}
+
+impl BlockSource for WavBlockReader {
+    fn read_block(&mut self, out: &mut Vec<f32>, frames: usize) -> Result<usize> {
+        WavBlockReader::read_block(self, out, frames)
+    }
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+    fn duration_seconds(&self) -> Option<f64> {
+        Some(WavBlockReader::duration_seconds(self))
+    }
+}
+
 struct Source {
     index: u16,
     character: Option<String>,
     /// Everyone this channel might carry, when a mic is shared. See `ChannelSpec`.
     characters: Vec<String>,
     lang: Option<LangCode>,
-    reader: WavBlockReader,
+    reader: Box<dyn BlockSource>,
     frontend: ChannelFrontend,
     finished: bool,
 }
@@ -141,6 +174,9 @@ struct Source {
 struct Key(i64, u16, u64);
 
 pub struct Engine {
+    /// Set to end a run that has no end of its own. A file stops when it runs out; a
+    /// room does not, so somebody has to say when.
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     cfg: EngineConfig,
     vad: SileroSession,
     whisper: WhisperEngine,
@@ -157,12 +193,21 @@ impl Engine {
             .with_context(|| format!("loading model {}", cfg.whisper_model.display()))?;
         let filter = HallucinationFilter::new(cfg.filter.clone());
         Ok(Engine {
+            stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             cfg,
             vad,
             whisper,
             filter,
             monitor: None,
         })
+    }
+
+    /// A handle that ends a live run.
+    ///
+    /// The engine owns Metal and cannot be reached from another thread, so the one thing
+    /// somebody outside needs — "stop" — travels as a flag rather than as a call.
+    pub fn stop_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        std::sync::Arc::clone(&self.stop)
     }
 
     /// Attach a tap that sees every block as it is read.
@@ -176,16 +221,70 @@ impl Engine {
 
     /// Run the whole corpus through the pipeline.
     pub fn run(&mut self, corpus: &Corpus, consumer: &mut dyn Consumer) -> Result<ClockStats> {
-        let mut sources = self.open_sources(corpus)?;
+        let sources = self.open_sources(corpus)?;
+        self.pump(sources, consumer)
+    }
+
+    /// Run against the room instead of a file.
+    ///
+    /// One source per patched channel, and the cast's channel numbers decide who each
+    /// carries — so a patched multitrack show discriminates speakers and a single mixed
+    /// feed does not, which is the same rule as the replay path, arrived at from the
+    /// room instead of a manifest.
+    pub fn run_live(
+        &mut self,
+        capture: &crate::capture::Capture,
+        who: &[(u16, Vec<String>)],
+        consumer: &mut dyn Consumer,
+    ) -> Result<ClockStats> {
+        let sources: Vec<Source> = capture
+            .channels
+            .iter()
+            .map(|b| {
+                let carried: Vec<String> = who
+                    .iter()
+                    .find(|(ch, _)| *ch == b.logical)
+                    .map(|(_, names)| names.clone())
+                    .unwrap_or_default();
+                Ok(Source {
+                    index: b.logical,
+                    character: carried.first().cloned(),
+                    characters: carried,
+                    lang: None,
+                    reader: Box::new(crate::capture::LiveSource::new(std::sync::Arc::clone(b))),
+                    frontend: ChannelFrontend::with_agc(
+                        b.logical,
+                        self.cfg.vad.clone(),
+                        self.cfg.agc.clone(),
+                    )?,
+                    finished: false,
+                })
+            })
+            .collect::<Result<_>>()?;
+        self.pump(sources, consumer)
+    }
+
+    /// The loop itself, whatever the audio came from.
+    fn pump(
+        &mut self,
+        mut sources: Vec<Source>,
+        consumer: &mut dyn Consumer,
+    ) -> Result<ClockStats> {
         if sources.is_empty() {
             anyhow::bail!("no channels selected");
         }
-        let rate = sources[0].reader.sample_rate as f64;
+        let rate = sources[0].reader.sample_rate() as f64;
         let block_frames = (BLOCK_SECONDS * rate) as usize;
-        let audio_s = sources
+        // `None` when anything is live: there is no total, so nothing may be clamped to
+        // it and the run cannot be scored against it.
+        let audio_s: Option<f64> = sources
             .iter()
             .map(|s| s.reader.duration_seconds())
-            .fold(0.0f64, f64::max);
+            .try_fold(0.0f64, |a, d| d.map(|d| a.max(d)));
+        // Live sources are paced by the device, so the clock only measures. A run with
+        // no total that also slept against one would drift by whatever the device's
+        // rate really is.
+        let live = audio_s.is_none();
 
         let mut clock = if self.cfg.realtime {
             VirtualClock::realtime()
@@ -209,8 +308,12 @@ impl Engine {
                 let n = src.reader.read_block(&mut block_buf, block_frames)?;
                 pending.clear();
                 if n == 0 {
-                    src.finished = true;
-                    src.frontend.finish(&mut self.vad, &mut pending)?;
+                    // A file that has run out is done. A room that has gone quiet is a
+                    // room that has gone quiet.
+                    if src.reader.ends() {
+                        src.finished = true;
+                        src.frontend.finish(&mut self.vad, &mut pending)?;
+                    }
                 } else {
                     any = true;
                     if let Some(m) = self.monitor.as_mut() {
@@ -233,18 +336,22 @@ impl Engine {
             audio_t += BLOCK_SECONDS;
 
             // Nothing may be decoded before its audio has actually happened.
-            if self.cfg.realtime {
-                clock.wait_until(audio_t.min(audio_s));
+            if self.cfg.realtime && !live {
+                clock.wait_until(audio_t.min(audio_s.unwrap_or(audio_t)));
             }
             self.drain(&mut queue, &mut arena, &sources, &mut clock, consumer)?;
 
-            if !any && sources.iter().all(|s| s.finished) {
+            if self.stop.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+            // A live run ends when it is told to, never because nothing was said.
+            if !live && !any && sources.iter().all(|s| s.finished) {
                 break;
             }
         }
         // Anything left after the last block (a run closed by `finish`).
         self.drain(&mut queue, &mut arena, &sources, &mut clock, consumer)?;
-        Ok(clock.stats(audio_s))
+        Ok(clock.stats(audio_s.unwrap_or(audio_t)))
     }
 
     fn drain(
@@ -332,7 +439,7 @@ impl Engine {
                 character: None,
                 characters: Vec::new(),
                 lang: None,
-                reader,
+                reader: Box::new(reader),
                 frontend: ChannelFrontend::with_agc(0, self.cfg.vad.clone(), self.cfg.agc.clone())?,
                 finished: false,
             });
@@ -352,7 +459,7 @@ impl Engine {
                 character: ch.primary().map(str::to_string),
                 characters: ch.speakers().to_vec(),
                 lang: ch.lang.clone(),
-                reader,
+                reader: Box::new(reader),
                 frontend: ChannelFrontend::with_agc(ch.index, self.cfg.vad.clone(), self.cfg.agc.clone())?,
                 finished: false,
             });

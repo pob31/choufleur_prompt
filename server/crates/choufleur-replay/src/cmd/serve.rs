@@ -687,6 +687,7 @@ pub fn run(
     buffer_ms: u32,
     trace_out: Option<PathBuf>,
     prep: bool,
+    live: bool,
     cues_path: &[PathBuf],
 ) -> Result<()> {
     let corpus = Corpus::load(corpus_path, audio_root)?;
@@ -884,6 +885,20 @@ pub fn run(
             // before it is ready would put the show ahead of the tracker from the
             // first word.
             let mut eng = Engine::load(ecfg)?;
+            // Listening to the room rather than reading a file. Opened on this thread
+            // because the engine owns everything it touches, and dropped with it.
+            let listening = if live {
+                let venue = crate::audio::load(&engine_state.library);
+                let cap = crate::capture::Capture::open(&venue)?;
+                println!(
+                    "live: {} — {} channel(s) from the patch",
+                    cap.device,
+                    cap.channels.len()
+                );
+                Some(cap)
+            } else {
+                None
+            };
             if let Some(path) = play_path {
                 let audible = Arc::clone(&engine_state);
                 std::thread::Builder::new()
@@ -907,7 +922,8 @@ pub fn run(
                     .context("spawning the monitor thread")?;
             }
             run_engine(&mut eng, &corpus, &prepared, tcfg, rival_cfg, bias, lang_of,
-                       default_lang, static_text, &engine_state, trace_out)?;
+                       default_lang, static_text, &engine_state, trace_out,
+                       listening.as_ref())?;
             *engine_state.running.lock().unwrap() = false;
             let _ = engine_state.tx.send(Update::RunState {
                 t_audio: *engine_state.t_audio.lock().unwrap(),
@@ -944,6 +960,7 @@ fn run_engine(
     static_text: String,
     state: &Arc<LiveState>,
     trace_out: Option<PathBuf>,
+    live: Option<&crate::capture::Capture>,
 ) -> Result<()> {
     let mut inner = super::track::TrackingConsumer {
         tracker: Tracker::new(prepared, tcfg),
@@ -975,7 +992,42 @@ fn run_engine(
         state: Arc::clone(state),
         seq: 0,
     };
-    let stats = eng.run(corpus, &mut consumer)?;
+    // From the room, or from the file. The only difference the engine sees is where a
+    // block comes from; everything after it — VAD, recognition, tracking, the page — is
+    // the same path, which is the whole point of the seam.
+    let stats = match live {
+        None => eng.run(corpus, &mut consumer)?,
+        Some(cap) => {
+            // Who each channel carries, from the cast. A patched multitrack show
+            // discriminates speakers; a single mixed feed does not.
+            let who: Vec<(u16, Vec<String>)> = {
+                let cast = state.cast.lock().unwrap();
+                cap.channels
+                    .iter()
+                    .map(|b| {
+                        (
+                            b.logical,
+                            cast.iter()
+                                .filter(|c| c.channels.contains(&b.logical))
+                                .map(|c| c.id.clone())
+                                .collect(),
+                        )
+                    })
+                    .collect()
+            };
+            for (ch, names) in &who {
+                println!(
+                    "live ch{ch}: {}",
+                    if names.is_empty() {
+                        "no speaker identity (zone)".to_string()
+                    } else {
+                        names.join(", ")
+                    }
+                );
+            }
+            eng.run_live(cap, &who, &mut consumer)?
+        }
+    };
     println!("\n{stats}");
     if let Some(path) = trace_out {
         crate::formats::write_jsonl(&path, &inner.trace)?;
