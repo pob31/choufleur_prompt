@@ -554,13 +554,24 @@
     letter-spacing: .12em; text-transform: uppercase; color: var(--dimmer);
   }
   .flagrow {
-    display: grid; grid-template-columns: 1fr auto auto auto; gap: .5em;
+    display: grid; grid-template-columns: 1fr auto auto; gap: .5em;
     align-items: baseline; padding: .3em 0; border-top: 1px solid var(--edge);
     font: 400 .82em/1.4 ui-sans-serif, system-ui, sans-serif;
   }
   .flagrow .what { color: var(--dim); overflow: hidden; text-overflow: ellipsis;
                    white-space: nowrap; }
-  .flagrow .who { color: var(--flag); font-size: .88em; white-space: nowrap; }
+  .flagrow .who { display: flex; gap: .35em; flex-wrap: wrap; justify-content: flex-end; }
+  .flagrow .chip {
+    display: inline-flex; align-items: center; gap: .15em; white-space: nowrap;
+    color: var(--flag); font-size: .78em; border: 1px solid transparent;
+    border-radius: 999px; padding: .05em .2em .05em .45em; background: #1d2129;
+  }
+  .flagrow .chip.locked { color: var(--dimmer); padding-right: .45em; }
+  .flagrow .chip .x {
+    border: none; background: none; color: inherit; opacity: .5; cursor: pointer;
+    font: inherit; line-height: 1; padding: 0 .2em;
+  }
+  .flagrow .chip .x:hover { opacity: 1; color: var(--lost); }
   .flagrow button {
     border: 1px solid var(--dimmer); background: none; color: var(--dim);
     border-radius: 999px; padding: .1em .55em; cursor: pointer; font: inherit;
@@ -1873,6 +1884,14 @@
   const myMark = () => sheetOf(targetSheet())?.name || 'unknown';
   const flaggedByMe = (l) => (l.flags || []).some((f) => f.by === myMark());
 
+  // Who may clear what. During a run you touch only your own marks: another list's flag
+  // is their unfinished business, and a show is no time to be deciding it is finished.
+  // Prep is the opposite case — that is when somebody sits down with the whole script to
+  // clear out what no longer applies, and being unable to remove a stale mark left by a
+  // list that has since gone home is how a script silently fills up with them.
+  const clearable = (f) =>
+    document.body.dataset.prep === 'on' || f.by === myMark();
+
   function toggleFlag(index) {
     if (index < 0 || index >= lines.length || !ws || ws.readyState !== 1) return;
     ws.send(JSON.stringify({
@@ -1907,32 +1926,43 @@
       const l = lines[i];
       const row = document.createElement('div');
       row.className = 'flagrow';
-      const who = document.createElement('span');
-      who.className = 'who';
-      who.textContent = (l.flags || [])
-        .map((f) => `${f.by}${f.at ? ' · ' + f.at.slice(0, 16).replace('T', ' ') : ''}`)
-        .join('  ·  ');
       const what = document.createElement('span');
       what.className = 'what';
       what.textContent = `${l.id}  ${l.text.slice(0, 46)}`;
+
+      // One chip per mark, each carrying who left it and when. Clearing is per-mark
+      // rather than per-line, because a line two lists have flagged holds two separate
+      // pieces of unfinished business and one of them may be done.
+      const who = document.createElement('span');
+      who.className = 'who';
+      for (const f of l.flags || []) {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.textContent = `${f.by}${f.at ? ' · ' + f.at.slice(0, 16).replace('T', ' ') : ''}`;
+        if (clearable(f)) {
+          const x = document.createElement('button');
+          x.className = 'x';
+          x.textContent = '×';
+          x.title = f.by === myMark() ? 'clear your mark' : `clear ${f.by}'s mark`;
+          x.onclick = (e) => {
+            e.stopPropagation();
+            ws.send(JSON.stringify({
+              type: 'flag_line', lineIndex: i, flag: false, by: f.by, at: '',
+            }));
+          };
+          chip.appendChild(x);
+        } else {
+          chip.classList.add('locked');
+          chip.title = 'another list\u2019s mark — clear it in prep';
+        }
+        who.appendChild(chip);
+      }
+
       const go = document.createElement('button');
       go.className = 'go';
       go.textContent = 'go';
       go.onclick = (e) => { e.stopPropagation(); jumpedTo = i; goTo(i, true); };
-      const clear = document.createElement('button');
-      clear.className = 'clear';
-      clear.textContent = flaggedByMe(l) ? 'clear mine' : 'clear all';
-      clear.onclick = (e) => {
-        e.stopPropagation();
-        // Only ever your own list's mark, unless there is none of yours to clear —
-        // removing somebody else's note by accident is how they stop leaving them.
-        for (const f of flaggedByMe(l) ? [{ by: myMark() }] : (l.flags || [])) {
-          ws.send(JSON.stringify({
-            type: 'flag_line', lineIndex: i, flag: false, by: f.by, at: '',
-          }));
-        }
-      };
-      row.append(what, who, go, clear);
+      row.append(what, who, go);
       $flagList.appendChild(row);
     }
   }
