@@ -1515,9 +1515,27 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                     // The cast, and the channels there are to assign it to. Both, in one
                     // answer, because a channel picker with nothing to pick from is the
                     // shape of every patch UI that never gets used.
+                    // The manifest's channels describe a *recording*; the venue patch
+                    // describes the room. A show created from pasted text has no
+                    // recording at all, so without the patch there would be nothing to
+                    // assign anybody to and a new show could never be set up.
+                    let mut channels = s.channels.clone();
+                    for p in crate::audio::load(&s.library).channels {
+                        let known = channels.iter().any(|c| {
+                            c.get("index").and_then(|i| i.as_u64()) == Some(p.logical as u64)
+                        });
+                        if !known {
+                            channels.push(serde_json::json!({
+                                "index": p.logical,
+                                "note": format!("input {}", p.input),
+                                "file": "",
+                            }));
+                        }
+                    }
+                    channels.sort_by_key(|c| c.get("index").and_then(|i| i.as_u64()));
                     axum::Json(serde_json::json!({
                         "characters": s.cast.lock().unwrap().clone(),
-                        "channels": s.channels.clone(),
+                        "channels": channels,
                     }))
                 }),
             )

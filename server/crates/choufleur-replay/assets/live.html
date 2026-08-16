@@ -530,6 +530,9 @@
   #flagcount:hover { color: var(--flag); }
   /* Prep-only, like the targets panel: a cast is set at a table, not during a show. */
   #castbtn, #listsbtn, #audiobtn { display: none; }
+  #castbtn.on, #listsbtn.on, #audiobtn.on {
+    border-color: var(--now) !important; color: var(--now) !important;
+  }
   body[data-prep="on"] #castbtn,
   body[data-prep="on"] #listsbtn,
   body[data-prep="on"] #audiobtn {
@@ -577,6 +580,11 @@
     text-transform: uppercase; color: var(--dimmer);
   }
   .member input:disabled { opacity: .4; cursor: not-allowed; }
+  #cast .warn {
+    font: 400 .78em/1.5 ui-sans-serif, system-ui, sans-serif; color: var(--now);
+    border: 1px solid var(--edge); border-radius: 4px; padding: .4em .55em;
+    margin-bottom: .6em; background: #221d12;
+  }
   .chanmap {
     font: 400 .78em/1.5 ui-sans-serif, system-ui, sans-serif; color: var(--dimmer);
     margin-bottom: .5em;
@@ -2055,6 +2063,15 @@
     h.textContent = cast.length ? `${cast.length} in the cast` : 'nobody declared yet';
     $cast.appendChild(h);
 
+    if (mergeFrom) {
+      const hint = document.createElement('div');
+      hint.className = 'warn';
+      const who = cast.find((c) => c.id === mergeFrom);
+      hint.textContent = `Who is ${who?.name || mergeFrom} really? Click them, and every `
+        + `line will move across.`;
+      $cast.appendChild(hint);
+    }
+
     if (!cast.length) {
       const p = document.createElement('div');
       p.className = 'memberof';
@@ -2069,7 +2086,8 @@
     const map = document.createElement('div');
     map.className = 'chanmap';
     if (!channels.length) {
-      map.textContent = 'No channel map — this show is one feed, so there is nothing to assign.';
+      map.textContent = 'No channels yet — patch one in the audio panel, then assign it here. '
+        + 'A show on a single mixed feed still wants everybody on that one channel.';
     } else {
       map.append(document.createTextNode('Microphones: '));
       for (const c of channels) {
@@ -2107,10 +2125,9 @@
       // Not a range: `1–1` on a one-channel show reads as a broken field rather than
       // as a choice of one. The roster above says what there is.
       chan.placeholder = channels.length ? 'none' : '—';
-      chan.disabled = !channels.length;
       chan.title = channels.length
         ? 'which microphones carry this performer, by number — several is normal'
-        : 'this show is a single feed, so there is nothing to assign';
+        : 'patch a channel in the audio panel first';
       chan.onchange = () => {
         c.channels = chan.value.split(/[,\s]+/)
           .map((n) => parseInt(n, 10)).filter((n) => Number.isFinite(n));
@@ -2124,12 +2141,17 @@
       count.textContent = n ? `${n} lines` : 'no lines';
       if (!n) count.style.color = 'var(--lost)';
 
+      // Two clicks: the one who should not exist, then the one who should. A label
+      // reading "merge" told nobody which way round that goes.
       const merge = document.createElement('button');
-      merge.textContent = mergeFrom === c.id ? 'merging…'
-        : mergeFrom ? `← into this` : 'merge';
-      merge.title = mergeFrom
-        ? `give every line of ${mergeFrom} to ${c.name || c.id}`
-        : 'this is the same person as somebody else';
+      merge.textContent = mergeFrom === c.id ? 'cancel'
+        : mergeFrom ? '← is really this' : 'same as…';
+      merge.title = mergeFrom === c.id
+        ? 'never mind'
+        : mergeFrom
+          ? `every line of ${mergeFrom} becomes ${c.name || c.id}, and ${mergeFrom} goes`
+          : 'this speaker is really somebody else already in the list — '
+            + 'a misspelling, or a mode like (voix off). Click, then click who they are.';
       merge.onclick = () => {
         if (!mergeFrom) { mergeFrom = c.id; paintCast(); return; }
         if (mergeFrom === c.id) { mergeFrom = null; paintCast(); return; }
@@ -2364,6 +2386,12 @@
     document.body.dataset.lists = 'off';
     document.body.dataset.audio = 'off';
     if (!on) { document.body.dataset[which] = 'on'; paint(); }
+    // The button that opened a panel lights up, because otherwise the way to close it
+    // is a guess — three identical buttons and no clue which one is holding the panel.
+    for (const [key, id] of [['cast', 'castbtn'], ['lists', 'listsbtn'], ['audio', 'audiobtn']]) {
+      document.getElementById(id)
+        .classList.toggle('on', document.body.dataset[key] === 'on');
+    }
   }
   document.getElementById('castbtn').addEventListener('click', async () => {
     if (!cast.length) await loadCast();
