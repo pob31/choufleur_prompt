@@ -51,8 +51,12 @@
 .pill:disabled { opacity: .4; cursor: default; }
 .pill:disabled:hover { border-color: var(--dimmer); color: var(--dim); }
 
-/* Armed: the second half of a two-step destructive button. Set by `confirmButton`. */
-.pill.armed { border-color: var(--lost); color: var(--lost); }
+/* Armed: the second half of a two-step destructive button. Set by `confirmButton`.
+ *
+ * Filled, not merely outlined, because it has to read as armed once the pointer has
+ * moved away from it — that is the moment somebody glances back at the panel and
+ * decides whether they are about to lose an evening's work. */
+.pill.armed { border-color: var(--lost); color: var(--lost); background: #1a0d0b; }
 .pill.danger:hover { border-color: var(--lost); color: var(--lost); }
 
 .field {

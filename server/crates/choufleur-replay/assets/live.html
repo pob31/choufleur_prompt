@@ -503,6 +503,13 @@
     font: 400 .78em/1.3 ui-sans-serif, system-ui, sans-serif;
   }
   .target .drop:hover { border-color: var(--lost); color: var(--lost); }
+  /* Armed, not merely hovered. A button waiting for its second click has to look
+     different when the pointer has moved away from it — that is the moment somebody
+     glances at the panel and decides whether they are about to lose fifty-four cues. */
+  .target .drop.armed,
+  .cuelist button.armed {
+    border-color: var(--lost); color: var(--lost); background: #1a0d0b;
+  }
   #palette .foot {
     display: flex; gap: .4em; align-items: center; margin-top: .7em;
     border-top: 1px solid var(--edge); padding-top: .6em;
@@ -682,9 +689,7 @@
     font: 400 .8em/1.3 ui-sans-serif, system-ui, sans-serif;
   }
   .cuelist button:hover { border-color: var(--now); color: var(--now); }
-  .cuelist button.danger:hover, .cuelist button.armed {
-    border-color: var(--lost); color: var(--lost);
-  }
+  .cuelist button.danger:hover { border-color: var(--lost); color: var(--lost); }
   .cuelist input {
     min-width: 0; background: #0f1114; color: var(--fg);
     border: 1px solid var(--dimmer); border-radius: 3px; padding: .25em .45em;
@@ -1577,6 +1582,12 @@
     paintFilters();
     renderRail();
     replace();
+    // The targets panel edits one list. Leaving it open across a change of list would
+    // show one list's vocabulary while saving it into another's — so it is re-opened
+    // on the new one, which rebuilds the draft from disk and takes any half-typed
+    // target and any armed remove with it. Losing an unsaved edit is the right trade
+    // against saving it to the wrong list.
+    if (document.body.dataset.palette === 'on') openTargets();
   }
 
   function paintPicker() {
