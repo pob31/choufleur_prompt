@@ -528,6 +528,75 @@
   #flagcount { font-variant-numeric: tabular-nums; color: var(--dimmer); min-width: 2.4em;
                text-align: center; font-size: .85em; cursor: pointer; }
   #flagcount:hover { color: var(--flag); }
+  /* Prep-only, like the targets panel: a cast is set at a table, not during a show. */
+  #castbtn, #listsbtn { display: none; }
+  body[data-prep="on"] #castbtn,
+  body[data-prep="on"] #listsbtn {
+    display: inline-block;
+    border: 1px solid var(--dimmer); background: none; color: var(--dim);
+    border-radius: 999px; padding: .25em .8em; cursor: pointer;
+    font: 400 .84em/1.4 ui-sans-serif, system-ui, sans-serif;
+  }
+  #cast, #lists { display: none; }
+  body[data-cast="on"] #cast, body[data-lists="on"] #lists {
+    display: block; position: absolute; z-index: 7; right: 1.2em; bottom: 3.4em;
+    width: 34em; max-height: 66vh; overflow-y: auto; padding: .8em .9em;
+    border-radius: 5px; background: #14171c; border: 1px solid var(--edge);
+    box-shadow: 0 10px 40px rgba(0,0,0,.6);
+  }
+  #cast h4, #lists h4 {
+    margin: 0 0 .6em; font: 600 .64em/1.4 ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: .12em; text-transform: uppercase; color: var(--dimmer);
+  }
+  .member {
+    display: grid; grid-template-columns: 1fr 7em auto auto; gap: .4em;
+    align-items: center; padding: .3em 0; border-top: 1px solid var(--edge);
+  }
+  .member input {
+    min-width: 0; background: #0f1114; color: var(--fg);
+    border: 1px solid var(--dimmer); border-radius: 3px; padding: .25em .45em;
+    font: 400 .84em/1.4 ui-sans-serif, system-ui, sans-serif;
+  }
+  .member input:focus { outline: none; border-color: var(--now); }
+  .member .count { font: 400 .78em/1.3 ui-sans-serif, system-ui, sans-serif;
+                   color: var(--dimmer); white-space: nowrap; }
+  .member button {
+    border: 1px solid var(--dimmer); background: none; color: var(--dimmer);
+    border-radius: 999px; padding: .1em .55em; cursor: pointer;
+    font: 400 .76em/1.3 ui-sans-serif, system-ui, sans-serif; white-space: nowrap;
+  }
+  .member button:hover { border-color: var(--now); color: var(--now); }
+  .member button.armed { border-color: var(--lost); color: var(--lost); }
+  .member.group { background: #16181d; }
+  .memberof { grid-column: 1 / -1; font: 400 .76em/1.4 ui-sans-serif, system-ui, sans-serif;
+              color: var(--dimmer); padding-left: .2em; }
+  .memberof b { color: var(--speaker); font-weight: 400; }
+
+  .cuelist {
+    padding: .45em 0; border-top: 1px solid var(--edge);
+    display: grid; grid-template-columns: 1fr auto; gap: .4em; align-items: center;
+  }
+  .cuelist input {
+    min-width: 0; background: #0f1114; color: var(--fg);
+    border: 1px solid var(--dimmer); border-radius: 3px; padding: .25em .45em;
+    font: 600 .84em/1.4 ui-sans-serif, system-ui, sans-serif;
+  }
+  .cuelist input:focus { outline: none; border-color: var(--now); }
+  .cuelist .cats { grid-column: 1 / -1; display: flex; gap: .4em; flex-wrap: wrap;
+                   font: 400 .78em/1.4 ui-sans-serif, system-ui, sans-serif; }
+  .cuelist .cat { display: inline-flex; align-items: center; gap: .3em;
+                  color: var(--dim); }
+  .cuelist .cat i { width: .7em; height: .7em; border-radius: 2px; display: inline-block; }
+  .cuelist .none { color: var(--dimmer); }
+  .newrow { display: flex; gap: .4em; margin-top: .7em; border-top: 1px solid var(--edge);
+            padding-top: .6em; }
+  .newrow input { flex: 1 1 auto; min-width: 0; background: #0f1114; color: var(--fg);
+                  border: 1px solid var(--dimmer); border-radius: 3px; padding: .25em .45em;
+                  font: 400 .84em/1.4 ui-sans-serif, system-ui, sans-serif; }
+  .newrow button { border: 1px solid var(--now); background: none; color: var(--now);
+                   border-radius: 999px; padding: .2em .8em; cursor: pointer;
+                   font: 400 .84em/1.4 ui-sans-serif, system-ui, sans-serif; }
+
   #flaglist { display: none; }
   body[data-flaglist="on"] #flaglist {
     display: block; position: absolute; z-index: 7; right: 1.2em; bottom: 3.4em;
@@ -610,6 +679,8 @@
   <div id="rail"></div>
   <div id="palette"></div>
   <div id="flaglist"></div>
+  <div id="cast"></div>
+  <div id="lists"></div>
   <div id="view">
       <div id="hint">tap the line being spoken to put it back on track</div>
     <div id="prephint">click a line to edit it · double-click to give it a cue · alt-click to flag</div>
@@ -627,6 +698,8 @@
     <span id="filters"></span>
     <span id="picker"></span>
     <button id="targets" title="what this cue list drives">targets</button>
+    <button id="castbtn" title="who is in this show, and on which microphone">cast</button>
+    <button id="listsbtn" title="the cue lists this show carries">lists</button>
     <span id="flags">
       <button id="flagprev" title="previous flag">&#9664;</button>
       <button id="flag" title="flag the current line (alt-click any line)">&#9873;</button>
@@ -638,6 +711,7 @@
     <button id="follow" hidden>follow</button>
   </footer>
 </div>
+<script src="/app.js"></script>
 <script>
 (() => {
   const $lines = document.getElementById('lines');
@@ -1889,6 +1963,201 @@
 
   $flag.addEventListener('click', () => toggleFlag(subject()));
 
+  // The cast, and the microphones it is on.
+  //
+  // A character is declared by being in the script's `characters` array, and only a
+  // declared one can be put on a channel or named in a group. Naming a speaker on a line
+  // now declares them automatically, so this panel is for what comes after: the display
+  // name, which microphones carry them, who a chorus is made of, and merging two
+  // spellings of one person.
+  //
+  // That last one is why it exists. The Lazzi PDF sets `Philipe` in bold ten times
+  // against `Philippe` four hundred and seventy-nine, and no rule can know they are the
+  // same performer — but the person preparing the show knows at a glance.
+  const $cast = document.getElementById('cast');
+  const $lists = document.getElementById('lists');
+  let cast = [];
+  let channels = [];
+  let mergeFrom = null;
+
+  const lineCount = (id) => lines.filter((l) => l.character === id).length;
+
+  async function loadCast() {
+    try {
+      const d = await (await fetch('/cast.json')).json();
+      cast = d.characters || [];
+      channels = d.channels || [];
+    } catch { cast = []; channels = []; }
+  }
+
+  function sendCast() {
+    ws?.send(JSON.stringify({ type: 'edit_cast', characters: cast }));
+  }
+
+  function paintCast() {
+    $cast.textContent = '';
+    const h = document.createElement('h4');
+    h.textContent = cast.length
+      ? `${cast.length} in the cast · ${channels.length} channel${channels.length === 1 ? '' : 's'}`
+      : 'nobody declared yet';
+    $cast.appendChild(h);
+
+    if (!cast.length) {
+      const p = document.createElement('div');
+      p.className = 'memberof';
+      p.textContent = 'Type a name on a line and it appears here.';
+      $cast.appendChild(p);
+    }
+
+    for (const c of cast) {
+      const row = document.createElement('div');
+      row.className = 'member' + (c.members?.length ? ' group' : '');
+
+      const name = document.createElement('input');
+      name.value = c.name || c.id;
+      name.title = c.id;
+      name.onchange = () => { c.name = name.value.trim() || c.id; sendCast(); };
+
+      // Microphones, as a comma-separated list of channel numbers. A free field rather
+      // than a picker because several is normal and a show may have eighteen.
+      const chan = document.createElement('input');
+      chan.value = (c.channels || []).join(', ');
+      chan.placeholder = channels.length ? `1–${channels.length}` : 'no channels';
+      chan.title = channels.length
+        ? channels.map((h) => `${h.index}  ${h.note || h.file}`).join('\n')
+        : 'this show has no channel map — it is a single feed';
+      chan.onchange = () => {
+        c.channels = chan.value.split(/[,\s]+/)
+          .map((n) => parseInt(n, 10)).filter((n) => Number.isFinite(n));
+        chan.value = c.channels.join(', ');
+        sendCast();
+      };
+
+      const count = document.createElement('span');
+      count.className = 'count';
+      const n = lineCount(c.id);
+      count.textContent = n ? `${n} lines` : 'no lines';
+      if (!n) count.style.color = 'var(--lost)';
+
+      const merge = document.createElement('button');
+      merge.textContent = mergeFrom === c.id ? 'merging…'
+        : mergeFrom ? `← into this` : 'merge';
+      merge.title = mergeFrom
+        ? `give every line of ${mergeFrom} to ${c.name || c.id}`
+        : 'this is the same person as somebody else';
+      merge.onclick = () => {
+        if (!mergeFrom) { mergeFrom = c.id; paintCast(); return; }
+        if (mergeFrom === c.id) { mergeFrom = null; paintCast(); return; }
+        ws?.send(JSON.stringify({ type: 'merge_speaker', from: mergeFrom, to: c.id }));
+        mergeFrom = null;
+      };
+
+      row.append(name, chan, count, merge);
+
+      // A group names the performers it is made of — the chorus that is really Éric,
+      // Gaël, Élissa and Séphora. Never inferred; typed by whoever knows.
+      const of = document.createElement('div');
+      of.className = 'memberof';
+      const members = document.createElement('input');
+      members.value = (c.members || []).join(', ');
+      members.placeholder = 'a group? name the performers in it';
+      members.style.cssText = 'width:100%;background:#0f1114;color:var(--fg);'
+        + 'border:1px solid var(--edge);border-radius:3px;padding:.2em .4em;font:inherit';
+      members.onchange = () => {
+        const known = new Set(cast.map((x) => x.id));
+        c.members = members.value.split(/\s*,\s*/).map((x) => x.trim()).filter(Boolean)
+          .map((x) => (known.has(x) ? x : 'char-' + App.slug(x)))
+          .filter((x) => known.has(x) && x !== c.id);
+        members.value = c.members.join(', ');
+        sendCast();
+      };
+      of.appendChild(members);
+      row.appendChild(of);
+      $cast.appendChild(row);
+    }
+  }
+
+  // The cue lists this show carries, and what each one drives.
+  //
+  // The lists are independent documents — never merged, never renumbered against one
+  // another — so this is a roster rather than a hierarchy. Categories are shown but
+  // edited in the targets panel, which is where the operator already sets them for the
+  // list they are working in.
+  function paintLists() {
+    $lists.textContent = '';
+    const h = document.createElement('h4');
+    h.textContent = `${sheets.length} cue list${sheets.length === 1 ? '' : 's'}`;
+    $lists.appendChild(h);
+
+    for (const sh of sheets) {
+      const row = document.createElement('div');
+      row.className = 'cuelist';
+      const name = document.createElement('input');
+      name.value = sh.name;
+      name.title = sh.id;
+      name.onchange = () => {
+        const v = name.value.trim();
+        if (v && v !== sh.name) ws?.send(JSON.stringify({ type: 'rename_sheet', sheet: sh.id, name: v }));
+      };
+      const count = document.createElement('span');
+      count.className = 'count';
+      const n = cues.filter((c) => c.sheet === sh.id).length;
+      count.textContent = `${n} cue${n === 1 ? '' : 's'}`;
+      count.style.cssText = 'font:400 .78em/1.3 ui-sans-serif,system-ui,sans-serif;color:var(--dimmer)';
+      row.append(name, count);
+
+      const cats = document.createElement('div');
+      cats.className = 'cats';
+      if (!sh.categories?.length) {
+        const none = document.createElement('span');
+        none.className = 'none';
+        none.textContent = 'no categories — set them in targets';
+        cats.appendChild(none);
+      }
+      for (const cat of sh.categories || []) {
+        const used = cues.filter((c) => c.sheet === sh.id && c.colour === cat.key).length;
+        const chip = document.createElement('span');
+        chip.className = 'cat';
+        const dot = document.createElement('i');
+        dot.style.background = cat.swatch || 'var(--dimmer)';
+        chip.append(dot, document.createTextNode(`${cat.label} ${used}`));
+        cats.appendChild(chip);
+      }
+      row.appendChild(cats);
+      $lists.appendChild(row);
+    }
+
+    const add = document.createElement('div');
+    add.className = 'newrow';
+    const field = document.createElement('input');
+    field.placeholder = 'Conduite LUMIÈRE';
+    const go = document.createElement('button');
+    go.textContent = 'New list';
+    const make = () => {
+      const v = field.value.trim();
+      if (!v) return;
+      ws?.send(JSON.stringify({ type: 'new_sheet', name: v }));
+      field.value = '';
+    };
+    go.onclick = make;
+    field.onkeydown = (e) => { if (e.key === 'Enter') make(); };
+    add.append(field, go);
+    $lists.appendChild(add);
+  }
+
+  function togglePanel(which, paint) {
+    const on = document.body.dataset[which] === 'on';
+    document.body.dataset.cast = 'off';
+    document.body.dataset.lists = 'off';
+    if (!on) { document.body.dataset[which] = 'on'; paint(); }
+  }
+  document.getElementById('castbtn').addEventListener('click', async () => {
+    if (!cast.length) await loadCast();
+    mergeFrom = null;
+    togglePanel('cast', paintCast);
+  });
+  document.getElementById('listsbtn').addEventListener('click', () => togglePanel('lists', paintLists));
+
   // The flag list.
   //
   // Flags exist to be cleared. A mark nobody can review is a mark that rots, and a
@@ -2335,6 +2604,13 @@
   // editor happened to be showing.
   $lines.addEventListener('dblclick', (ev) => {
     if (document.body.dataset.prep !== 'on') return;
+    // A plain double-click and nothing else.
+    //
+    // Alt-click toggles a flag, and flagging a run of lines means alt-clicking several
+    // times in a row — which the browser also reports as a double-click, so every
+    // second flag was quietly making a cue as well. Any modifier held means the
+    // operator is doing the other thing.
+    if (ev.altKey || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
     const el = ev.target.closest('.line');
     if (!el || !ws || ws.readyState !== 1) return;
     ev.preventDefault();
@@ -2499,7 +2775,7 @@
   window.addEventListener('resize', () => { lineTops = null; replace(); });
 
   // What this page was written against. See PROTOCOL_VERSION in live.rs.
-  const PROTOCOL = 7;
+  const PROTOCOL = 8;
   // Whether this is a reconnection rather than the first join.
   let joined = false;
 
@@ -2568,6 +2844,12 @@
           pendingCueFor = null;
           if (k >= 0) requestAnimationFrame(() => { goTo(shown[k].lineIndex, true); editCue(k); });
         }
+      } else if (m.type === 'cast_changed') {
+        cast = m.cast || [];
+        if (document.body.dataset.cast === 'on') paintCast();
+        // A merge rewrote hundreds of lines, so the script is re-read rather than the
+        // server sending one edit per line.
+        if (m.reload) loadScript().then(() => { build(); replace(); });
       } else if (m.type === 'line_flagged') {
         lines[m.lineIndex].flags = m.flags;
         // An open editor has replaced the line element, so re-rendering it would

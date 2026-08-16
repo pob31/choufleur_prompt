@@ -774,8 +774,32 @@ pub fn run(
         audible_until: Mutex::new(if monitor { 0.0 } else { f64::INFINITY }),
         steer: Mutex::new(Vec::new()),
         cues: Mutex::new(cues),
-        sheet_paths,
+        sheet_paths: Mutex::new(sheet_paths),
         sheets: Mutex::new(sheets),
+        channels: corpus
+            .manifest
+            .channels
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "index": c.index,
+                    "note": c.note.clone().unwrap_or_default(),
+                    "file": c.audio.file.file_name()
+                        .map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                })
+            })
+            .collect(),
+        cast: Mutex::new(
+            script
+                .characters
+                .iter()
+                .map(|c| crate::live::CharacterView {
+                    id: c.id.clone(),
+                    name: c.name.clone(),
+                    members: c.members.clone(),
+                })
+                .collect(),
+        ),
         store,
         prep,
     });
@@ -1130,6 +1154,228 @@ fn write_line_flag(
     })
 }
 
+/// Replace the declared cast.
+///
+/// A character is declared by being in this array, and only a declared one can be put
+/// on a microphone or named in a group's `members`. The panel sets the name, the
+/// microphones and the group members; anything else a character carries — its `lang` —
+/// is passed through untouched rather than rebuilt, so a field this build does not
+/// model survives being edited by a build that does.
+fn write_cast(store: &Store, path: &Path, cast: &[serde_json::Value]) -> Result<()> {
+    store.edit(path, |doc| {
+        let existing: Vec<serde_json::Value> = doc
+            .get("characters")
+            .and_then(|c| c.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let mut out = Vec::with_capacity(cast.len());
+        for c in cast {
+            let Some(id) = c.get("id").and_then(|v| v.as_str()).map(str::trim) else {
+                continue;
+            };
+            if id.is_empty() {
+                continue;
+            }
+            let was = existing
+                .iter()
+                .find(|e| e.get("id").and_then(|v| v.as_str()) == Some(id));
+            let mut o = was
+                .and_then(|w| w.as_object().cloned())
+                .unwrap_or_else(serde_json::Map::new);
+            o.insert("id".into(), id.into());
+            let name = c.get("name").and_then(|v| v.as_str()).unwrap_or(id).trim();
+            o.insert(
+                "name".into(),
+                if name.is_empty() { id } else { name }.into(),
+            );
+            let members: Vec<serde_json::Value> = c
+                .get("members")
+                .and_then(|m| m.as_array())
+                .map(|a| a.iter().filter(|m| m.is_string()).cloned().collect())
+                .unwrap_or_default();
+            if members.is_empty() {
+                o.remove("members");
+            } else {
+                o.insert("members".into(), serde_json::Value::Array(members));
+            }
+            // Which microphones carry this performer. Several is normal: somebody who
+            // moves between a headset and a handheld is on both.
+            let channels: Vec<serde_json::Value> = c
+                .get("channels")
+                .and_then(|m| m.as_array())
+                .map(|a| a.iter().filter(|m| m.is_number()).cloned().collect())
+                .unwrap_or_default();
+            o.insert("channels".into(), serde_json::Value::Array(channels));
+            out.push(serde_json::Value::Object(o));
+        }
+        doc["characters"] = serde_json::Value::Array(out);
+        Ok(())
+    })
+}
+
+/// Declare a speaker the operator has just typed, if nobody has yet.
+///
+/// Typing a name into a line used to set that line's `character` and stop there, which
+/// left an undeclared speaker: visible on the page, matched normally, and impossible to
+/// put on a microphone or name in a group. Hécube's own script has 81 such lines. There
+/// is no reason to make somebody declare it afterwards — naming a speaker *is*
+/// declaring one, and the cast panel is for the rest of what a character needs.
+///
+/// The display name is reconstructed from the id, which is what the editor showed the
+/// operator in the first place. Renaming properly is the panel's job.
+fn declare_if_new(store: &Store, path: &Path, id: &str) -> Result<bool> {
+    if id.is_empty() {
+        return Ok(false);
+    }
+    store.edit(path, |doc| {
+        let chars = doc
+            .get_mut("characters")
+            .and_then(|c| c.as_array_mut())
+            .context("script has no characters array")?;
+        if chars
+            .iter()
+            .any(|c| c.get("id").and_then(|v| v.as_str()) == Some(id))
+        {
+            return Ok(false);
+        }
+        let name = id
+            .strip_prefix("char-")
+            .unwrap_or(id)
+            .replace('-', " ")
+            .to_uppercase();
+        chars.push(serde_json::json!({ "id": id, "name": name, "channels": [] }));
+        Ok(true)
+    })
+}
+
+/// Give every line that named `from` to `to`, and retire `from`.
+///
+/// The reason this exists is in the corpus: the Lazzi PDF sets `Philipe` in bold ten
+/// times against `Philippe` four hundred and seventy-nine, and Hécube has
+/// `char-elissa` beside `char-elissa,-eric,-sephora,-gael`. Neither can be fixed a line
+/// at a time by anybody sane, and neither should be merged by a rule — only the person
+/// who knows the production can say that those are one performer.
+///
+/// One `edit`, so the lines and the cast move together or not at all.
+fn write_merge(store: &Store, path: &Path, from: &str, to: &str) -> Result<usize> {
+    store.edit(path, |doc| {
+        let mut moved = 0usize;
+        if let Some(lines) = doc.get_mut("lines").and_then(|l| l.as_array_mut()) {
+            for l in lines.iter_mut() {
+                if l.get("character").and_then(|c| c.as_str()) == Some(from) {
+                    l["character"] = to.into();
+                    moved += 1;
+                }
+            }
+        }
+        if let Some(chars) = doc.get_mut("characters").and_then(|c| c.as_array_mut()) {
+            chars.retain(|c| c.get("id").and_then(|v| v.as_str()) != Some(from));
+            // A group that named the old id now names the new one, or it would resolve
+            // to a member who no longer exists.
+            for c in chars.iter_mut() {
+                if let Some(ms) = c.get_mut("members").and_then(|m| m.as_array_mut()) {
+                    for m in ms.iter_mut() {
+                        if m.as_str() == Some(from) {
+                            *m = to.into();
+                        }
+                    }
+                    let mut seen = std::collections::HashSet::new();
+                    ms.retain(|m| m.as_str().is_some_and(|s| seen.insert(s.to_string())));
+                }
+            }
+        }
+        Ok(moved)
+    })
+}
+
+/// Start a cue list of its own.
+///
+/// A list is a file, and its name is the operator's identity on every flag they leave —
+/// so two lists cannot share one. The file lands in `cues/` under a name derived from
+/// theirs, and a name already taken is refused rather than quietly suffixed, because a
+/// second `Conduite SON` is worse than an error.
+fn new_sheet(dir: &Path, name: &str, taken: &[CueSheet]) -> Result<(String, PathBuf)> {
+    let name = name.trim();
+    anyhow::ensure!(!name.is_empty(), "a cue list needs a name");
+    anyhow::ensure!(
+        !taken.iter().any(|s| s.name.eq_ignore_ascii_case(name)),
+        "there is already a list called {name:?}"
+    );
+    let stem: String = name
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect();
+    let stem = stem.trim_matches('-').to_lowercase();
+    let stem = if stem.is_empty() { "list".into() } else { stem };
+
+    let cues = dir.join("cues");
+    std::fs::create_dir_all(&cues)?;
+    let mut path = cues.join(format!("cues-{stem}.json"));
+    for n in 2.. {
+        if !path.exists() {
+            break;
+        }
+        path = cues.join(format!("cues-{stem}-{n}.json"));
+    }
+    let doc = serde_json::json!({
+        "format": "choufleur-cues",
+        "formatVersion": "0.1",
+        "name": name,
+        "categories": [],
+        "cues": [],
+    });
+    std::fs::write(&path, serde_json::to_string_pretty(&doc)? + "\n")?;
+    let id = sheet_id(&path);
+    Ok((id, path))
+}
+
+/// Rename a list, keeping its categories and its cues.
+fn rename_sheet(store: &Store, path: &Path, name: &str) -> Result<()> {
+    let name = name.trim().to_string();
+    anyhow::ensure!(!name.is_empty(), "a cue list needs a name");
+    store.edit(path, |doc| {
+        doc.as_object_mut()
+            .context("cue sheet is not an object")?
+            .insert("name".into(), name.clone().into());
+        Ok(())
+    })
+}
+
+/// Re-read the cast from disk and tell every screen.
+///
+/// From disk rather than from what was just sent, so what the room sees is what the file
+/// says — the same discipline the cue sheets already use.
+fn reload_cast(state: &LiveState, reload: bool) {
+    let fresh: Vec<crate::live::CharacterView> = std::fs::read(&state.script_path)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|d| d.get("characters").and_then(|c| c.as_array()).cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|c| {
+            Some(crate::live::CharacterView {
+                id: c.get("id")?.as_str()?.to_string(),
+                name: c
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                members: c
+                    .get("members")
+                    .and_then(|m| m.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|m| m.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            })
+        })
+        .collect();
+    *state.cast.lock().unwrap() = fresh.clone();
+    let _ = state.tx.send(Update::CastChanged { cast: fresh, reload });
+}
+
 /// An id unique in the whole script, derived from the line it follows.
 fn insert_id(lines: &[LineView], after: usize) -> String {
     let base = lines
@@ -1183,7 +1429,8 @@ fn reload_cues(state: &Arc<LiveState>, changed: &str) -> (Vec<CueView>, CueSheet
     // automation. Measured at 766 cues that is 156 kB, which is nothing to serve once
     // and wasteful to re-send on every keystroke-sized edit over a phone tether.
     for sheet in state.sheets.lock().unwrap().iter() {
-        let Some(path) = state.sheet_paths.get(&sheet.id) else {
+        let paths = state.sheet_paths.lock().unwrap();
+        let Some(path) = paths.get(&sheet.id) else {
             continue;
         };
         cues.extend(load_cues(&state.store, path, &lines, &sheet.id));
@@ -1249,6 +1496,18 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                 }),
             )
             .route(
+                "/cast.json",
+                get(|State(s): State<Arc<LiveState>>| async move {
+                    // The cast, and the channels there are to assign it to. Both, in one
+                    // answer, because a channel picker with nothing to pick from is the
+                    // shape of every patch UI that never gets used.
+                    axum::Json(serde_json::json!({
+                        "characters": s.cast.lock().unwrap().clone(),
+                        "channels": s.channels.clone(),
+                    }))
+                }),
+            )
+            .route(
                 "/sheets.json",
                 get(|State(s): State<Arc<LiveState>>| async move {
                     axum::Json(s.sheets.lock().unwrap().clone())
@@ -1284,7 +1543,8 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                     // correction into the sound sheet.
                                     let sheet_of = |v: &serde_json::Value| -> Option<(String, PathBuf)> {
                                         let id = v.get("sheet")?.as_str()?.to_string();
-                                        let path = inbound.sheet_paths.get(&id)?.clone();
+                                        let path =
+                                            inbound.sheet_paths.lock().unwrap().get(&id)?.clone();
                                         Some((id, path))
                                     };
                                     if kind == Some("edit_categories") {
@@ -1375,6 +1635,143 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                         }
                                         continue;
                                     }
+                                    // Handled before the line-index gate below, which
+                                    // drops anything without an in-range `lineIndex`.
+                                    // None of these are about a line: a cast edit, a
+                                    // merge and a new cue list are all about the show.
+                                    // The cue messages sit above for the same reason.
+                                    match kind {
+                                    // Prep only, both of them: a merge rewrites
+                                    // hundreds of lines and a cast edit can
+                                    // unassign a microphone, and neither is
+                                    // something to discover mid-show.
+                                    Some("edit_cast") if inbound.prep => {
+                                        let Some(cast) =
+                                            v.get("characters").and_then(|c| c.as_array())
+                                        else {
+                                            continue;
+                                        };
+                                        if let Err(e) = write_cast(
+                                            &inbound.store,
+                                            &inbound.script_path,
+                                            cast,
+                                        ) {
+                                            eprintln!("could not save the cast: {e:#}");
+                                            continue;
+                                        }
+                                        reload_cast(&inbound, false);
+                                    }
+                                    Some("merge_speaker") if inbound.prep => {
+                                        let (Some(from), Some(to)) = (
+                                            v.get("from").and_then(|f| f.as_str()),
+                                            v.get("to").and_then(|t| t.as_str()),
+                                        ) else {
+                                            continue;
+                                        };
+                                        if from == to {
+                                            continue;
+                                        }
+                                        match write_merge(
+                                            &inbound.store,
+                                            &inbound.script_path,
+                                            from,
+                                            to,
+                                        ) {
+                                            Ok(n) => {
+                                                println!(
+                                                    "merged {from} into {to} — {n} line(s)"
+                                                );
+                                                // In-memory lines carry the old id
+                                                // until they are re-read, so every
+                                                // screen is asked to reload.
+                                                for l in
+                                                    inbound.lines.lock().unwrap().iter_mut()
+                                                {
+                                                    if l.character == from {
+                                                        l.character = to.to_string();
+                                                    }
+                                                }
+                                                reload_cast(&inbound, true);
+                                            }
+                                            Err(e) => {
+                                                eprintln!("could not merge: {e:#}")
+                                            }
+                                        }
+                                    }
+                                    Some("new_sheet") if inbound.prep => {
+                                        let Some(name) =
+                                            v.get("name").and_then(|n| n.as_str())
+                                        else {
+                                            continue;
+                                        };
+                                        let dir = inbound
+                                            .script_path
+                                            .parent()
+                                            .unwrap_or(Path::new("."))
+                                            .to_path_buf();
+                                        let taken = inbound.sheets.lock().unwrap().clone();
+                                        match new_sheet(&dir, name, &taken) {
+                                            Ok((id, path)) => {
+                                                inbound
+                                                    .sheet_paths
+                                                    .lock()
+                                                    .unwrap()
+                                                    .insert(id.clone(), path.clone());
+                                                if let Some(meta) = read_sheet_meta(&path, &id)
+                                                {
+                                                    inbound
+                                                        .sheets
+                                                        .lock()
+                                                        .unwrap()
+                                                        .push(meta);
+                                                }
+                                                println!("new cue list: {name}");
+                                                let (cues, list) = reload_cues(&inbound, &id);
+                                                let _ = inbound.tx.send(Update::CuesChanged {
+                                                    sheet: id,
+                                                    cues,
+                                                    list,
+                                                });
+                                            }
+                                            Err(e) => eprintln!("could not make the list: {e:#}"),
+                                        }
+                                    }
+                                    Some("rename_sheet") if inbound.prep => {
+                                        let (Some(id), Some(name)) = (
+                                            v.get("sheet").and_then(|s| s.as_str()),
+                                            v.get("name").and_then(|n| n.as_str()),
+                                        ) else {
+                                            continue;
+                                        };
+                                        let Some(path) =
+                                            inbound.sheet_paths.lock().unwrap().get(id).cloned()
+                                        else {
+                                            continue;
+                                        };
+                                        if let Err(e) =
+                                            rename_sheet(&inbound.store, &path, name)
+                                        {
+                                            eprintln!("could not rename the list: {e:#}");
+                                            continue;
+                                        }
+                                        let (cues, list) = reload_cues(&inbound, id);
+                                        let _ = inbound.tx.send(Update::CuesChanged {
+                                            sheet: id.to_string(),
+                                            cues,
+                                            list,
+                                        });
+                                    }                                        _ => {}
+                                    }
+                                    if matches!(
+                                        kind,
+                                        Some("edit_cast")
+                                            | Some("merge_speaker")
+                                            | Some("new_sheet")
+                                            | Some("rename_sheet")
+                                    ) {
+                                        continue;
+                                    }
+
                                     let Some(i) = v
                                         .get("lineIndex")
                                         .and_then(|i| i.as_u64())
@@ -1652,6 +2049,26 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                             ) {
                                                 Ok(()) => {
                                                     println!("edited line {}: {text}", i + 1);
+                                                    // Naming a speaker declares one.
+                                                    // Anything else leaves a character
+                                                    // that cannot be patched to a mic,
+                                                    // and makes the operator go and
+                                                    // tidy up after themselves.
+                                                    if let Some(c) = &character {
+                                                        match declare_if_new(
+                                                            &inbound.store,
+                                                            &inbound.script_path,
+                                                            c,
+                                                        ) {
+                                                            Ok(true) => {
+                                                                reload_cast(&inbound, false)
+                                                            }
+                                                            Ok(false) => {}
+                                                            Err(e) => eprintln!(
+                                                                "could not declare {c}: {e:#}"
+                                                            ),
+                                                        }
+                                                    }
                                                     let mut lines =
                                                         inbound.lines.lock().unwrap();
                                                     let l = &mut lines[i];

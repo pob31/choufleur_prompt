@@ -35,7 +35,7 @@ use crate::formats::SegmentRecord;
 ///
 /// So the page carries the version it was written against and says so on screen when
 /// they disagree. A silent no-op is the one failure mode worth spending a field on.
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// One script line, as the client needs it. Sent once, in bulk.
 #[derive(Clone, Serialize)]
@@ -281,7 +281,18 @@ pub enum Update {
     /// correction that has to be possible *during* a show — the moment you notice a
     /// line is wrong is exactly the moment you cannot stop to retype it — and because
     /// it changes no text, so nothing has to be re-read or re-matched.
-    LineFlagged {
+
+    /// The cast changed — declared, renamed, grouped or merged.
+    ///
+    /// A merge rewrites every line that named the old speaker, so `reload` asks clients
+    /// to re-read the script rather than the server sending one edit per line. It is a
+    /// prep-time operation on a page that is not following anything, and a quarter of a
+    /// megabyte is cheaper than nine hundred messages.
+    CastChanged {
+        cast: Vec<CharacterView>,
+        reload: bool,
+    },
+   LineFlagged {
         line_index: usize,
         flags: Vec<choufleur_core::script::Flag>,
     },
@@ -313,7 +324,25 @@ pub enum Update {
     RunState { t_audio: f64, running: bool },
 }
 
-/// What the HTTP side needs to answer a new connection.
+
+/// The cast, as the cast panel needs it.
+///
+/// A character is *declared* when it appears here. That is not bookkeeping: only a
+/// declared character can be put on a microphone, and only a declared one can be named
+/// in another's `members`. A line whose speaker is not in this list still shows and
+/// still matches — it simply cannot be patched, which is why Hécube runs perfectly well
+/// with 81 lines pointing at 23 speakers it never declares.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CharacterView {
+    pub id: String,
+    pub name: String,
+    /// The characters this one is made of, when it is a group. See
+    /// [`choufleur_core::script::Character::members`].
+    pub members: Vec<String>,
+}
+
+// What the HTTP side needs to answer a new connection.
 pub struct LiveState {
     pub title: Option<String>,
     /// Mutable because the operator can correct them from the page.
@@ -357,9 +386,14 @@ pub struct LiveState {
     /// Where each list's edits are written, by sheet id. Resolved per edit rather than
     /// held as one path: writing a lighting correction into the sound sheet is this
     /// feature's characteristic failure.
-    pub sheet_paths: std::collections::HashMap<String, std::path::PathBuf>,
+    pub sheet_paths: Mutex<std::collections::HashMap<String, std::path::PathBuf>>,
     /// Every cue list this show carries, each owning its own file. See [`CueSheet`].
     pub sheets: Mutex<Vec<CueSheet>>,
+    /// The declared cast. See [`CharacterView`].
+    pub cast: Mutex<Vec<CharacterView>>,
+    /// The microphones this show has, as the manifest describes them — index, the note
+    /// the corpus author left, and the file. What the cast panel offers to assign.
+    pub channels: Vec<serde_json::Value>,
     /// The one gate every write to this show passes through.
     ///
     /// Held here rather than reached for per-write because its whole value is being
@@ -529,7 +563,9 @@ mod tests {
             audible_until: Mutex::new(f64::INFINITY),
             steer: Mutex::new(Vec::new()),
             cues: Mutex::new(Vec::new()),
-            sheet_paths: std::collections::HashMap::new(),
+            sheet_paths: Mutex::new(std::collections::HashMap::new()),
+            cast: Mutex::new(Vec::new()),
+            channels: Vec::new(),
             store: choufleur_server::Store::new(".", Vec::new()),
             sheets: Mutex::new(Vec::new()),
             prep: false,
