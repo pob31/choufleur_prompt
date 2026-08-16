@@ -209,10 +209,51 @@ pub fn script(path: &Path, source: Option<&str>) -> Result<Check> {
         }
     }
 
+    thin_characters(&mut check, lines, &declared);
+
     if let Some(src) = source {
         coverage(&mut check, lines, src);
     }
     Ok(check)
+}
+
+/// Characters holding almost nothing, which is how a mis-parse looks from here.
+///
+/// *Lazzi* is a two-hander — Philippe and Vincent, five hundred lines each — and its
+/// prepared script declares seven characters. The other five are manners that became
+/// people: `PHILIPPE(DISPARAISSANT)`, `VINCENT-(VOIX-OFF)`, `VOIX-DE-PHILIPPE`. Each
+/// holds one or two lines, and each of those lines is now attributed to somebody who
+/// cannot be patched to a microphone.
+///
+/// The importer already reports this on the scripts it makes itself; a script that
+/// arrived some other way — from a preparer, from an AI, from last year — deserves the
+/// same question. Reported and never merged: whether `VOIX-DE-PHILIPPE` is Philippe
+/// off-stage or a separate voice is a fact about the production.
+fn thin_characters(check: &mut Check, lines: &[serde_json::Value], declared: &HashSet<&str>) {
+    // Meaningless on a short script, where everybody has one line.
+    if lines.len() < 40 {
+        return;
+    }
+    let mut held: HashMap<&str, usize> = declared.iter().map(|d| (*d, 0)).collect();
+    for l in lines {
+        if let Some(c) = l.get("character").and_then(|v| v.as_str()) {
+            if let Some(n) = held.get_mut(c) {
+                *n += 1;
+            }
+        }
+    }
+    let mut thin: Vec<(&str, usize)> = held.into_iter().filter(|(_, n)| *n <= 2).collect();
+    thin.sort();
+    for (id, n) in thin {
+        check.add(
+            Severity::Warn,
+            format!(
+                "`{id}` has {n} line{} — often a manner or a mode that became a person",
+                if n == 1 { "" } else { "s" }
+            ),
+            None,
+        );
+    }
 }
 
 /// The question that matters: is all the source text still here?
