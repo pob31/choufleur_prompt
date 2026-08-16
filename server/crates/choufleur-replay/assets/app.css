@@ -1,0 +1,104 @@
+/* The look, shared by every page.
+ *
+ * Extracted from `live.html`, where the same pill button was declared thirteen times
+ * and the same popover shell twice. That was survivable while there was one page. It
+ * stopped being survivable at the second, and the two copies had already drifted — the
+ * two-step confirm auto-disarms after four seconds in one place and stays armed for ever
+ * in the other.
+ *
+ * Dark, and not theme-aware, for the reason the operator page gives: this is read in a
+ * booth, at night, next to a lit desk, and a light theme is a light source pointed at
+ * the person using it. Prep happens at the same desk, often hours before doors, so the
+ * admin screens use the same palette rather than making the eye cross between two.
+ *
+ * **This file must not assume it owns the viewport.** `live.html` turns off body
+ * scrolling and keys its base font to `2.1vh`, both correct for a page that never
+ * scrolls and both wrong for a list of shows. Layout belongs to the page.
+ */
+
+:root {
+  --bg: #0e0f12;
+  --fg: #e8e6e3;
+  --dim: #6a6f78;
+  --dimmer: #43474e;
+  --edge: #1b1d22;
+  --now: #ffd479;      /* the current line: warm, like a work light */
+  --lost: #ff6b5e;
+  --speaker: #7fb2d9;
+  --flag: #b48ee8;     /* a bookmark: distinct from the current line and from lost */
+
+  /* Surfaces, which were literals scattered through the original: a card, a well an
+     input sits in, and a panel that floats above both. */
+  --card: #16181d;
+  --well: #0f1114;
+  --panel: #14171c;
+
+  --ui: 400 .84em/1.45 ui-sans-serif, system-ui, sans-serif;
+  --label: 600 .64em/1.4 ui-sans-serif, system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+/* Controls are sans; running text is serif. The division is the original's and it is
+   right: the script is read, and everything else is operated. */
+.pill {
+  border: 1px solid var(--dimmer); background: none; color: var(--dim);
+  border-radius: 999px; padding: .3em .9em; cursor: pointer; font: var(--ui);
+}
+.pill:hover { border-color: var(--dim); color: var(--fg); }
+.pill.on { border-color: var(--now); color: var(--now); }
+.pill.go { border-color: var(--now); color: var(--now); }
+.pill:disabled { opacity: .4; cursor: default; }
+.pill:disabled:hover { border-color: var(--dimmer); color: var(--dim); }
+
+/* Armed: the second half of a two-step destructive button. Set by `confirmButton`. */
+.pill.armed { border-color: var(--lost); color: var(--lost); }
+.pill.danger:hover { border-color: var(--lost); color: var(--lost); }
+
+.field {
+  display: block; width: 100%; background: var(--card); color: var(--fg);
+  border: 1px solid var(--dimmer); border-radius: 4px; padding: .35em .5em;
+  font: inherit;
+}
+.field:focus { outline: none; border-color: var(--now); }
+textarea.field { resize: vertical; line-height: 1.5; min-height: 2.4em; }
+.field.small { background: var(--well); border-radius: 3px; padding: .25em .45em;
+               font: var(--ui); }
+
+.panel {
+  padding: .8em .9em; border-radius: 5px;
+  background: var(--panel); border: 1px solid var(--edge);
+}
+.panel.floating {
+  position: absolute; z-index: 7; max-height: 60vh; overflow-y: auto;
+  box-shadow: 0 10px 40px rgba(0,0,0,.6);
+}
+
+/* Small caps heading, used above every panel and section. */
+.label {
+  margin: 0 0 .6em; font: var(--label);
+  letter-spacing: .12em; text-transform: uppercase; color: var(--dimmer);
+}
+
+.swatches { display: flex; gap: .18em; }
+.swatches button {
+  width: 1.05em; height: 1.05em; border-radius: 50%; border: 1px solid transparent;
+  cursor: pointer; padding: 0;
+}
+.swatches button.on { border-color: var(--fg); }
+
+.note { font: var(--ui); color: var(--dimmer); }
+.bad { color: var(--lost); }
+.good { color: var(--now); }
+
+/* A report the server rendered — an import summary, a check result. Kept monospaced and
+   preformatted because `Report` and `Check` already have `Display` impls written to be
+   read as text, and reformatting them in the browser would be a second place to get
+   the wording wrong. */
+.report {
+  white-space: pre-wrap; font: 400 .78em/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--dim); background: var(--well); border: 1px solid var(--edge);
+  border-radius: 4px; padding: .6em .7em; margin: .5em 0 0; max-height: 18em;
+  overflow-y: auto;
+}
+.report.bad { color: var(--lost); border-color: var(--lost); }

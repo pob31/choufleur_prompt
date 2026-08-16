@@ -4,22 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Choufleur — live</title>
+<link rel="stylesheet" href="/app.css">
 <style>
-  /*
-    Dark by default and not theme-aware: this is read in a booth, at night, next to
-    a lit desk. A light theme here would be a light source pointed at the operator.
-  */
-  :root {
-    --bg: #0e0f12;
-    --fg: #e8e6e3;
-    --dim: #6a6f78;
-    --dimmer: #43474e;
-    --edge: #1b1d22;
-    --now: #ffd479;      /* the current line: warm, like a work light */
-    --lost: #ff6b5e;
-    --speaker: #7fb2d9;
-    --flag: #b48ee8;     /* a bookmark: distinct from the current line and from lost */
-  }
   * { box-sizing: border-box; }
   html, body {
     margin: 0; height: 100%; background: var(--bg); color: var(--fg);

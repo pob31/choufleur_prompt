@@ -1,6 +1,8 @@
 //! The replay harness as a library, so integration tests (and, later, the server's
 //! own tooling) can drive the same code paths the CLI does.
 
+#[macro_use]
+pub mod assets;
 pub mod clock;
 pub mod cmd;
 pub mod engine;

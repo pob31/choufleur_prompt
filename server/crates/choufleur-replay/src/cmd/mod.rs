@@ -2,6 +2,7 @@ pub mod eval;
 pub mod make_fixture;
 pub mod serve;
 pub mod show;
+pub mod ui;
 pub mod track;
 pub mod transcribe;
 pub mod verify;

@@ -1,0 +1,335 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Choufleur — Shows</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  /* Layout belongs to the page. `app.css` deliberately says nothing about the viewport,
+     because the operator view turns body scrolling off and this one needs it on. */
+  html, body { margin: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font: 400 16px/1.55 ui-serif, Georgia, "Iowan Old Style", serif;
+    padding: 2.2em 0 6em;
+  }
+  main { max-width: 46em; margin: 0 auto; padding: 0 1.6em; }
+
+  header { display: flex; align-items: baseline; gap: .8em; margin-bottom: .4em; }
+  h1 { margin: 0; font: 600 1.2em/1.3 ui-sans-serif, system-ui, sans-serif;
+       letter-spacing: .04em; }
+  header .where { font: var(--ui); color: var(--dimmer); margin-left: auto;
+                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .bar { display: flex; gap: .5em; margin: 1.4em 0 1.2em; }
+
+  /* One row per show. The whole row is the target: clicking it opens the detail, which
+     is where anything destructive lives — a restore should take two deliberate acts. */
+  .show {
+    border: 1px solid var(--edge); border-radius: 5px; background: var(--card);
+    margin-bottom: .6em; overflow: hidden;
+  }
+  .show > .head {
+    display: flex; align-items: baseline; gap: .7em; padding: .75em .9em; cursor: pointer;
+  }
+  .show > .head:hover { background: #1a1d23; }
+  .show .name { font: 600 1em/1.3 ui-sans-serif, system-ui, sans-serif; }
+  .show .title { font: var(--ui); color: var(--speaker); }
+  .show .facts { font: var(--ui); color: var(--dimmer); margin-left: auto;
+                 white-space: nowrap; }
+  .show[data-open="yes"] { border-color: var(--now); }
+  .show .live { font: var(--label); letter-spacing: .12em; text-transform: uppercase;
+                color: var(--now); }
+
+  .detail { display: none; border-top: 1px solid var(--edge); padding: .8em .9em; }
+  .show[data-show="yes"] .detail { display: block; }
+  .detail .acts { display: flex; gap: .5em; flex-wrap: wrap; align-items: center; }
+
+  .versions { margin-top: .9em; }
+  .version {
+    display: flex; align-items: baseline; gap: .6em; padding: .3em 0;
+    border-top: 1px solid var(--edge); font: var(--ui);
+  }
+  .version .when { color: var(--dim); font-variant-numeric: tabular-nums; }
+  .version .files { color: var(--dimmer); overflow: hidden; text-overflow: ellipsis;
+                    white-space: nowrap; }
+  .version .pill { margin-left: auto; padding: .1em .6em; font-size: .78em; }
+
+  dialog {
+    background: var(--panel); color: var(--fg); border: 1px solid var(--edge);
+    border-radius: 6px; padding: 1.1em 1.2em; width: min(38em, 92vw);
+    box-shadow: 0 20px 60px rgba(0,0,0,.7);
+  }
+  dialog::backdrop { background: rgba(0,0,0,.55); }
+  dialog h2 { margin: 0 0 .8em; font: 600 .95em/1.3 ui-sans-serif, system-ui, sans-serif; }
+  dialog label { display: block; font: var(--label); letter-spacing: .12em;
+                 text-transform: uppercase; color: var(--dimmer); margin: .8em 0 .3em; }
+  dialog .foot { display: flex; gap: .5em; margin-top: 1em; }
+  dialog .foot .go { margin-left: auto; }
+  textarea.field { min-height: 9em; font: 400 .82em/1.5 ui-monospace, Menlo, monospace; }
+
+  .empty { color: var(--dimmer); font: var(--ui); padding: 2em 0; text-align: center; }
+</style>
+
+<main>
+  <header>
+    <h1>Choufleur</h1>
+    <span class="where" id="where"></span>
+  </header>
+
+  <div class="bar">
+    <button class="pill" id="new">+ New show</button>
+    <button class="pill" id="import">Import…</button>
+    <button class="pill" id="refresh">Refresh</button>
+  </div>
+
+  <div id="list"></div>
+</main>
+
+<dialog id="newdlg">
+  <h2>New show</h2>
+  <label for="newname">Name</label>
+  <input class="field" id="newname" placeholder="Lovedoll">
+  <label for="newtext">Script — paste it here, or leave empty and add it later</label>
+  <textarea class="field" id="newtext" placeholder="NADIA : Bonjour.&#10;(Elle sort.)"></textarea>
+  <p class="note">Nothing is dropped: every paragraph becomes a line, and anything the
+     importer cannot place stays visible on the page to be corrected.</p>
+  <div class="foot">
+    <button class="pill" value="cancel" id="newcancel">Cancel</button>
+    <button class="pill go" id="newgo">Create</button>
+  </div>
+  <pre class="report" id="newreport" hidden></pre>
+</dialog>
+
+<dialog id="impdlg">
+  <h2>Import a show</h2>
+  <label for="imppath">Path to its manifest.json</label>
+  <input class="field" id="imppath" placeholder="/…/HecubePasHecube/manifest-prepped16.json">
+  <label for="impname">Call it (optional)</label>
+  <input class="field" id="impname" placeholder="Hécube pas Hécube">
+  <p class="note">The show is copied into the library. The original is never written to,
+     and audio is referenced where it stands rather than duplicated.</p>
+  <div class="foot">
+    <button class="pill" id="impcancel">Cancel</button>
+    <button class="pill go" id="impgo">Import</button>
+  </div>
+  <pre class="report" id="impreport" hidden></pre>
+</dialog>
+
+<script src="/app.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const $list = $('list');
+  let shows = [];
+  let open = null;              // { name, port } — the show server this UI started
+  const expanded = new Set();   // which rows are showing their detail
+
+  async function load() {
+    const [s, st] = await Promise.all([App.get('/api/shows'), App.get('/api/state')]);
+    shows = s;
+    open = st.open;
+    $('where').textContent = st.root;
+    paint();
+  }
+
+  function paint() {
+    $list.textContent = '';
+    if (!shows.length) {
+      const p = document.createElement('p');
+      p.className = 'empty';
+      p.textContent = 'No shows yet. Make one, or import an existing folder.';
+      $list.appendChild(p);
+      return;
+    }
+    for (const s of shows) $list.appendChild(row(s));
+  }
+
+  function row(s) {
+    const el = document.createElement('div');
+    el.className = 'show';
+    const isOpen = open?.name === s.name;
+    if (isOpen) el.dataset.open = 'yes';
+    if (expanded.has(s.name)) el.dataset.show = 'yes';
+
+    const head = document.createElement('div');
+    head.className = 'head';
+    head.onclick = () => {
+      expanded.has(s.name) ? expanded.delete(s.name) : expanded.add(s.name);
+      paint();
+      if (expanded.has(s.name)) loadVersions(s.name);
+    };
+
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = s.name;
+    head.appendChild(name);
+
+    // The title is only worth showing when it says something the folder name does not.
+    if (s.title && s.title !== s.name) {
+      const t = document.createElement('span');
+      t.className = 'title';
+      t.textContent = s.title;
+      head.appendChild(t);
+    }
+    if (isOpen) {
+      const live = document.createElement('span');
+      live.className = 'live';
+      live.textContent = 'open';
+      head.appendChild(live);
+    }
+
+    const facts = document.createElement('span');
+    facts.className = 'facts';
+    facts.textContent = [
+      `${s.lines} lines`,
+      s.sheets.length ? `${s.sheets.length} list${s.sheets.length === 1 ? '' : 's'}` : 'no lists',
+      s.versions ? `${s.versions} version${s.versions === 1 ? '' : 's'}` : null,
+    ].filter(Boolean).join(' · ');
+    head.appendChild(facts);
+    el.appendChild(head);
+
+    const detail = document.createElement('div');
+    detail.className = 'detail';
+    detail.appendChild(actions(s, isOpen));
+    const v = document.createElement('div');
+    v.className = 'versions';
+    v.id = `v-${App.slug(s.name)}`;
+    detail.appendChild(v);
+    const rep = document.createElement('pre');
+    rep.className = 'report';
+    rep.id = `r-${App.slug(s.name)}`;
+    rep.hidden = true;
+    detail.appendChild(rep);
+    el.appendChild(detail);
+    return el;
+  }
+
+  function actions(s, isOpen) {
+    const acts = document.createElement('div');
+    acts.className = 'acts';
+
+    const openBtn = document.createElement('button');
+    openBtn.className = 'pill go';
+    openBtn.textContent = isOpen ? 'Open in a tab' : 'Open';
+    openBtn.onclick = async () => {
+      try {
+        const r = isOpen ? open : await App.post(`/api/shows/${encodeURIComponent(s.name)}/open`, {});
+        // The show server takes a moment to read the script before it will answer.
+        setTimeout(() => window.open(`http://${location.hostname}:${r.port}/`, '_blank'), isOpen ? 0 : 900);
+        await load();
+      } catch (e) { say(s, e.message, true); }
+    };
+    acts.appendChild(openBtn);
+
+    if (isOpen) {
+      const stop = document.createElement('button');
+      stop.className = 'pill';
+      stop.textContent = 'Close';
+      stop.onclick = async () => {
+        try { await App.post('/api/close', {}); await load(); }
+        catch (e) { say(s, e.message, true); }
+      };
+      acts.appendChild(stop);
+    }
+
+    const check = document.createElement('button');
+    check.className = 'pill';
+    check.textContent = 'Check';
+    check.onclick = async () => {
+      try {
+        const r = await App.post(`/api/shows/${encodeURIComponent(s.name)}/check`, {});
+        say(s, r.text, !r.ok);
+      } catch (e) { say(s, e.message, true); }
+    };
+    acts.appendChild(check);
+    return acts;
+  }
+
+  function say(s, text, bad) {
+    const el = document.getElementById(`r-${App.slug(s.name)}`);
+    if (!el) return;
+    el.hidden = false;
+    el.textContent = text;
+    el.classList.toggle('bad', !!bad);
+  }
+
+  async function loadVersions(name) {
+    const box = document.getElementById(`v-${App.slug(name)}`);
+    if (!box) return;
+    let list;
+    try { list = await App.get(`/api/shows/${encodeURIComponent(name)}/versions`); }
+    catch { return; }
+    box.textContent = '';
+    const h = document.createElement('h4');
+    h.className = 'label';
+    h.textContent = list.length ? 'Saved before an edit' : 'No saved versions yet';
+    box.appendChild(h);
+
+    for (const v of list) {
+      const r = document.createElement('div');
+      r.className = 'version';
+      const when = document.createElement('span');
+      when.className = 'when';
+      when.textContent = v.when;
+      const files = document.createElement('span');
+      files.className = 'files';
+      files.textContent = v.files.join(', ');
+      const btn = document.createElement('button');
+      btn.className = 'pill danger';
+      // Two steps, because this replaces the script somebody may have spent the evening
+      // on. The state before the restore is saved first, so it is undoable — but that
+      // is a thing to learn afterwards, not to rely on beforehand.
+      App.confirmButton(btn, {
+        label: 'Restore',
+        confirm: 'Restore this?',
+        onConfirm: async () => {
+          try {
+            const res = await App.post(`/api/shows/${encodeURIComponent(name)}/restore`,
+                                       { stamp: v.stamp });
+            await load();
+            expanded.add(name);
+            paint();
+            loadVersions(name);
+            say({ name }, res.text, false);
+          } catch (e) { say({ name }, e.message, true); }
+        },
+      });
+      r.append(when, files, btn);
+      box.appendChild(r);
+    }
+  }
+
+  // ---- dialogs
+
+  function wire(dlg, openBtn, goBtn, cancelBtn, report, run) {
+    openBtn.onclick = () => { report.hidden = true; dlg.showModal(); };
+    cancelBtn.onclick = () => dlg.close();
+    goBtn.onclick = async () => {
+      goBtn.disabled = true;
+      try {
+        const r = await run();
+        report.hidden = false;
+        report.classList.toggle('bad', !r.ok);
+        report.textContent = r.text;
+        await load();
+      } catch (e) {
+        report.hidden = false;
+        report.classList.add('bad');
+        report.textContent = e.message;
+      } finally {
+        goBtn.disabled = false;
+      }
+    };
+  }
+
+  wire($('newdlg'), $('new'), $('newgo'), $('newcancel'), $('newreport'), () =>
+    App.post('/api/shows', { name: $('newname').value, text: $('newtext').value }));
+
+  wire($('impdlg'), $('import'), $('impgo'), $('impcancel'), $('impreport'), () =>
+    App.post('/api/import', {
+      manifest: $('imppath').value.trim(),
+      name: $('impname').value.trim() || null,
+    }));
+
+  $('refresh').onclick = load;
+  load();
+})();
+</script>

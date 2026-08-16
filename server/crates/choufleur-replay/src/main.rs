@@ -176,6 +176,18 @@ enum Command {
         library: Option<PathBuf>,
     },
 
+    /// The server UI: the library, in a window.
+    ///
+    /// Serves the admin screens and holds no show. Opening one from it starts a show
+    /// server as a child on the next port up.
+    Ui {
+        /// The library directory.
+        #[arg(long)]
+        library: Option<PathBuf>,
+        #[arg(long, default_value_t = 8080)]
+        port: u16,
+    },
+
     /// Check a corpus: files present, hashes intact, script and ground truth agree.
     Verify {
         /// Corpus directory (containing manifest.json) or the manifest itself.
@@ -331,6 +343,9 @@ enum Command {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::Ui { library, port } => {
+            cmd::ui::run(library.unwrap_or_else(cmd::show::default_root), port)
+        }
         Command::Show { what, library } => {
             let root = library.unwrap_or_else(cmd::show::default_root);
             match what {

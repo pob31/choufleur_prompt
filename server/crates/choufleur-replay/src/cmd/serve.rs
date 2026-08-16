@@ -37,23 +37,6 @@ use choufleur_server::Store;
 use crate::manifest::Corpus;
 use crate::monitor::Monitor;
 
-/// Where the page is read from while iterating, if it is present.
-///
-/// Compiled-in remains the fallback so a built binary is still self-contained.
-///
-/// Resolved against the crate directory at compile time, **not** against the working
-/// directory. It was a repo-relative path, which meant it only resolved when the
-/// binary happened to be run from the repository root — and from anywhere else the
-/// lookup quietly failed and the page fell back to `include_str!`. That is worse than
-/// no disk-serving at all: edits to the page appear to do nothing until the next
-/// `cargo build` bakes them in, so a fix and a failed fix look identical. It cost an
-/// afternoon here, twice, and the second time the operator was the one reporting that
-/// a button did not work.
-const ASSET_PATH: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/assets/live.html"
-);
-
 /// A colour name to something a browser can paint.
 ///
 /// Only the names a marked-up script actually uses. An unknown name is passed through
@@ -1230,7 +1213,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
     rt.block_on(async move {
         use axum::extract::ws::{Message, WebSocketUpgrade};
         use axum::extract::State;
-        use axum::response::{Html, IntoResponse};
+        use axum::response::IntoResponse;
         use axum::routing::get;
 
         let app = axum::Router::new()
@@ -1242,17 +1225,16 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
             // in. `include_str!` bakes the page at build time, so anyone editing it —
             // including the operator — saw nothing change until the next cargo build,
             // which is indistinguishable from an edit that did not take.
+            .route("/", crate::asset_route!("live.html", "text/html; charset=utf-8"))
+            // The operator page and the admin screens share one palette and one set of
+            // controls, so both servers serve the same two files.
             .route(
-                "/",
-                get(|| async {
-                    let live = std::path::Path::new(ASSET_PATH);
-                    let body = std::fs::read_to_string(live)
-                        .unwrap_or_else(|_| include_str!("../../assets/live.html").to_string());
-                    (
-                        [(axum::http::header::CACHE_CONTROL, "no-store, must-revalidate")],
-                        Html(body),
-                    )
-                }),
+                "/app.css",
+                crate::asset_route!("app.css", "text/css; charset=utf-8"),
+            )
+            .route(
+                "/app.js",
+                crate::asset_route!("app.js", "text/javascript; charset=utf-8"),
             )
             .route(
                 "/script.json",
