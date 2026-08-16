@@ -3245,6 +3245,11 @@
           paintCategoryRules();
           paintPicker();
         }
+        // The footer chips count cues per target, so they go stale on every cue made,
+        // retyped or filed under a different target — which is most of what prep is.
+        // Repainted outside the `m.list` branch because a cue can change category
+        // without the list's own vocabulary changing at all.
+        paintFilters();
         renderRail();
         // A cue added from a line opens straight away: an empty card in the rail is
         // not a cue, it is a promise to type one, and it should not be possible to
