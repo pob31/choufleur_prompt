@@ -151,6 +151,19 @@ struct OpenReq {
     /// audio is a separate decision somebody makes deliberately.
     #[serde(default = "yes")]
     prep: bool,
+    /// Listen to the room.
+    ///
+    /// The other half of that deliberate decision, and until it existed the decision
+    /// could not be made at all: the screen could open a show for preparation and
+    /// nothing else, so the tracker was unreachable from the app that is the only
+    /// thing macOS will give a microphone to.
+    ///
+    /// Replaying a recording — a run with neither flag — stays a command-line matter.
+    /// The way to watch the tracker against a recording is to play it into the patch,
+    /// which exercises capture, resampling and the venue map rather than going around
+    /// them, and needs nothing here.
+    #[serde(default)]
+    live: bool,
 }
 
 fn yes() -> bool {
@@ -340,12 +353,17 @@ async fn open(
     // all this end sees is a readiness check that times out after twelve seconds and
     // says the script may not load, which is both wrong and slow. Prep needs no
     // models at all and is left alone.
-    if !req.prep && !crate::cmd::models::ready(&models_dir(&ui)) {
-        return Err(Fail(anyhow::anyhow!(
-            "the recogniser's models are not here yet — download them from the panel at \
-             the top of this screen, or run `choufleur-replay models fetch`. Opening for \
-             prep works without them."
-        )));
+    if !req.prep {
+        if !crate::cmd::models::ready(&models_dir(&ui)) {
+            return Err(Fail(anyhow::anyhow!(
+                "the recogniser's models are not here yet — download them from the panel at \
+                 the top of this screen, or run `choufleur-replay models fetch`. Opening for \
+                 prep works without them."
+            )));
+        }
+        if req.live {
+            check_the_patch(&ui.root)?;
+        }
     }
     // A port nothing else is on.
     //
@@ -383,6 +401,12 @@ async fn open(
             .env("CHOUFLEUR_LIBRARY", &ui.root);
         if req.prep {
             cmd.arg("--prep");
+        }
+        if req.live {
+            // The monitor is already refused alongside this (see `main.rs`): playing a
+            // recording into the room while listening to the room is neither useful nor
+            // safe.
+            cmd.arg("--live");
         }
         let mut child = cmd
             .spawn()
@@ -606,6 +630,184 @@ async fn reveal_models(State(ui): State<Arc<Ui>>) -> Reply<Json<Report>> {
     }))
 }
 
+/// Ask the show server something, on the operator's behalf.
+///
+/// The join page runs on this port and the show server is on another, which makes a
+/// browser fetch between them cross-origin. Rather than opening the show server up to
+/// requests from anywhere, this end asks — it is a process on the same machine that
+/// already knows where its own child is.
+async fn ask_show_server(port: u16, path: &str) -> Option<serde_json::Value> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut sock = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        tokio::net::TcpStream::connect(("127.0.0.1", port)),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    // HTTP/1.0 with no keep-alive: the body ends when the connection closes, so there
+    // is no length to parse and nothing to get wrong.
+    let req = format!("GET {path} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    sock.write_all(req.as_bytes()).await.ok()?;
+    let mut raw = Vec::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        // Bounded: a reply this size that keeps arriving is a server answering a
+        // different question.
+        sock.take(256 * 1024).read_to_end(&mut raw),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    let text = String::from_utf8_lossy(&raw);
+    let (head, body) = text.split_once("\r\n\r\n")?;
+    if !head.lines().next()?.contains(" 200") {
+        return None;
+    }
+    serde_json::from_str(body.trim()).ok()
+}
+
+/// The cue lists an operator can take, and which show they belong to.
+///
+/// Answers even when nothing is open — a tablet is as often opened before the show is
+/// started as after, and "no show yet" is a better page than an error.
+async fn lists(State(ui): State<Arc<Ui>>) -> Json<serde_json::Value> {
+    let open = ui
+        .show
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|r| (r.name.clone(), r.port));
+    let Some((name, port)) = open else {
+        return Json(serde_json::json!({ "show": null, "lists": [] }));
+    };
+    let sheets = ask_show_server(port, "/sheets.json")
+        .await
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
+    let lists: Vec<serde_json::Value> = sheets
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "id": s.get("id").and_then(|v| v.as_str()).unwrap_or_default(),
+                "name": s.get("name").and_then(|v| v.as_str()).unwrap_or_default(),
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "show": name, "port": port, "lists": lists }))
+}
+
+/// `/list/<id>` — the address an operator keeps.
+///
+/// It lives on this port, which never moves, and points at whichever show server is
+/// open now. A bookmark straight to the show server would carry a port that is chosen
+/// at open time and slides upward when something else is holding it, so it would work
+/// until the one night it did not.
+///
+/// The host comes from the request rather than from anything this end knows, because
+/// the operator typed an address that reaches this machine and the redirect has to
+/// keep reaching it — `localhost` would send a tablet to itself.
+async fn to_list(
+    State(ui): State<Arc<Ui>>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    let open = ui.show.lock().unwrap().as_ref().map(|r| r.port);
+    let Some(port) = open else {
+        // Nothing to show yet. The join page says so, and keeps looking.
+        return axum::response::Redirect::to("/").into_response();
+    };
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .map(without_port)
+        .filter(|h| !h.is_empty())
+        .unwrap_or("localhost")
+        .to_string();
+    // An unknown id is not corrected here: the show page falls back to a sensible list
+    // and says so, which is better than this end guessing what was meant.
+    let url = format!(
+        "http://{host}:{port}/?list={}",
+        urlencode(&id)
+    );
+    axum::response::Redirect::to(&url).into_response()
+}
+
+/// A `Host` header without its port.
+///
+/// Only a trailing `:digits` is removed. Splitting on the last colon would eat half of
+/// an IPv6 literal — `[::1]` is a host, `[::1]:8080` is a host and a port — and the
+/// show would be sent to an address that does not exist.
+fn without_port(host: &str) -> &str {
+    match host.rsplit_once(':') {
+        Some((head, tail)) if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) => head,
+        _ => host,
+    }
+}
+
+/// Percent-encode the few characters a sheet id could carry into a query string.
+///
+/// Ids are file stems, so in practice they are already safe; this is for the day one
+/// is not, rather than a reason to add a dependency.
+fn urlencode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'*' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// Is there a room to listen to?
+///
+/// Asked before the show server is started rather than after, for the same reason the
+/// models are: a capture that cannot open kills the child on its engine thread, and
+/// this end only ever sees a readiness check time out after twelve seconds and blame
+/// the script. The two things that go wrong are an empty patch and an interface that
+/// is not plugged in tonight, and neither is the script's fault.
+///
+/// The device is matched the way `capture::build` matches it — lowercased, by
+/// substring — because a check that disagreed with the thing it is checking for would
+/// be worse than no check at all.
+fn check_the_patch(library: &std::path::Path) -> Result<()> {
+    let venue = crate::audio::load(library);
+    if venue.channels.is_empty() {
+        anyhow::bail!(
+            "nothing is patched yet — open the show for prep, then set an input against \
+             a channel in the audio panel. That patch belongs to this machine and is \
+             kept for every show."
+        );
+    }
+    if venue.device.trim().is_empty() {
+        // No name means the default input, which is whatever the machine says it is.
+        return Ok(());
+    }
+    let want = venue.device.to_lowercase();
+    let inputs = crate::audio::inputs();
+    if inputs.iter().any(|i| i.name.to_lowercase().contains(&want)) {
+        return Ok(());
+    }
+    let offered = if inputs.is_empty() {
+        "this machine is offering no inputs at all".to_string()
+    } else {
+        format!(
+            "what is here: {}",
+            inputs
+                .iter()
+                .map(|i| i.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    anyhow::bail!(
+        "the patch is set to {:?}, which is not connected — {offered}. Plug it in, or \
+         open the show for prep and pick another device in the audio panel.",
+        venue.device
+    )
+}
+
 /// The models folder for this library — `<library>/models`, honouring an explicit
 /// `$CHOUFLEUR_MODELS` so a machine that keeps them elsewhere is not contradicted.
 fn models_dir(ui: &Ui) -> PathBuf {
@@ -653,7 +855,19 @@ pub fn run(root: PathBuf, port: u16) -> Result<()> {
     }
 
     let app = axum::Router::new()
-        .route("/", asset_route!("shows.html", "text/html; charset=utf-8"))
+        // The root belongs to the operators.
+        //
+        // It is the address everyone is given — the one printed on a card taped to the
+        // desk — so it answers with the question they have: which list are you? The
+        // library, which can create shows, restore snapshots and close the running one,
+        // used to be what answered here, on the obvious port, to everyone on the venue's
+        // network. It now lives at `/admin`. That is not a lock, and nothing here
+        // pretends otherwise; it is the difference between a control being tucked away
+        // and a control being the first thing a curious tablet finds.
+        .route("/", asset_route!("join.html", "text/html; charset=utf-8"))
+        .route("/admin", asset_route!("shows.html", "text/html; charset=utf-8"))
+        .route("/api/lists", get(lists))
+        .route("/list/{id}", get(to_list))
         .route("/app.css", asset_route!("app.css", "text/css; charset=utf-8"))
         .route("/app.js", asset_route!("app.js", "text/javascript; charset=utf-8"))
         .route("/api/state", get(state))
@@ -729,5 +943,33 @@ mod tests {
         assert_eq!(readable("2026-08-16T21-04-11-2"), "2026-08-16 21:04");
         assert_eq!(readable("nonsense"), "nonsense");
         assert_eq!(readable("2026-08-16T"), "2026-08-16T");
+    }
+
+    #[test]
+    fn a_redirect_keeps_the_address_the_operator_typed() {
+        // The tablet reached this machine by one of several names. Whichever it used
+        // has to survive into the redirect: `localhost` would send it to itself.
+        assert_eq!(without_port("192.168.1.40:8080"), "192.168.1.40");
+        assert_eq!(without_port("choufleur.local:8080"), "choufleur.local");
+        // No port at all — the default, and nothing to strip.
+        assert_eq!(without_port("choufleur.local"), "choufleur.local");
+        // Splitting on the last colon would have eaten half of this.
+        assert_eq!(without_port("[::1]:8080"), "[::1]");
+        assert_eq!(without_port("[::1]"), "[::1]");
+        // Not a port.
+        assert_eq!(without_port("host:"), "host:");
+    }
+
+    #[test]
+    fn a_sheet_id_survives_being_put_in_a_url() {
+        // What ids actually look like: file stems.
+        assert_eq!(urlencode("cues-conduite-lumiere"), "cues-conduite-lumiere");
+        // The stage manager's everything-at-once view, which must not be escaped into
+        // something the page does not recognise.
+        assert_eq!(urlencode("*"), "*");
+        // And the day somebody names a cue file with a space or an accent.
+        assert_eq!(urlencode("conduite son"), "conduite%20son");
+        assert_eq!(urlencode("lumière"), "lumi%C3%A8re");
+        assert_eq!(urlencode("a&b=c"), "a%26b%3Dc");
     }
 }

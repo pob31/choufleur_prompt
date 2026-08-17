@@ -346,40 +346,73 @@
     const acts = document.createElement('div');
     acts.className = 'acts';
 
-    const openBtn = document.createElement('button');
-    openBtn.className = 'pill go';
-    // Inside the app there is one window and no tabs to open anything in.
-    openBtn.textContent = isOpen && !App.shell ? 'Open in a tab' : 'Open';
-    openBtn.onclick = async () => {
-      // Disabled while it starts, so an impatient second click cannot ask twice.
-      openBtn.disabled = true;
-      openBtn.textContent = isOpen ? 'Opening…' : 'Starting…';
-      try {
-        // The server does not answer until the show server is listening, so there is
-        // nothing to time here — if this resolves, the tab will find something.
-        const r = isOpen ? open : await App.post(`/api/shows/${encodeURIComponent(s.name)}/open`, {});
-        // One window, named, and carrying the show in its URL.
-        //
-        // Every show is served at the same address, so `_blank` on an address the
-        // browser already has open refocuses that tab instead of loading anything —
-        // which is why opening Lovedoll showed Hécube. A named target navigates the
-        // window it already has, and the query makes the address differ so it actually
-        // reloads rather than deciding it is already there.
-        const url = `http://${location.hostname}:${r.port}/?show=${encodeURIComponent(r.name)}`;
-        // In the app, go there. A webview refuses to open a window nobody asked it
-        // for, so `window.open` would return null and the button would look broken;
-        // and one window is what the app is for. The show page carries its own way
-        // back to the library.
-        if (App.shell) { location.assign(url); return; }
-        const w = window.open(url, 'choufleur-show');
-        w?.focus();
-        await load();
-      } catch (e) {
-        openBtn.disabled = false;
-        say(s, e.message, true);
-      }
+    // Two ways to open a show, because they are two different evenings.
+    //
+    // Prepare is a table with no sound card: the script, the cues, no models, nothing
+    // listening. Run is the performance — the recogniser loaded and the room's
+    // microphones open. There used to be one button, it always meant Prepare, and
+    // nothing in the app could reach the tracker at all; the flag existed and no code
+    // path passed it.
+    //
+    // Replaying a recording is deliberately not offered here. Play it into the patch
+    // instead: that goes through capture, the resampler and the venue map rather than
+    // around them, so it tests the thing the show will actually do.
+    const go = (label, body, busy) => {
+      const b = document.createElement('button');
+      b.className = 'pill' + (body.live ? ' go' : '');
+      b.textContent = label;
+      b.onclick = async () => {
+        // Disabled while it starts, so an impatient second click cannot ask twice.
+        for (const other of acts.querySelectorAll('button')) other.disabled = true;
+        b.textContent = busy;
+        try {
+          // The server does not answer until the show server is listening, so there is
+          // nothing to time here — if this resolves, the page will find something.
+          const r = await App.post(`/api/shows/${encodeURIComponent(s.name)}/open`, body);
+          // One window, named, and carrying the show in its URL.
+          //
+          // Every show is served at the same address, so `_blank` on an address the
+          // browser already has open refocuses that tab instead of loading anything —
+          // which is why opening Lovedoll showed Hécube. A named target navigates the
+          // window it already has, and the query makes the address differ so it actually
+          // reloads rather than deciding it is already there.
+          const url = `http://${location.hostname}:${r.port}/?show=${encodeURIComponent(r.name)}`;
+          // In the app, go there. A webview refuses to open a window nobody asked it
+          // for, so `window.open` would return null and the button would look broken;
+          // and one window is what the app is for. The show page carries its own way
+          // back to the library.
+          if (App.shell) { location.assign(url); return; }
+          const w = window.open(url, 'choufleur-show');
+          w?.focus();
+          await load();
+        } catch (e) {
+          for (const other of acts.querySelectorAll('button')) other.disabled = false;
+          b.textContent = label;
+          // The server's own words: which model is missing, which interface is not
+          // plugged in. It knows, and it is talking to the person who can fix it.
+          say(s, e.message, true);
+        }
+      };
+      return b;
     };
-    acts.appendChild(openBtn);
+
+    if (isOpen) {
+      // Already running. Going back to it must not restart it — that would drop every
+      // screen watching, which during a performance is the worst thing this page could
+      // do — so this is a link, not another open.
+      const back = document.createElement('button');
+      back.className = 'pill go';
+      back.textContent = App.shell ? 'Show it' : 'Open in a tab';
+      back.onclick = () => {
+        const url = `http://${location.hostname}:${open.port}/?show=${encodeURIComponent(open.name)}`;
+        if (App.shell) { location.assign(url); return; }
+        window.open(url, 'choufleur-show')?.focus();
+      };
+      acts.appendChild(back);
+    } else {
+      acts.appendChild(go('Prepare', { prep: true }, 'Opening…'));
+      acts.appendChild(go('Run', { prep: false, live: true }, 'Starting…'));
+    }
 
     if (isOpen) {
       const stop = document.createElement('button');
