@@ -211,6 +211,15 @@ enum Command {
         library: Option<PathBuf>,
         #[arg(long, default_value_t = 8080)]
         port: u16,
+        /// Let the library screen be driven from anywhere on the network.
+        ///
+        /// Off by default: opening and closing a show, restoring a snapshot and
+        /// importing are the desk's business, and the desk is this machine. On, they
+        /// are offered to every device on the venue's network, including whatever else
+        /// is on the house wifi. Only for driving the show from a second machine, and
+        /// it says so loudly at startup.
+        #[arg(long)]
+        admin_from_anywhere: bool,
     },
 
     /// Watch the patched inputs and say whether audio is arriving.
@@ -405,9 +414,15 @@ fn main() -> Result<()> {
             ModelsCmd::List => cmd::models::list(into),
             ModelsCmd::Fetch { medium } => cmd::models::fetch_all(into, medium),
         },
-        Command::Ui { library, port } => {
-            cmd::ui::run(library.unwrap_or_else(cmd::show::default_root), port)
-        }
+        Command::Ui {
+            library,
+            port,
+            admin_from_anywhere,
+        } => cmd::ui::run(
+            library.unwrap_or_else(cmd::show::default_root),
+            port,
+            admin_from_anywhere,
+        ),
         Command::Show { what, library } => {
             let root = library.unwrap_or_else(cmd::show::default_root);
             match what {

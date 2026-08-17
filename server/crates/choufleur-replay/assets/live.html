@@ -565,9 +565,12 @@
   #castbtn.on, #listsbtn.on, #audiobtn.on {
     border-color: var(--now) !important; color: var(--now) !important;
   }
-  body[data-prep="on"] #castbtn,
-  body[data-prep="on"] #listsbtn,
-  body[data-prep="on"] #audiobtn {
+  /* And desk-only as well as prep-only. The cast, the cue lists themselves and the
+     input patch are all set at the machine running the show; an operator's screen in
+     the wings has one list to follow and no business creating or deleting them. */
+  body[data-prep="on"][data-desk="on"] #castbtn,
+  body[data-prep="on"][data-desk="on"] #listsbtn,
+  body[data-prep="on"][data-desk="on"] #audiobtn {
     display: inline-block;
     border: 1px solid var(--dimmer); background: none; color: var(--dim);
     border-radius: 999px; padding: .25em .8em; cursor: pointer;
@@ -1243,7 +1246,15 @@
     // An unknown list — a stale bookmark, a renamed file — falls back to the first
     // rather than to an empty rail, which would read as "no cues tonight".
     if (viewing && viewing !== '*' && !sheetOf(viewing)) viewing = null;
-    if (!viewing) viewing = sheets.length === 1 ? sheets[0].id : '*';
+    // Falling back to everything is the desk's default, not an operator's: a screen in
+    // the wings that reached the show page without naming a list would otherwise be
+    // handed the whole board — including the three conduites that are not theirs —
+    // which is the thing the per-list links exist to avoid.
+    if (!viewing) {
+      viewing = (sheets.length === 1 || !AT_THE_DESK) && sheets.length
+        ? sheets[0].id
+        : '*';
+    }
     paintCategoryRules();
     paintPicker();
     paintFilters();
@@ -1505,9 +1516,29 @@
   // set once and cannot be changed by somebody walking past it, otherwise the picker,
   // remembered here.
   let sheets = [];
-  let viewing = new URLSearchParams(location.search).get('list')
-    || localStorage.getItem('choufleur.list')
-    || null;
+  // Named in the address, which is how an operator's own link works.
+  const pinned = new URLSearchParams(location.search).get('list');
+  let viewing = pinned || localStorage.getItem('choufleur.list') || null;
+
+  // Is this the desk, or is it somebody's screen in the wings?
+  //
+  // The desk is the machine running the show: the app window, which the shell marks,
+  // or a browser on the same machine. Everything else arrived over the venue network
+  // and belongs to one operator with one job. There is no login here and none is
+  // wanted — the distinction is which machine you are sitting at, and that is exactly
+  // the distinction that matters. It is not a lock, and the cue lists are not secrets;
+  // it is about not handing somebody four other people's conduites to wander into
+  // during a show.
+  const AT_THE_DESK = !!App.shell
+    || ['localhost', '127.0.0.1', '::1', '[::1]'].includes(location.hostname);
+  // An operator who followed their link keeps it. The picker is what would let a
+  // passing thumb change it, so for them there is no picker — which is what the
+  // comment above this has always claimed and the code did not do.
+  const LIST_IS_FIXED = !AT_THE_DESK && !!pinned;
+  // Everything-at-once is the stage manager's view and the desk's cross-check. Offered
+  // where the whole board is somebody's job, not on a screen that has one list to run.
+  if (!AT_THE_DESK && viewing === '*') viewing = null;
+  if (AT_THE_DESK) document.body.dataset.desk = 'on';
   const deviceId = (() => {
     let d = localStorage.getItem('choufleur.device');
     if (!d) { d = crypto.randomUUID(); localStorage.setItem('choufleur.device', d); }
@@ -1650,11 +1681,15 @@
 
   function paintPicker() {
     $picker.textContent = '';
-    $picker.classList.toggle('single', sheets.length < 2);
-    if (sheets.length < 2) return;
+    // Their list, and no way to leave it. They followed an address that names one, and
+    // the only thing a picker could do here is take them somewhere they do not want to
+    // be, in the dark, mid-show.
+    $picker.classList.toggle('single', sheets.length < 2 || LIST_IS_FIXED);
+    if (sheets.length < 2 || LIST_IS_FIXED) return;
     // Everything at once is the stage manager's view, and how you check that two lists
-    // do not disagree about where a moment sits.
-    const options = [...sheets.map((sh) => [sh.id, sh.name]), ['*', 'all']];
+    // do not disagree about where a moment sits. The desk's, not an operator's.
+    const options = sheets.map((sh) => [sh.id, sh.name]);
+    if (AT_THE_DESK) options.push(['*', 'all']);
     // Buttons while they fit, a menu once they do not. A real board runs to a dozen
     // lists — three followspots, two stage managers, flys, surtitles — and a dozen
     // buttons in a footer wrap into two rows and push the clock off the end. Below

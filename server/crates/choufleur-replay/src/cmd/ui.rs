@@ -812,6 +812,27 @@ async fn to_list(
     axum::response::Redirect::to(&url).into_response()
 }
 
+/// Refuse anything that did not come from this machine.
+///
+/// The show's controls belong to the desk. A tablet in the wings gets the join page and
+/// its own cue list, and that is the whole of its business here.
+async fn desk_only(
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if peer.ip().is_loopback() {
+        return next.run(req).await;
+    }
+    (
+        StatusCode::FORBIDDEN,
+        "This is the show machine's own screen. From here, take your cue list at the \
+         address you were given.\n\nIf you meant to drive the show from this device, \
+         start it with --admin-from-anywhere.\n",
+    )
+        .into_response()
+}
+
 /// The addresses an operator can reach this machine on, best first.
 ///
 /// The whole point of `/list/<id>` is an address somebody keeps, and until this
@@ -967,7 +988,7 @@ impl Ui {
     }
 }
 
-pub fn run(root: PathBuf, port: u16) -> Result<()> {
+pub fn run(root: PathBuf, port: u16, admin_from_anywhere: bool) -> Result<()> {
     crate::supervise::arm();
     // Before anything binds: whatever the last run left behind is still answering.
     sweep_orphans();
@@ -977,22 +998,31 @@ pub fn run(root: PathBuf, port: u16) -> Result<()> {
         println!("         (does not exist yet — it is made with the first show)");
     }
 
-    let app = axum::Router::new()
-        // The root belongs to the operators.
-        //
-        // It is the address everyone is given — the one printed on a card taped to the
-        // desk — so it answers with the question they have: which list are you? The
-        // library, which can create shows, restore snapshots and close the running one,
-        // used to be what answered here, on the obvious port, to everyone on the venue's
-        // network. It now lives at `/admin`. That is not a lock, and nothing here
-        // pretends otherwise; it is the difference between a control being tucked away
-        // and a control being the first thing a curious tablet finds.
+    // What an operator's tablet is offered.
+    //
+    // The address everyone is given answers with the question they have — which list
+    // are you? — and hands out the per-list links. Nothing here changes anything.
+    let public = axum::Router::new()
         .route("/", asset_route!("join.html", "text/html; charset=utf-8"))
-        .route("/admin", asset_route!("shows.html", "text/html; charset=utf-8"))
         .route("/api/lists", get(lists))
         .route("/list/{id}", get(to_list))
         .route("/app.css", asset_route!("app.css", "text/css; charset=utf-8"))
-        .route("/app.js", asset_route!("app.js", "text/javascript; charset=utf-8"))
+        .route("/app.js", asset_route!("app.js", "text/javascript; charset=utf-8"));
+
+    // What the desk is offered, and only the desk.
+    //
+    // Preparing or running a show, opening and closing it, restoring a snapshot over
+    // tonight's cues, importing, fetching models, opening a Finder window on this
+    // machine. All of it used to answer to anyone on the venue's network — a reviewer
+    // closed a running show from another address with no credentials, using a request
+    // plain enough that any web page an operator's phone happened to load could have
+    // sent it. Moving the page to `/admin` hid the door; this locks it.
+    //
+    // The check is the peer address, because the distinction that matters here is
+    // exactly "is this the machine running the show". There is no login, and none is
+    // wanted at 19:55 in a dark auditorium.
+    let admin = axum::Router::new()
+        .route("/admin", asset_route!("shows.html", "text/html; charset=utf-8"))
         .route("/api/state", get(state))
         .route("/api/shows", get(list).post(create))
         .route("/api/import", post(import_show))
@@ -1003,8 +1033,14 @@ pub fn run(root: PathBuf, port: u16) -> Result<()> {
         .route("/api/close", post(close))
         .route("/api/models", get(models))
         .route("/api/models/fetch", post(fetch_models))
-        .route("/api/models/reveal", post(reveal_models))
-        .with_state(Arc::clone(&ui));
+        .route("/api/models/reveal", post(reveal_models));
+    let admin = if admin_from_anywhere {
+        admin
+    } else {
+        admin.route_layer(axum::middleware::from_fn(desk_only))
+    };
+
+    let app = public.merge(admin).with_state(Arc::clone(&ui));
 
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     rt.block_on(async move {
@@ -1015,6 +1051,12 @@ pub fn run(root: PathBuf, port: u16) -> Result<()> {
         println!("\n  the library:   http://localhost:{port}/admin   (ctrl-c to stop)");
         for addr in lan_addresses() {
             println!("  the operators: http://{addr}:{port}/");
+        }
+        if admin_from_anywhere {
+            println!(
+                "\n  ! the library is open to the whole network — anyone who can reach\n\
+                 \x20   this machine can open, close and restore shows"
+            );
         }
         println!();
         // Ctrl-C *and* a plain kill. Only handling ctrl-c is how a show server
@@ -1050,7 +1092,13 @@ pub fn run(root: PathBuf, port: u16) -> Result<()> {
             }
         };
         tokio::select! {
-            r = axum::serve(listener, app).with_graceful_shutdown(signalled) => r?,
+            // With the peer address, which `desk_only` needs and which axum does not
+            // provide unless it is asked for here.
+            r = axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(signalled) => r?,
             _ = deadline => {}
         }
         // A show server started from here is this process's child, and leaving it

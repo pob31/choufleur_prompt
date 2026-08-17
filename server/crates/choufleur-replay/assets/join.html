@@ -116,9 +116,8 @@
     const box = $('lists');
     box.textContent = '';
     for (const l of s.lists) box.appendChild(row(l.id, l.name));
-    // The stage manager's view: every list at once, which is nobody's conduite and
-    // exactly what somebody watching the whole board needs.
-    box.appendChild(row('*', 'Everything', ' all'));
+    // No everything-at-once here. This page is how an operator takes the one list they
+    // are running; watching the whole board is the desk's job, and it is offered there.
 
     $('note').hidden = false;
     $('note').innerHTML =
