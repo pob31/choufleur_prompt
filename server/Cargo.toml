@@ -16,7 +16,7 @@ edition = "2021"
 # lie that only shows up as a compile failure on an older toolchain.
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/pobo/choufleur"
+repository = "https://github.com/pob31/choufleur_prompt"
 
 [workspace.dependencies]
 choufleur-core = { path = "crates/choufleur-core" }

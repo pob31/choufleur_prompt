@@ -109,6 +109,33 @@ Add `APPLE_ID`, `APPLE_PASSWORD` (an app-specific one) and `APPLE_TEAM_ID` — i
 second Mac refuses it; `release-app.sh` says so rather than leaving it to be discovered
 on the door of a venue.
 
+### Releasing
+
+Tagging is what cuts a release. `.github/workflows/release.yml` builds on an Apple
+Silicon runner, runs the tests, signs, notarizes both the app *and* the disk image, and
+proves the result before publishing — a build that Gatekeeper would reject fails the job
+instead of becoming a download. It leaves a **draft**, so nothing is public until you
+say `gh release edit v0.1.0 --draft=false`.
+
+```bash
+# the version lives in two files and the workflow refuses a tag that disagrees
+git tag -a v0.1.0 -m "…" && git push origin main --follow-tags
+```
+
+Six repository secrets, under Settings → Secrets and variables → Actions. The workflow
+checks all six are present, and that the certificate matches the identity, before it
+builds anything — the whole point being that the bundler would otherwise *warn* and
+publish an unsigned DMG.
+
+| Secret | What it is |
+|---|---|
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Name (TEAMID)` — exactly as `security find-identity -v -p codesigning` prints it |
+| `APPLE_CERTIFICATE` | that certificate **and its private key**, as base64. In Keychain Access expand the triangle, select both rows, Export 2 items as `.p12`, then `base64 -i cert.p12 \| pbcopy`. Exporting the certificate alone signs nothing |
+| `APPLE_CERTIFICATE_PASSWORD` | the password given to that `.p12` |
+| `APPLE_ID` | the Apple account email |
+| `APPLE_PASSWORD` | an **app-specific** password from appleid.apple.com → Sign-In and Security, of the form `abcd-efgh-ijkl-mnop`. Not the account password |
+| `APPLE_TEAM_ID` | the ten characters in brackets in the identity |
+
 **The microphone only works from the app.** A binary run from a terminal is given a
 stream that delivers nothing at all rather than an error, and never appears in System
 Settings to be allowed. `cargo tauri dev` is not proof either — under it, capture is

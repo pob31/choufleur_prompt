@@ -1,0 +1,235 @@
+# Build Choufleur.app, prove it is signed and notarized, and publish it.
+#
+# The one property this file exists to guarantee: a release is never published unless
+# macOS on somebody else's machine will open it. The Tauri bundler only *warns* when it
+# cannot sign or notarize — it prints a line and produces a DMG anyway — so a missing
+# or misnamed secret would otherwise produce a green tick and an artifact that every
+# other Mac refuses. Hence the preflights before the build and the hard checks after it.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish a draft release (off = build and verify only)'
+        type: boolean
+        default: false
+
+# Only what creating a release needs.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Apple Silicon. The app is aarch64-only — whisper.cpp is built with Metal and the
+    # sidecar is named for the host triple — so an Intel runner produces a binary the
+    # bundler will not bundle and nobody can run. macos-14 also retires in Nov 2026.
+    runs-on: macos-15
+    # A cold build compiles whisper.cpp and ONNX Runtime, then waits on Apple twice.
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `beforeBuildCommand` resolves the repo with `git rev-parse --show-toplevel`,
+          # so this has to be a git repository rather than a bare export.
+          fetch-depth: 0
+
+      # The three free checks first. Each one catches a failure that would otherwise
+      # surface forty minutes in, after a cold whisper.cpp build.
+
+      - name: Check the signing secrets are present
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for k in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+                   APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!k:-}" ] || missing="$missing $k"
+          done
+          if [ -n "$missing" ]; then
+            echo "missing repository secrets:"; for m in $missing; do echo "  $m"; done
+            echo
+            echo "README.md, under 'Releasing', says what each one is and how to make it."
+            echo "Without them this build would still succeed and publish a DMG that no"
+            echo "other Mac will open."
+            exit 1
+          fi
+          echo "all six present"
+
+      # The tag is what people quote back at you, and the version is baked into the DMG
+      # filename. A tag that disagrees with the app is a support conversation nobody wins.
+      - name: Check the tag matches the app version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          conf=$(python3 -c "import json;print(json.load(open('server/crates/choufleur-app/tauri.conf.json'))['version'])")
+          cargo=$(python3 -c "
+          import re
+          s=open('server/Cargo.toml').read()
+          print(re.search(r'^version = \"([^\"]+)\"', s, re.M).group(1))")
+          echo "tag $tag | tauri.conf.json $conf | Cargo.toml $cargo"
+          [ "$tag" = "$conf" ] && [ "$tag" = "$cargo" ] || {
+            echo "these must agree before tagging"; exit 1; }
+
+      # The bundler checks that APPLE_SIGNING_IDENTITY is a substring of the certificate's
+      # own identity — but only once it reaches the bundling step, long after the build.
+      # Proving it here costs seconds. Values are never printed; the keychain is temporary
+      # and deleted whatever happens.
+      - name: Check the certificate and the identity agree
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          d=$(mktemp -d); kc="$d/preflight.keychain-db"; kp=$(openssl rand -hex 16)
+          trap 'security delete-keychain "$kc" 2>/dev/null || true; rm -rf "$d"' EXIT
+          printf '%s' "$APPLE_CERTIFICATE" | tr -d '[:space:]' | base64 -d > "$d/c.p12" || {
+            echo "APPLE_CERTIFICATE is not valid base64."
+            echo "Make it with:  base64 -i cert.p12 | pbcopy"; exit 1; }
+          security create-keychain -p "$kp" "$kc"
+          security unlock-keychain -p "$kp" "$kc"
+          security import "$d/c.p12" -k "$kc" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign >/dev/null || {
+            echo "The certificate would not import. Either the password is wrong, or the"
+            echo ".p12 was exported without its private key — expand the triangle in"
+            echo "Keychain Access and export BOTH items."; exit 1; }
+          found=$(security find-identity -v -p codesigning "$kc" | grep -c "$APPLE_SIGNING_IDENTITY") || found=0
+          if [ "$found" = "0" ]; then
+            echo "The certificate does not carry the identity in APPLE_SIGNING_IDENTITY."
+            echo "It offers:"; security find-identity -v -p codesigning "$kc" | sed 's/^/  /'
+            exit 1
+          fi
+          echo "the certificate carries that identity, and has its private key"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Caches the registry and target/. Keyed on the lockfile, so a dependency change
+      # invalidates it rather than rebuilding on top of stale C artifacts.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+
+      - name: Check the build tools are here
+        run: |
+          set -euo pipefail
+          cmake --version | head -1     # whisper-rs-sys builds whisper.cpp with it
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          echo "host: $host"
+          [ "$host" = "aarch64-apple-darwin" ] || {
+            echo "not an Apple Silicon runner — the app is aarch64 only"; exit 1; }
+
+      - name: Install the Tauri CLI
+        run: cargo install tauri-cli --version '2.11.4' --locked
+
+      # `tauri-build` resolves `bundle.externalBin` at compile time and hard-errors when
+      # the file is missing. `binaries/` is gitignored, so on a fresh checkout *nothing*
+      # in the workspace compiles until this has run — and it is otherwise only wired in
+      # as tauri's beforeBuildCommand, which does not fire until the build step.
+      - name: Stage the sidecar
+        run: bash scripts/sidecar.sh
+
+      # Before building the bundle, because a release that ships a broken tracker is
+      # worse than one that is late. Model-dependent tests skip when the weights are
+      # absent, which is always the case here — CI never downloads them.
+      #
+      # `--release` is not about better tests: the runner has 14 GB of disk and two
+      # profiles of this dependency graph measure about 12. The sidecar and the bundle
+      # are both release, so this warms exactly what they reuse — and it exercises the
+      # compiled-in copy of the operator pages that actually ships, rather than the
+      # dev-only disk copy.
+      - name: Test
+        working-directory: server
+        run: cargo test --workspace --release
+
+      - name: Build, sign, notarize and verify
+        env:
+          # The bundler imports this into a temporary keychain of its own; no manual
+          # keychain juggling, and nothing lands in the login keychain.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Turns the bundler's warnings, and the checks in the script, into failures.
+          CHOUFLEUR_RELEASE_STRICT: '1'
+        run: bash scripts/release-app.sh
+
+      - name: Find the DMG
+        id: dmg
+        run: |
+          set -euo pipefail
+          path=$(ls server/target/release/bundle/dmg/*.dmg | head -1)
+          test -s "$path" || { echo "no DMG was produced"; exit 1; }
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$path")" >> "$GITHUB_OUTPUT"
+          ls -lh "$path"
+
+      # Kept whether or not this run publishes, so a dry run still leaves something to
+      # install and try.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.dmg.outputs.name }}
+          path: ${{ steps.dmg.outputs.path }}
+          if-no-files-found: error
+          overwrite: true          # v4 409s on a job re-run without this
+
+      - name: Publish the release
+        # `inputs` is empty on a push, so `inputs.publish` is null — and GitHub coerces
+        # null and false alike to 0, making `inputs.publish != false` false. Naming the
+        # event is the only form that publishes on a tag push and still honours the
+        # checkbox on a manual run.
+        if: startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || inputs.publish)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          notes=$(cat <<'END'
+          **Apple Silicon, macOS 14 or later.** Signed and notarized, so it opens without
+          a right-click.
+
+          On first launch it offers to download the recogniser — about 490 MB, once per
+          machine, into `~/Choufleur/models`. Preparing a script works without it;
+          following a performance does not. If the venue blocks the download, the panel
+          prints the folder and the source URLs so the files can be copied in by hand.
+
+          The first time you press Run, macOS asks for the microphone. That prompt only
+          appears for the app: a binary run from a terminal is handed a stream that
+          delivers silence, with no error and no prompt.
+
+          Operators join over the venue network at the address shown on the library
+          screen, and take their own cue list from it. Give them the `.local` name rather
+          than the number — the number is a DHCP lease and can change between the get-in
+          and the half. macOS will ask once to allow incoming connections.
+          END
+          )
+          # Re-runs are normal, and both halves of this fail on a second attempt without
+          # the check: `gh release create` refuses an existing tag.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${{ steps.dmg.outputs.path }}" --clobber
+            gh release edit "$GITHUB_REF_NAME" --notes "$notes"
+          else
+            # A draft, not a prerelease. A prerelease is public the moment CI finishes;
+            # a draft is yours until you say so, and its notes and asset can be replaced
+            # without moving the tag. Publish with:
+            #   gh release edit v0.1.0 --draft=false --prerelease
+            gh release create "$GITHUB_REF_NAME" "${{ steps.dmg.outputs.path }}" \
+              --title "Choufleur $GITHUB_REF_NAME" \
+              --notes "$notes" \
+              --draft --verify-tag
+          fi
