@@ -963,6 +963,18 @@ pub fn run(
             if let Err(e) = &outcome {
                 eprintln!("\nengine stopped: {e:#}");
                 *engine_state.running.lock().unwrap() = false;
+                // Said out loud, not just written down.
+                //
+                // Serving runs whether this thread lived or died, so an engine that
+                // never started — a capture that will not open is the likely one —
+                // leaves every screen in the building showing a green dot, a live
+                // footer and an empty "heard" panel, indefinitely. The only other
+                // trace is one line on stderr, into a pipe the app does not display.
+                // A tracker that has stopped has to say so; that is the whole promise.
+                let _ = engine_state.tx.send(Update::RunState {
+                    t_audio: *engine_state.t_audio.lock().unwrap(),
+                    running: false,
+                });
             }
             outcome
         })

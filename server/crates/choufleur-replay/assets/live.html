@@ -3317,6 +3317,11 @@
         }
         if (m.title) document.title = m.title + (m.prep ? ' — prep' : ' — live');
         if (m.prep) { document.body.dataset.prep = 'on'; setEditing(true); }
+        // The dot starts green because the page assumes a run until told otherwise,
+        // and `run_state` only ever announces a *change* — so a screen opened after an
+        // engine failed to start had no way to learn it. `?? true` so an older server,
+        // which does not send this, behaves as it always did.
+        document.body.dataset.running = String(m.running ?? true);
         if (m.sheets) { sheets = m.sheets; paintCategoryRules(); paintPicker(); }
         // Re-read the script on every *re*-connect, never only at startup.
         //

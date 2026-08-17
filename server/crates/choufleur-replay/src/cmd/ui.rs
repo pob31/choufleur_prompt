@@ -102,7 +102,12 @@ struct VersionDto {
 #[serde(rename_all = "camelCase")]
 struct StateDto {
     root: String,
-    open: Option<OpenDto>,
+    /// The show that is up, and what it is doing — see [`state`]. Not `OpenDto`,
+    /// because "which show" and "what is it doing" come from different processes.
+    open: Option<serde_json::Value>,
+    /// What to give the operators — see [`lan_addresses`]. Shown on the library screen
+    /// because that is the screen somebody is looking at when they read it out.
+    operators: Vec<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -183,6 +188,18 @@ impl Ui {
     }
 
     fn entry(&self, name: &str) -> Result<choufleur_server::Entry> {
+        // A show name is one directory inside the library, and nothing else.
+        //
+        // Unsanitised, this took `../elsewhere` — and, because `Path::join` throws away
+        // everything to the left when its argument is absolute, `/anywhere` as well. A
+        // request from any tablet on the venue network could therefore point a show
+        // server at a directory outside the library and have it served back, or take a
+        // snapshot into one. `Library::create` has always cleaned the names it makes;
+        // this path, which accepts a name rather than making one, never did.
+        let one_component = std::path::Path::new(name).components().count() == 1;
+        if name.is_empty() || !one_component || name.contains('/') || name.contains('\\') {
+            anyhow::bail!("no show called {name:?}");
+        }
         self.library()
             .describe(&self.root.join(name))
             .with_context(|| format!("no show called {name:?}"))
@@ -201,14 +218,50 @@ impl Ui {
     }
 }
 
+/// The show server, if one is still alive.
+///
+/// Asked with `try_wait` rather than taken on trust, because nothing else reaps it. A
+/// child that died on its own — a crash, or an engine that could not open the room —
+/// left its name and its port in the slot, and every screen that asked was told a show
+/// was running and sent to a port with nothing on it.
+fn live_show(ui: &Ui) -> Option<(String, u16)> {
+    let mut slot = ui.show.lock().unwrap();
+    if slot
+        .as_mut()
+        .is_some_and(|r| matches!(r.child.try_wait(), Ok(Some(_))))
+    {
+        slot.take();
+    }
+    slot.as_ref().map(|r| (r.name.clone(), r.port))
+}
+
 async fn state(State(ui): State<Arc<Ui>>) -> Json<StateDto> {
-    let open = ui.show.lock().unwrap().as_ref().map(|r| OpenDto {
-        name: r.name.clone(),
-        port: r.port,
-    });
+    let mut open = None;
+    if let Some((name, port)) = live_show(&ui) {
+        // Asked of the show server rather than remembered from how it was started: a
+        // run whose engine failed is still "not prep" but is no longer running, and the
+        // screen that offers to close it should say which of those it is about to end.
+        let run = ask_show_server(port, "/run.json").await;
+        let flag = |k: &str| {
+            run.as_ref()
+                .and_then(|v| v.get(k))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        };
+        open = Some(serde_json::json!({
+            "name": name,
+            "port": port,
+            "prep": flag("prep"),
+            "running": flag("running"),
+        }));
+    }
     Json(StateDto {
         root: ui.root.to_string_lossy().into_owned(),
         open,
+        operators: lan_addresses()
+            .into_iter()
+            .map(|a| format!("http://{a}:{}/", ui.port))
+            .collect(),
     })
 }
 
@@ -420,7 +473,23 @@ async fn open(
         });
     }
 
-    wait_until_listening(port, &e.name).await?;
+    if let Err(waited) = wait_until_listening(port, &e.name).await {
+        // It never came up, so it is not the open show and must not be announced as
+        // one. Guarded by the port rather than taken blindly: `free_port` runs before
+        // the lock, so two opens can overlap, and an unguarded `take()` here would
+        // reach into the slot and kill the show that did start.
+        let dead = {
+            let mut slot = ui.show.lock().unwrap();
+            match slot.as_ref() {
+                Some(r) if r.port == port => slot.take(),
+                _ => None,
+            }
+        };
+        if let Some(dead) = dead {
+            stop_child(dead);
+        }
+        return Err(waited.into());
+    }
     Ok(Json(OpenDto { name: e.name, port }))
 }
 
@@ -672,14 +741,19 @@ async fn ask_show_server(port: u16, path: &str) -> Option<serde_json::Value> {
 /// Answers even when nothing is open — a tablet is as often opened before the show is
 /// started as after, and "no show yet" is a better page than an error.
 async fn lists(State(ui): State<Arc<Ui>>) -> Json<serde_json::Value> {
-    let open = ui
-        .show
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|r| (r.name.clone(), r.port));
-    let Some((name, port)) = open else {
+    let Some((name, port)) = live_show(&ui) else {
         return Json(serde_json::json!({ "show": null, "lists": [] }));
+    };
+    // Open and running are different things, and the difference is the operator's.
+    // A show open for prep will never move under them, and — because prep puts the
+    // page into editing — a tap on a line edits the script instead of steering it.
+    // Saying "now running" over that is the worst thing this page could do.
+    let run = ask_show_server(port, "/run.json").await;
+    let flag = |k: &str| {
+        run.as_ref()
+            .and_then(|v| v.get(k))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
     };
     let sheets = ask_show_server(port, "/sheets.json")
         .await
@@ -694,7 +768,13 @@ async fn lists(State(ui): State<Arc<Ui>>) -> Json<serde_json::Value> {
             })
         })
         .collect();
-    Json(serde_json::json!({ "show": name, "port": port, "lists": lists }))
+    Json(serde_json::json!({
+        "show": name,
+        "port": port,
+        "prep": flag("prep"),
+        "running": flag("running"),
+        "lists": lists,
+    }))
 }
 
 /// `/list/<id>` — the address an operator keeps.
@@ -712,8 +792,7 @@ async fn to_list(
     Path(id): Path<String>,
     headers: axum::http::HeaderMap,
 ) -> axum::response::Response {
-    let open = ui.show.lock().unwrap().as_ref().map(|r| r.port);
-    let Some(port) = open else {
+    let Some((_, port)) = live_show(&ui) else {
         // Nothing to show yet. The join page says so, and keeps looking.
         return axum::response::Redirect::to("/").into_response();
     };
@@ -731,6 +810,44 @@ async fn to_list(
         urlencode(&id)
     );
     axum::response::Redirect::to(&url).into_response()
+}
+
+/// The addresses an operator can reach this machine on, best first.
+///
+/// The whole point of `/list/<id>` is an address somebody keeps, and until this
+/// existed there was no way for anyone to learn what it was: the only thing printed
+/// was `localhost`, which is useless from a tablet, and inside the app it is printed
+/// into a pipe nobody reads.
+///
+/// The Bonjour name comes first on purpose. It survives the DHCP lease that the
+/// address does not — the number can change between the get-in and the half — and an
+/// iPad resolves `.local` with nothing configured.
+fn lan_addresses() -> Vec<String> {
+    let mut out = Vec::new();
+    if let Ok(o) = std::process::Command::new("scutil")
+        .args(["--get", "LocalHostName"])
+        .output()
+    {
+        let name = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        if !name.is_empty() {
+            out.push(format!("{name}.local"));
+        }
+    }
+    // Which interface a tablet would arrive on, asked of the routing table rather than
+    // guessed from a list. A "connected" UDP socket sends no packet — it only picks the
+    // route — so this costs nothing and touches the network not at all. The address is
+    // in the documentation range, which is routed nowhere by design.
+    if let Ok(sock) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        if sock.connect("192.0.2.1:9").is_ok() {
+            if let Ok(addr) = sock.local_addr() {
+                let ip = addr.ip().to_string();
+                if ip != "0.0.0.0" {
+                    out.push(ip);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// A `Host` header without its port.
@@ -762,11 +879,17 @@ fn urlencode(s: &str) -> String {
 
 /// Is there a room to listen to?
 ///
-/// Asked before the show server is started rather than after, for the same reason the
-/// models are: a capture that cannot open kills the child on its engine thread, and
-/// this end only ever sees a readiness check time out after twelve seconds and blame
-/// the script. The two things that go wrong are an empty patch and an interface that
-/// is not plugged in tonight, and neither is the script's fault.
+/// Asked before the show server is started, because afterwards nobody asks at all.
+///
+/// A capture that cannot open does not stop the show server: the engine runs on its
+/// own thread, serving carries on regardless, and the failure becomes one line on a
+/// stderr the app does not display. The child binds, the readiness check passes, and
+/// this end reports success over a show that will never move. (`serve` now announces
+/// the stopped engine to every connected screen, which is the other half of this; but
+/// a run that never starts is better than a run that starts and says it is sorry.)
+///
+/// The two things that go wrong are an empty patch and an interface that is not
+/// plugged in tonight, and neither is the script's fault.
 ///
 /// The device is matched the way `capture::build` matches it — lowercased, by
 /// substring — because a check that disagreed with the thing it is checking for would
@@ -886,7 +1009,14 @@ pub fn run(root: PathBuf, port: u16) -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     rt.block_on(async move {
         let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
-        println!("\n  open it at http://localhost:{port}   (ctrl-c to stop)\n");
+        // Two addresses, because they are two different doors and the second one is the
+        // whole point of the first. Operators need an address to type on a tablet, and
+        // until this line nothing anywhere told anybody what it was.
+        println!("\n  the library:   http://localhost:{port}/admin   (ctrl-c to stop)");
+        for addr in lan_addresses() {
+            println!("  the operators: http://{addr}:{port}/");
+        }
+        println!();
         // Ctrl-C *and* a plain kill. Only handling ctrl-c is how a show server
         // outlived its parent and sat on a port for half an hour serving stale
         // code — `pkill` on the parent left the child running, and nothing was

@@ -67,6 +67,17 @@
 
   .empty { color: var(--dimmer); font: var(--ui); padding: 2em 0; text-align: center; }
 
+  #operators { display: flex; align-items: baseline; gap: .5em; flex-wrap: wrap;
+               margin: 0 0 1.2em; font: var(--ui); }
+  #operators .lead { color: var(--dimmer); letter-spacing: .06em;
+                     text-transform: uppercase; font-size: .78em; }
+  #operators .addr {
+    font: 400 .85em/1.4 ui-monospace, Menlo, monospace; color: var(--fg);
+    background: var(--card); border: 1px solid var(--edge); border-radius: 4px;
+    padding: .2em .5em; cursor: pointer;
+  }
+  #operators .addr:hover { border-color: var(--dimmer); }
+
   /* The models panel. Present only until the weights are, and then never seen again —
      so it says everything it has to say in one go rather than hiding half of it behind
      a disclosure nobody will open twice. */
@@ -104,6 +115,12 @@
     <button class="pill" id="import">Import…</button>
     <button class="pill" id="refresh">Refresh</button>
   </div>
+
+  <!-- What to read out at the half. The operators need an address before any of the
+       per-list links mean anything, and this is the screen in front of whoever knows
+       it. The `.local` name is offered first: it survives the DHCP lease that the
+       number does not. -->
+  <div id="operators" hidden></div>
 
   <div id="models" hidden></div>
 
@@ -154,8 +171,40 @@
     shows = s;
     open = st.open;
     $('where').textContent = st.root;
+    paintOperators(st.operators);
     paint();
     paintModels();
+  }
+
+  // The address the operators type, on the screen of the person who tells them.
+  //
+  // Copyable rather than merely printed: it gets sent in a message far more often than
+  // it gets read aloud, and retyping an IP into four tablets is how one of them ends up
+  // on the wrong number.
+  function paintOperators(addrs) {
+    const box = $('operators');
+    if (!addrs || !addrs.length) { box.hidden = true; return; }
+    box.hidden = false;
+    box.textContent = '';
+    const lead = document.createElement('span');
+    lead.className = 'lead';
+    lead.textContent = 'operators join at';
+    box.appendChild(lead);
+    for (const a of addrs) {
+      const b = document.createElement('button');
+      b.className = 'addr';
+      b.textContent = a;
+      b.title = 'copy';
+      b.onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(a);
+          const was = b.textContent;
+          b.textContent = 'copied';
+          setTimeout(() => { b.textContent = was; }, 1200);
+        } catch { /* it is on screen either way; the copy is the convenience */ }
+      };
+      box.appendChild(b);
+    }
   }
 
   // ---- the models ------------------------------------------------------------
@@ -312,7 +361,10 @@
     if (isOpen) {
       const live = document.createElement('span');
       live.className = 'live';
-      live.textContent = 'open';
+      // Which of the two it is, not merely that it is up. This is the only feedback
+      // that a Prepare was meant to be a Run — and after a failed Run, the only place
+      // the stopped tracker is visible from the library.
+      live.textContent = open.prep ? 'prep' : open.running ? 'running' : 'stopped';
       head.appendChild(live);
     }
 
@@ -417,11 +469,18 @@
     if (isOpen) {
       const stop = document.createElement('button');
       stop.className = 'pill';
-      stop.textContent = 'Close';
-      stop.onclick = async () => {
-        try { await App.post('/api/close', {}); await load(); }
-        catch (e) { say(s, e.message, true); }
-      };
+      // Asks first, like Restore does — and Restore is the one you can undo. This ends
+      // the show for every screen in the building, and it sits one thumb-width from the
+      // button that merely looks at it, on a laptop at the back of a dark auditorium.
+      // During a run it says what it costs; in prep there is nothing to interrupt.
+      App.confirmButton(stop, {
+        label: 'Close',
+        confirm: open && open.running ? 'Close? every screen goes dark' : 'Close it?',
+        onConfirm: async () => {
+          try { await App.post('/api/close', {}); await load(); }
+          catch (e) { say(s, e.message, true); }
+        },
+      });
       acts.appendChild(stop);
     }
 

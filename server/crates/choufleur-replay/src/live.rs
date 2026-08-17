@@ -235,6 +235,13 @@ pub enum Update {
         position: Option<Position>,
         /// No audio, no engine — the page is here to be edited, not watched.
         prep: bool,
+        /// Is the tracker actually going?
+        ///
+        /// A page assumes it is until told otherwise, and `run_state` is only ever sent
+        /// when something changes — so a screen that connects *after* an engine failed
+        /// to start would never hear about it, and would sit showing a green dot over a
+        /// run that ended before it arrived. Told at the door instead.
+        running: bool,
         /// The cue lists this show carries, so a client can offer the picker without a
         /// second fetch.
         sheets: Vec<CueSheet>,
@@ -483,6 +490,10 @@ impl LiveState {
             line_count: self.lines.lock().unwrap().len(),
             position: *self.latest.lock().unwrap(),
             prep: self.prep,
+            // In prep there is no engine, so "running" would be a green light over a
+            // page that will never move. `running` is initialised true and only the
+            // engine clears it.
+            running: !self.prep && *self.running.lock().unwrap(),
             sheets: self.sheets.lock().unwrap().clone(),
         }
     }
@@ -641,6 +652,10 @@ mod tests {
         let s = serde_json::to_string(&state.hello()).unwrap();
         assert!(s.contains(r#""type":"hello""#), "{s}");
         assert!(s.contains(r#""lineCount":1"#), "{s}");
+        // A screen arriving late is told whether the tracker is going, rather than
+        // assuming it is. Without this, an engine that died before anyone connected
+        // showed a green dot on every tablet in the house for the rest of the night.
+        assert!(s.contains(r#""running":true"#), "{s}");
         assert!(s.contains(r#""position":null"#), "{s}");
         assert!(s.contains(r#""prep":false"#), "{s}");
         assert!(s.contains(r#""sheets":[]"#), "{s}");

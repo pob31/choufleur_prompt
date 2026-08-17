@@ -73,10 +73,23 @@
     return a;
   }
 
+  // What the last render was built from. Two jobs: a page that has not changed is not
+  // rebuilt — a row replaced between a finger going down and coming up swallows the
+  // tap, and this repaints every five seconds under four thumbs — and a poll that
+  // fails leaves the last good page up rather than blanking it, because a dropped
+  // wifi packet is not news an operator can act on.
+  let last = null;
+
   async function load() {
     let s;
     try { s = await App.get('/api/lists'); }
-    catch (e) { $('lists').innerHTML = `<p class="empty">${App.esc(e.message)}</p>`; return; }
+    catch (e) {
+      if (!last) $('lists').innerHTML = `<p class="empty">${App.esc(e.message)}</p>`;
+      return;
+    }
+    const now = JSON.stringify(s);
+    if (now === last) return;
+    last = now;
 
     if (!s.show) {
       $('show').textContent = '';
@@ -88,7 +101,18 @@
       return;
     }
 
-    $('show').innerHTML = 'now running <b>' + App.esc(s.show) + '</b> — take your list';
+    // Three states, not two. "Open" is not "running", and the difference costs an
+    // operator their evening: a show open for preparation will never move, and because
+    // prep puts the page into editing, a tap on a line rewrites the script rather than
+    // steering it. Saying "now running" over that would be the worst thing here.
+    const name = '<b>' + App.esc(s.show) + '</b>';
+    $('show').innerHTML =
+      s.prep
+        ? `${name} is open for preparation. The tracker is not listening — the script `
+          + `will not move, and a tap edits it.`
+        : s.running
+          ? `now running ${name} — take your list`
+          : `${name} is open, but the tracker has stopped. Tell the desk.`;
     const box = $('lists');
     box.textContent = '';
     for (const l of s.lists) box.appendChild(row(l.id, l.name));
