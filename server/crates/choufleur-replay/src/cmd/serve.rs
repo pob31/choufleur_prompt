@@ -1774,13 +1774,30 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
             .route(
                 "/ws",
                 get(
-                    |ws: WebSocketUpgrade, State(s): State<Arc<LiveState>>| async move {
+                    |ws: WebSocketUpgrade,
+                     axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<
+                        std::net::SocketAddr,
+                    >,
+                     State(s): State<Arc<LiveState>>| async move {
+                        // The desk is the machine running the show. It edits any list,
+                        // because somebody there is preparing all of them; a screen in
+                        // the wings edits the one it is showing and no other.
+                        let at_the_desk = peer.ip().is_loopback();
                         ws.on_upgrade(move |socket| async move {
                             // Split so a correction arriving from the operator is not
                             // stuck behind a position update waiting on playback.
                             use futures_util::{SinkExt, StreamExt};
                             let (sink, mut stream) = socket.split();
                             let inbound = Arc::clone(&s);
+                            // Which list this screen says it is showing.
+                            //
+                            // Told once on connect and again whenever it changes, and
+                            // kept per connection — never taken from the edit itself.
+                            // The `sheet` on an edit is what the client *wants* to
+                            // write to, which is exactly the thing that cannot be
+                            // trusted: a device given the lighting link rewrote a cue
+                            // in the sound conduite, and it went to disk.
+                            let showing: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
                             tokio::spawn(async move {
                                 while let Some(Ok(msg)) = stream.next().await {
                                     let Message::Text(text) = msg else { continue };
@@ -1801,6 +1818,22 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                     // correction into the sound sheet.
                                     let sheet_of = |v: &serde_json::Value| -> Option<(String, PathBuf)> {
                                         let id = v.get("sheet")?.as_str()?.to_string();
+                                        // One operator's notation is not another's, and
+                                        // a list is a position rather than a person —
+                                        // so the only question worth asking is whether
+                                        // this screen is the one running that list.
+                                        // Anything else is somebody else's conduite,
+                                        // and rewriting it mid-show is the failure this
+                                        // exists to prevent.
+                                        if !at_the_desk {
+                                            let mine = showing.lock().unwrap().clone();
+                                            if mine.as_deref() != Some(id.as_str()) {
+                                                eprintln!(
+                                                    "refused an edit to {id:?} from a screen showing {mine:?}"
+                                                );
+                                                return None;
+                                            }
+                                        }
                                         let path =
                                             inbound.sheet_paths.lock().unwrap().get(&id)?.clone();
                                         Some((id, path))
@@ -1909,6 +1942,15 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                         // a tracker left running through a conversation
                                         // about the last attempt can be a long way from
                                         // where the next one begins.
+                                        // "This is the list I am running." Sent on
+                                        // connect and whenever it changes; it grants
+                                        // nothing but the right to edit that one list.
+                                        Some("showing") => {
+                                            *showing.lock().unwrap() = v
+                                                .get("list")
+                                                .and_then(|x| x.as_str())
+                                                .map(str::to_string);
+                                        }
                                         Some("set_paused") => {
                                             let want = v
                                                 .get("paused")
@@ -1961,7 +2003,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                                 .tx
                                                 .send(Update::InputHealth { channels: vec![] });
                                         }
-                                        Some("set_venue") if inbound.prep => {
+                                        Some("set_venue") if inbound.prep && at_the_desk => {
                                             let venue = crate::audio::Venue {
                                                 device: v
                                                     .get("device")
@@ -2006,7 +2048,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                     // hundreds of lines and a cast edit can
                                     // unassign a microphone, and neither is
                                     // something to discover mid-show.
-                                    Some("edit_cast") if inbound.prep => {
+                                    Some("edit_cast") if inbound.prep && at_the_desk => {
                                         let Some(cast) =
                                             v.get("characters").and_then(|c| c.as_array())
                                         else {
@@ -2022,7 +2064,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                         }
                                         reload_cast(&inbound, false);
                                     }
-                                    Some("merge_speaker") if inbound.prep => {
+                                    Some("merge_speaker") if inbound.prep && at_the_desk => {
                                         let (Some(from), Some(to)) = (
                                             v.get("from").and_then(|f| f.as_str()),
                                             v.get("to").and_then(|t| t.as_str()),
@@ -2059,7 +2101,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                             }
                                         }
                                     }
-                                    Some("new_sheet") if inbound.prep => {
+                                    Some("new_sheet") if inbound.prep && at_the_desk => {
                                         let Some(name) =
                                             v.get("name").and_then(|n| n.as_str())
                                         else {
@@ -2097,7 +2139,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                             Err(e) => eprintln!("could not make the list: {e:#}"),
                                         }
                                     }
-                                    Some("delete_sheet") if inbound.prep => {
+                                    Some("delete_sheet") if inbound.prep && at_the_desk => {
                                         let Some(id) = v.get("sheet").and_then(|s| s.as_str())
                                         else {
                                             continue;
@@ -2132,7 +2174,7 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                         }
                                     }
 
-                                    Some("rename_sheet") if inbound.prep => {
+                                    Some("rename_sheet") if inbound.prep && at_the_desk => {
                                         let (Some(id), Some(name)) = (
                                             v.get("sheet").and_then(|s| s.as_str()),
                                             v.get("name").and_then(|n| n.as_str()),
@@ -2604,7 +2646,13 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
             }
         };
         tokio::select! {
-            r = axum::serve(listener, app).with_graceful_shutdown(winding_down) => r?,
+            // With the peer address: a cue edit is allowed against the list that screen
+            // is running, and the desk — this machine — is allowed all of them.
+            r = axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(winding_down) => r?,
             _ = deadline => {}
         }
         Ok::<(), anyhow::Error>(())

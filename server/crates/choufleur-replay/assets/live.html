@@ -1663,9 +1663,22 @@
   /// Show one list, or all of them. Lifted out of the picker because the lists panel
   /// switches lists too — the targets panel edits whichever is showing, so reaching a
   /// particular list's targets means showing that list first.
+  // Tell the server which list this screen is running.
+  //
+  // It is not a claim to anything except the right to correct this one list. The
+  // server keeps it per connection and checks every cue edit against it, because the
+  // list named *in* an edit is what the sender wants to write to, which is the one
+  // thing that cannot be taken on trust: a device given the lighting link rewrote a
+  // cue in the sound conduite and it reached the disk.
+  function declareList() {
+    if (!ws || ws.readyState !== 1) return;
+    ws.send(JSON.stringify({ type: 'showing', list: viewing }));
+  }
+
   function choose(id) {
     viewing = id;
     localStorage.setItem('choufleur.list', id);
+    declareList();
     paintPicker();
     paintCategoryRules();
     paintFilters();
@@ -3358,6 +3371,9 @@
         // which does not send this, behaves as it always did.
         document.body.dataset.running = String(m.running ?? true);
         if (m.sheets) { sheets = m.sheets; paintCategoryRules(); paintPicker(); }
+        // On every connect, including a reconnect: the server keeps this per socket,
+        // so a dropped tablet that comes back has to say again which list it runs.
+        declareList();
         // Re-read the script on every *re*-connect, never only at startup.
         //
         // The page keeps its own copy of every line and writes the whole line back
