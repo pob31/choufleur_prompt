@@ -1,0 +1,110 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Choufleur</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  /* The page an operator lands on, on their own tablet, in the dark, once.
+     Everything here is sized for a thumb and for being read at arm's length from a
+     desk — which is why it borrows the palette and nothing else from the admin
+     screens. */
+  html, body { margin: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font: 400 16px/1.5 ui-serif, Georgia, "Iowan Old Style", serif;
+    padding: 2.4em 0 5em;
+    -webkit-text-size-adjust: 100%;
+  }
+  main { max-width: 34em; margin: 0 auto; padding: 0 1.2em; }
+  h1 { margin: 0; font: 600 1.15em/1.3 ui-sans-serif, system-ui, sans-serif;
+       letter-spacing: .04em; }
+  .show { margin: .2em 0 1.6em; font: var(--ui); color: var(--dim); }
+  .show b { color: var(--fg); font-weight: 600; }
+
+  /* One row per cue list. Big, because it is pressed once at the half with the house
+     lights already down. */
+  a.list {
+    display: block; text-decoration: none; color: inherit;
+    border: 1px solid var(--edge); border-radius: 6px; background: var(--card);
+    padding: .85em 1em; margin-bottom: .7em;
+  }
+  a.list:active { background: var(--edgeish, #23262d); }
+  a.list .name { font: 600 1.05em/1.3 ui-sans-serif, system-ui, sans-serif;
+                 letter-spacing: .03em; }
+  a.list .url { display: block; margin-top: .25em; color: var(--dimmer);
+                font: 400 .72em/1.4 ui-monospace, Menlo, monospace; word-break: break-all; }
+  a.list.all .name { color: var(--dim); }
+
+  .note { color: var(--dimmer); font: var(--ui); margin-top: 1.6em; }
+  .note code { font-family: ui-monospace, Menlo, monospace; }
+  .empty { color: var(--dim); font: var(--ui); padding: 2.5em 0; text-align: center; }
+</style>
+
+<main>
+  <h1>Choufleur</h1>
+  <div class="show" id="show"></div>
+  <div id="lists"></div>
+  <div class="note" id="note" hidden></div>
+</main>
+
+<script src="/app.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+
+  // Each list gets an address on *this* port, not the show server's.
+  //
+  // The show server's port is chosen when the show opens and moves when something
+  // else is holding it, so a bookmark straight to it is a bookmark that works until
+  // the night it does not. This port never moves, and the redirect behind these links
+  // finds whichever show is open now.
+  const linkFor = (id) => `${location.origin}/list/${encodeURIComponent(id)}`;
+
+  function row(id, name, extra) {
+    const a = document.createElement('a');
+    a.className = 'list' + (extra || '');
+    a.href = linkFor(id);
+    const n = document.createElement('span');
+    n.className = 'name';
+    n.textContent = name;
+    const u = document.createElement('span');
+    u.className = 'url';
+    u.textContent = linkFor(id);
+    a.append(n, u);
+    return a;
+  }
+
+  async function load() {
+    let s;
+    try { s = await App.get('/api/lists'); }
+    catch (e) { $('lists').innerHTML = `<p class="empty">${App.esc(e.message)}</p>`; return; }
+
+    if (!s.show) {
+      $('show').textContent = '';
+      $('lists').innerHTML = '<p class="empty">No show is running yet.</p>';
+      $('note').hidden = false;
+      $('note').textContent =
+        'When one is started on the machine running the show, this page will list its '
+        + 'cue lists. Leave it open — it looks again every few seconds.';
+      return;
+    }
+
+    $('show').innerHTML = 'now running <b>' + App.esc(s.show) + '</b> — take your list';
+    const box = $('lists');
+    box.textContent = '';
+    for (const l of s.lists) box.appendChild(row(l.id, l.name));
+    // The stage manager's view: every list at once, which is nobody's conduite and
+    // exactly what somebody watching the whole board needs.
+    box.appendChild(row('*', 'Everything', ' all'));
+
+    $('note').hidden = false;
+    $('note').innerHTML =
+      'Each address above is worth keeping. It stays the same from one show to the next, '
+      + 'so an operator can bookmark theirs once and never pick a list again.';
+  }
+
+  load();
+  // A tablet is opened before the show is started as often as after. Rather than
+  // asking the operator to reload, notice.
+  setInterval(load, 5000);
+})();
+</script>

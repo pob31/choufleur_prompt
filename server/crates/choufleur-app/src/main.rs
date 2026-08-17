@@ -255,7 +255,10 @@ fn main() {
             let w = window.clone();
             std::thread::spawn(move || {
                 if wait_until_listening(port, 20) {
-                    let url = format!("http://localhost:{port}/");
+                    // `/admin`, not `/`: the root is the operators' entry, the page a
+                    // tablet lands on to pick a cue list. This window is the machine
+                    // running the show, and what it wants is the library.
+                    let url = format!("http://localhost:{port}/admin");
                     if let Ok(url) = url.parse() {
                         let _ = w.navigate(url);
                     }
