@@ -779,6 +779,7 @@ pub fn run(
         sheets: Mutex::new(sheets),
         library: super::show::default_root(),
         capture: Mutex::new(None),
+        paused: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         channels: corpus
             .manifest
             .channels
@@ -885,6 +886,11 @@ pub fn run(
             // before it is ready would put the show ahead of the tracker from the
             // first word.
             let mut eng = Engine::load(ecfg)?;
+            // One flag, two owners: the socket sets it, the loop reads it.
+            engine_state
+                .paused
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+            let pause = eng.pause_handle();
             // Listening to the room rather than reading a file. Opened on this thread
             // because the engine owns everything it touches, and dropped with it.
             let listening = if live {
@@ -920,6 +926,23 @@ pub fn run(
                         }
                     })
                     .context("spawning the monitor thread")?;
+            }
+            // The state's flag *is* the engine's flag from here on.
+            {
+                let shared = Arc::clone(&engine_state);
+                std::thread::Builder::new()
+                    .name("choufleur-pause".into())
+                    .spawn(move || loop {
+                        std::thread::sleep(std::time::Duration::from_millis(40));
+                        if !*shared.running.lock().unwrap() {
+                            return;
+                        }
+                        pause.store(
+                            shared.paused.load(std::sync::atomic::Ordering::Relaxed),
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                    })
+                    .ok();
             }
             run_engine(&mut eng, &corpus, &prepared, tcfg, rival_cfg, bias, lang_of,
                        default_lang, static_text, &engine_state, trace_out,
@@ -1826,6 +1849,35 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                         // it starts when somebody asks and stops when
                                         // they are done — or when the patch changes
                                         // underneath, since the stream was built from it.
+                                        // Allowed during a show, obviously: it is for a
+                                        // show. A rehearsal is mostly not the play, and
+                                        // a tracker left running through a conversation
+                                        // about the last attempt can be a long way from
+                                        // where the next one begins.
+                                        Some("set_paused") => {
+                                            let want = v
+                                                .get("paused")
+                                                .and_then(|p| p.as_bool())
+                                                .unwrap_or_else(|| {
+                                                    !inbound.paused.load(
+                                                        std::sync::atomic::Ordering::Relaxed,
+                                                    )
+                                                });
+                                            inbound
+                                                .paused
+                                                .store(want, std::sync::atomic::Ordering::Relaxed);
+                                            println!(
+                                                "{}",
+                                                if want {
+                                                    "paused — the position holds"
+                                                } else {
+                                                    "resumed"
+                                                }
+                                            );
+                                            let _ = inbound
+                                                .tx
+                                                .send(Update::Paused { paused: want });
+                                        }
                                         Some("listen") => {
                                             let venue = crate::audio::load(&inbound.library);
                                             match crate::capture::Capture::open(&venue) {
@@ -2053,7 +2105,8 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                                     }
                                     if matches!(
                                         kind,
-                                        Some("listen")
+                                        Some("set_paused")
+                                            | Some("listen")
                                             | Some("stop_listening")
                                             | Some("set_venue")
                                             | Some("edit_cast")

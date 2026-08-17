@@ -304,6 +304,10 @@ pub enum Update {
     InputHealth {
         channels: Vec<crate::capture::Health>,
     },
+    /// Tracking suspended or resumed.
+    Paused {
+        paused: bool,
+    },
     /// Something the operator asked for did not work, in words they can act on.
     Trouble {
         what: String,
@@ -417,6 +421,12 @@ pub struct LiveState {
     pub sheets: Mutex<Vec<CueSheet>>,
     /// The declared cast. See [`CharacterView`].
     pub cast: Mutex<Vec<CharacterView>>,
+    /// Tracking suspended, without ending the run.
+    ///
+    /// Shared with the engine rather than read from it, because the engine is one
+    /// blocking thread that cannot be reached from the socket — the same arrangement as
+    /// `steer`, for the same reason.
+    pub paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// The input stream, while somebody is listening. `None` means nothing is open —
     /// which is most of the time, because holding an interface open is rude to whatever
     /// else the operator has running.
@@ -601,6 +611,7 @@ mod tests {
             channels: Vec::new(),
             library: std::path::PathBuf::new(),
             capture: Mutex::new(None),
+            paused: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             store: choufleur_server::Store::new(".", Vec::new()),
             sheets: Mutex::new(Vec::new()),
             prep: false,

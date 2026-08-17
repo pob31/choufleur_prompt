@@ -56,6 +56,18 @@ impl VirtualClock {
         self.started.elapsed().as_secs_f64()
     }
 
+    /// Declare that some wall-clock time did not happen.
+    ///
+    /// A paused run does not advance audio time, so every second of the pause becomes a
+    /// second of backlog — and `wait_until` only ever sleeps when it is *ahead*, never
+    /// when behind. The run therefore raced to make the pause up: eight seconds of
+    /// standing still cost sixty-eight seconds of the recording, consumed as fast as the
+    /// machine could manage. Moving the anchor forward is what makes a pause a pause
+    /// rather than a debt.
+    pub fn skip(&mut self, elapsed: std::time::Duration) {
+        self.started += elapsed;
+    }
+
     /// Block until wall time reaches `audio_t`, recording how late we already are.
     ///
     /// In batch mode this only records; it never sleeps. Note that being *late*
@@ -218,4 +230,22 @@ mod tests {
         assert!(stats.realtime_factor > 20.0, "{stats:?}");
         assert!(format!("{stats}").contains("× real time"));
     }
+
+#[cfg(test)]
+mod pause_tests {
+    use super::*;
+
+    #[test]
+    fn skipping_time_removes_the_backlog_a_pause_creates() {
+        let mut c = VirtualClock::realtime();
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        // Audio time has not moved, so the run is 120 ms behind — and `wait_until` only
+        // sleeps when it is *ahead*, so that backlog would be made up by racing through
+        // the recording.
+        let behind = c.elapsed_s();
+        assert!(behind >= 0.1, "{behind}");
+        c.skip(std::time::Duration::from_millis(120));
+        assert!(c.elapsed_s() < 0.05, "the pause is no longer owed: {}", c.elapsed_s());
+    }
+}
 }

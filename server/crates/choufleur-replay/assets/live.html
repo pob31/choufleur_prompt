@@ -466,6 +466,28 @@
   #filters .cat.off { opacity: .38; text-decoration: line-through; }
   #filters .cat:hover { color: var(--fg); }
 
+  /* Only while something is running: there is nothing to suspend in prep. */
+  #pause { display: none; }
+  body[data-running="true"] #pause {
+    display: inline-block; border: 1px solid var(--dimmer); background: none;
+    color: var(--dim); border-radius: 999px; padding: .3em .9em; font: inherit;
+    cursor: pointer;
+  }
+  body[data-prep="on"] #pause { display: none; }
+  body[data-running="true"] #pause.on {
+    border-color: var(--now); color: var(--now); background: #221d12;
+  }
+  /* Paused is a state of the whole page, not of a button. An operator glancing up has
+     to be able to tell at once why the text is not moving — a still page during a
+     conversation and a still page because tracking died look identical otherwise. */
+  body[data-paused="on"] #scroller { opacity: .55; }
+  body[data-paused="on"]::after {
+    content: 'paused'; position: fixed; top: 0; left: 0; right: 0; z-index: 9;
+    text-align: center; padding: .15em; background: #221d12; color: var(--now);
+    font: 600 .62em/1.6 ui-sans-serif, system-ui, sans-serif; letter-spacing: .22em;
+    text-transform: uppercase; pointer-events: none;
+  }
+
   #targets { display: none; margin: 0 .6em 0 .4em; }
   body[data-prep="on"] #targets {
     display: inline-block; border: 1px solid var(--dimmer); background: none;
@@ -847,6 +869,7 @@
       <span id="flagcount">0</span>
       <button id="flagnext" title="next flag">&#9654;</button>
     </span>
+    <button id="pause" title="suspend tracking — the position holds where it is">pause</button>
     <button id="edit">edit</button>
     <button id="ear">heard</button>
     <button id="follow" hidden>follow</button>
@@ -2136,6 +2159,23 @@
 
   $flag.addEventListener('click', () => toggleFlag(subject()));
 
+  // Pause. A rehearsal is mostly not the play: the company stops, talks about the last
+  // attempt, and goes again. Tracking through that conversation is how the position ends
+  // up somewhere nobody expects when the next attempt starts.
+  const $pause = document.getElementById('pause');
+  const paintPaused = (on) => {
+    document.body.dataset.paused = on ? 'on' : 'off';
+    $pause.classList.toggle('on', on);
+    $pause.textContent = on ? 'resume' : 'pause';
+  };
+  $pause.addEventListener('click', () => {
+    const want = document.body.dataset.paused !== 'on';
+    // Painted before the answer arrives: a control that waits a round trip to admit it
+    // was pressed gets pressed twice.
+    paintPaused(want);
+    ws?.send(JSON.stringify({ type: 'set_paused', paused: want }));
+  });
+
   // The cast, and the microphones it is on.
   //
   // A character is declared by being in the script's `characters` array, and only a
@@ -3321,6 +3361,8 @@
           pendingCueFor = null;
           if (k >= 0) requestAnimationFrame(() => { goTo(shown[k].lineIndex, true); editCue(k); });
         }
+      } else if (m.type === 'paused') {
+        paintPaused(!!m.paused);
       } else if (m.type === 'input_health') {
         health = m.channels || [];
         capture = health.length > 0;

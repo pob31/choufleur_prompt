@@ -177,6 +177,13 @@ pub struct Engine {
     /// Set to end a run that has no end of its own. A file stops when it runs out; a
     /// room does not, so somebody has to say when.
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Set to suspend tracking without ending the run.
+    ///
+    /// A rehearsal is mostly not the play: the company stops, talks about the last
+    /// attempt, and starts again. Left running, the tracker spends that conversation
+    /// hunting for it in the script and can be a long way from where the next attempt
+    /// begins. Paused, the position holds and the run resumes from the same line.
+    pause: std::sync::Arc<std::sync::atomic::AtomicBool>,
     cfg: EngineConfig,
     vad: SileroSession,
     whisper: WhisperEngine,
@@ -194,6 +201,7 @@ impl Engine {
         let filter = HallucinationFilter::new(cfg.filter.clone());
         Ok(Engine {
             stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            pause: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             cfg,
             vad,
             whisper,
@@ -208,6 +216,11 @@ impl Engine {
     /// somebody outside needs — "stop" — travels as a flag rather than as a call.
     pub fn stop_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
         std::sync::Arc::clone(&self.stop)
+    }
+
+    /// A handle that suspends and resumes tracking.
+    pub fn pause_handle(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        std::sync::Arc::clone(&self.pause)
     }
 
     /// Attach a tap that sees every block as it is read.
@@ -297,9 +310,44 @@ impl Engine {
         let mut seq = 0u64;
         let mut block_buf: Vec<f32> = Vec::with_capacity(block_frames);
         let mut audio_t = 0.0f64;
+        let mut paused_since: Option<std::time::Instant> = None;
         let monitored = sources[0].index;
 
         loop {
+            // Paused: nothing is read, nothing is recognised, nothing moves.
+            //
+            // Whole-loop rather than per-source, because two things besides the push had
+            // to stop as well and neither was obvious until it was measured. A replay
+            // that read and discarded raced through the file — media time was not
+            // advancing, so the clock never throttled it, and twelve seconds of pause
+            // consumed thirty-five seconds of the recording. And `drain` went on
+            // decoding whatever was already queued, so the position kept moving after
+            // the operator had asked it to stop.
+            //
+            // A live source still has to be emptied, or its ring fills and starts
+            // reporting frames lost during a break that is losing nothing.
+            if self.pause.load(std::sync::atomic::Ordering::Relaxed) {
+                if paused_since.is_none() {
+                    paused_since = Some(std::time::Instant::now());
+                }
+                if live {
+                    for src in &mut sources {
+                        let _ = src.reader.read_block(&mut block_buf, block_frames);
+                    }
+                } else {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                if self.stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                continue;
+            }
+            // Resumed. The wall clock ran through the pause and audio time did not, so
+            // the anchor moves forward by however long it lasted — otherwise the run
+            // treats the whole pause as time to make up and sprints through the file.
+            if let Some(at) = paused_since.take() {
+                clock.skip(at.elapsed());
+            }
             let mut any = false;
             for src in &mut sources {
                 if src.finished {
