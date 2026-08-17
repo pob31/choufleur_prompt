@@ -54,3 +54,10 @@ __pycache__/
 *.swp
 *~
 test_Choufleur/
+
+# The sidecar, staged for the bundler by scripts/sidecar.sh. It is a copy of a build
+# artifact, named with the host triple because Tauri will not bundle it otherwise.
+server/crates/choufleur-app/binaries/
+
+# Signing and notarization credentials for scripts/release-app.sh.
+scripts/.env.release

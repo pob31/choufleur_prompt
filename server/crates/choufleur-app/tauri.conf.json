@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Choufleur",
+  "version": "0.1.0",
+  "identifier": "fr.choufleur.desktop",
+  "build": {
+    "beforeDevCommand": "bash \"$(git rev-parse --show-toplevel)\"/scripts/sidecar.sh",
+    "beforeBuildCommand": "bash \"$(git rev-parse --show-toplevel)\"/scripts/sidecar.sh",
+    "frontendDist": "./splash"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "icon": ["icons/icon.icns"],
+    "externalBin": ["binaries/choufleur-replay"],
+    "macOS": {
+      "minimumSystemVersion": "14.0",
+      "entitlements": "./Entitlements.plist"
+    }
+  }
+}

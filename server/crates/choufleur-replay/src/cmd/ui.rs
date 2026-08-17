@@ -405,7 +405,9 @@ fn stop_child(mut r: Running) {
         }
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
-    eprintln!("{} did not stop when asked; killing it", r.name);
+    // Not `eprintln!`: this often runs with the supervisor already gone, and printing
+    // to a pipe nobody is reading panics.
+    crate::supervise::say(&format!("{} did not stop when asked; killing it", r.name));
     let _ = r.child.kill();
     let _ = r.child.wait();
 }
@@ -544,22 +546,42 @@ pub fn run(root: PathBuf, port: u16) -> Result<()> {
     rt.block_on(async move {
         let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
         println!("\n  open it at http://localhost:{port}   (ctrl-c to stop)\n");
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async {
-                // Ctrl-C *and* a plain kill. Only handling ctrl-c is how a show server
-                // outlived its parent and sat on a port for half an hour serving stale
-                // code — `pkill` on the parent left the child running, and nothing was
-                // left that knew about it.
-                let mut term = tokio::signal::unix::signal(
-                    tokio::signal::unix::SignalKind::terminate(),
-                )
-                .expect("SIGTERM handler");
-                tokio::select! {
-                    _ = tokio::signal::ctrl_c() => {}
-                    _ = term.recv() => {}
-                }
-            })
-            .await?;
+        // Ctrl-C *and* a plain kill. Only handling ctrl-c is how a show server
+        // outlived its parent and sat on a port for half an hour serving stale
+        // code — `pkill` on the parent left the child running, and nothing was
+        // left that knew about it.
+        let (shut_tx, shut_rx) = tokio::sync::watch::channel(false);
+        tokio::spawn(async move {
+            let mut term =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("SIGTERM handler");
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+            }
+            let _ = shut_tx.send(true);
+        });
+        let signalled = {
+            let mut rx = shut_rx.clone();
+            async move {
+                let _ = rx.wait_for(|v| *v).await;
+            }
+        };
+        // With a deadline on the drain, for the same reason the show server has one:
+        // a graceful shutdown waits for connections in flight, and the app's window
+        // keeps one alive. Waiting for a page that is not going to close first is how
+        // "quit" becomes "kill".
+        let deadline = {
+            let mut rx = shut_rx;
+            async move {
+                let _ = rx.wait_for(|v| *v).await;
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+        };
+        tokio::select! {
+            r = axum::serve(listener, app).with_graceful_shutdown(signalled) => r?,
+            _ = deadline => {}
+        }
         // A show server started from here is this process's child, and leaving it
         // running after its parent has gone is a port nobody can find again.
         if let Some(r) = ui.show.lock().unwrap().take() {

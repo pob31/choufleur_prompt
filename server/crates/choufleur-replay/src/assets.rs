@@ -11,6 +11,13 @@
 //! That bug has already happened once on this project: `ASSET_PATH` was repo-relative,
 //! the disk read failed for every request, and every edit to the page appeared to do
 //! nothing until the next rebuild.
+//!
+//! The disk read is a development convenience and is compiled out of a release build.
+//! `CARGO_MANIFEST_DIR` is baked in at build time, so on the machine the app was built
+//! on it still points at the working copy — and a shipped app that reads the page from
+//! whatever the developer happens to have half-edited is the same silent-staleness bug
+//! wearing a hat. Elsewhere it fails and falls back, which is worse: the bug then
+//! exists only on the one machine nobody would think to suspect.
 
 /// A `GET` handler serving one file from `assets/`, disk first.
 ///
@@ -21,19 +28,25 @@
 macro_rules! asset_route {
     ($file:literal, $mime:literal) => {
         axum::routing::get(|| async {
+            // The copy that ships, always present.
+            //
             // Both paths absolute, from the crate root. `include_str!` resolves
             // relative to the file that *invokes* the macro, so a relative fallback
             // would mean a different path per call site — which is how the original
             // arrangement ended up pointing at nothing and silently serving the
             // compiled-in copy for every request.
-            let body = std::fs::read_to_string(concat!(
+            #[allow(unused_mut)]
+            let mut body =
+                include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/", $file)).to_string();
+            // Editing a page and reloading is enough, while developing.
+            #[cfg(debug_assertions)]
+            if let Ok(fresh) = std::fs::read_to_string(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/assets/",
                 $file
-            ))
-            .unwrap_or_else(|_| {
-                include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/", $file)).to_string()
-            });
+            )) {
+                body = fresh;
+            }
             (
                 [
                     (axum::http::header::CONTENT_TYPE, $mime),

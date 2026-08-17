@@ -208,7 +208,8 @@
 
     const openBtn = document.createElement('button');
     openBtn.className = 'pill go';
-    openBtn.textContent = isOpen ? 'Open in a tab' : 'Open';
+    // Inside the app there is one window and no tabs to open anything in.
+    openBtn.textContent = isOpen && !App.shell ? 'Open in a tab' : 'Open';
     openBtn.onclick = async () => {
       // Disabled while it starts, so an impatient second click cannot ask twice.
       openBtn.disabled = true;
@@ -225,6 +226,11 @@
         // window it already has, and the query makes the address differ so it actually
         // reloads rather than deciding it is already there.
         const url = `http://${location.hostname}:${r.port}/?show=${encodeURIComponent(r.name)}`;
+        // In the app, go there. A webview refuses to open a window nobody asked it
+        // for, so `window.open` would return null and the button would look broken;
+        // and one window is what the app is for. The show page carries its own way
+        // back to the library.
+        if (App.shell) { location.assign(url); return; }
         const w = window.open(url, 'choufleur-show');
         w?.focus();
         await load();

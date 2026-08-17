@@ -114,5 +114,15 @@ const App = (() => {
     String(s).replace(/[&<>"']/g, (c) =>
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-  return { fmt, slug, get, post, confirmButton, swatchRow, PALETTE, esc };
+  // `{ uiPort }` when this page is inside the desktop app, otherwise null.
+  //
+  // The same pages are served to the app's window and to every operator's tablet, and
+  // a few things are true in only one of them: the app has one window rather than
+  // tabs, and it knows the library server's port even when the page being shown
+  // belongs to a show server on another one. Set by the shell as the window's first
+  // script, so it is already there before any page runs — including after navigating
+  // to a different port.
+  const shell = window.__CHOUFLEUR_SHELL__ ?? null;
+
+  return { fmt, slug, get, post, confirmButton, swatchRow, PALETTE, esc, shell };
 })();

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Choufleur</title>
+<style>
+  /* Standalone on purpose: this page is shown before any server exists, so it can
+     borrow nothing from app.css. */
+  :root { color-scheme: dark; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: #14161a;
+    color: #d8dbe0;
+    font: 15px/1.5 ui-sans-serif, -apple-system, system-ui, sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    -webkit-user-select: none; user-select: none;
+  }
+  main { text-align: center; max-width: 34rem; padding: 2rem; }
+  h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: .02em; margin: 0 0 .6rem; }
+  p { margin: .4rem 0; color: #9aa1ad; }
+  #trouble { display: none; margin-top: 1.4rem; text-align: left; }
+  #trouble pre {
+    background: #1c1f25; border: 1px solid #2a2e36; border-radius: 6px;
+    padding: .7rem .8rem; overflow-x: auto; white-space: pre-wrap;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #c3c8d1;
+    -webkit-user-select: text; user-select: text;
+  }
+  body[data-state="failed"] #starting { display: none; }
+  body[data-state="failed"] #trouble { display: block; }
+  .dot { animation: blink 1.4s infinite; }
+  .dot:nth-child(2) { animation-delay: .2s; }
+  .dot:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 60%, 100% { opacity: .25 } 30% { opacity: 1 } }
+</style>
+</head>
+<body>
+<main>
+  <div id="starting">
+    <h1>Choufleur</h1>
+    <p>Starting<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span></p>
+  </div>
+  <div id="trouble">
+    <h1>Choufleur did not start</h1>
+    <p>The library server stopped before it was ready. What it said:</p>
+    <pre id="why">—</pre>
+  </div>
+</main>
+</body>
+</html>

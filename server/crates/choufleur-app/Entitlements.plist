@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The whole reason this bundle exists. Without it, and without the usage
+	     description in Info.plist, macOS hands the process a microphone stream that
+	     runs and delivers nothing at all: no error, no prompt, and nothing in System
+	     Settings to allow. It is indistinguishable from a dead patch, which is what
+	     `choufleur-replay listen` was written to tell apart.
+
+	     It has to be on the sidecar as well as the app. Capture happens in the show
+	     server, and a hardened-runtime binary without this entitlement is refused the
+	     microphone even when the user has already granted it. -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+
+	<!-- Not sandboxed. The app spawns helper processes, listens on the venue network
+	     so operators' tablets can reach it, and reads and writes a library the
+	     operator chose the location of. Sandboxing all three is its own project, and
+	     Developer ID distribution does not ask for it. -->
+</dict>
+</plist>

@@ -849,6 +849,9 @@
   </div>
   <div id="editing">editing — click a line to correct it</div>
   <footer>
+    <!-- Only inside the app, where this window is the only one there is. In a browser
+         the library is the tab it was opened from. -->
+    <button id="library" title="back to the library" hidden>&#9664; shows</button>
     <span id="dot"></span>
     <span id="where">—</span>
     <span id="conf">—</span>
@@ -3222,6 +3225,20 @@
   document.getElementById('ear').addEventListener('click', () => {
     document.body.dataset.heard = document.body.dataset.heard === 'off' ? 'on' : 'off';
   });
+
+  // The way back to the library, in the app only.
+  //
+  // The library is served by a different process on a different port, which the page
+  // has no way of knowing — the shell injects it, because the shell is what chose it.
+  // A tablet gets neither the flag nor the button: an operator's screen has one job
+  // and wandering off it mid-show is not among them.
+  if (App.shell) {
+    const back = document.getElementById('library');
+    back.hidden = false;
+    back.addEventListener('click', () => {
+      location.assign(`http://${location.hostname}:${App.shell.uiPort}/`);
+    });
+  }
 
   // ---- the race: two matchers, one script, a pointer each --------------------
   const $gap = document.getElementById('gap');

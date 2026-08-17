@@ -1,0 +1,21 @@
+[package]
+name = "choufleur-app"
+description = "The desktop shell: a window for the library, and the process that owns everything else's lifetime."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Deliberately light. This crate must not depend on choufleur-replay: the point of
+# the sidecar arrangement is that changing the window does not rebuild whisper.cpp.
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
+serde_json = { workspace = true }
+libc = { workspace = true }
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

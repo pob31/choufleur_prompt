@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/choufleur-app",
     "crates/choufleur-core",
     "crates/choufleur-asr",
     "crates/choufleur-replay",

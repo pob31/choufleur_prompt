@@ -981,7 +981,7 @@ pub fn run(
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     if !engine.is_finished() {
-        eprintln!("the engine did not stop in time; leaving it behind");
+        crate::supervise::say("the engine did not stop in time; leaving it behind");
         outcome?;
         // Nothing is left to write and the thread cannot be dropped while it runs.
         std::process::exit(0);
@@ -1737,6 +1737,26 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                 "/sheets.json",
                 get(|State(s): State<Arc<LiveState>>| async move {
                     axum::Json(s.sheets.lock().unwrap().clone())
+                }),
+            )
+            .route(
+                "/run.json",
+                get(|State(s): State<Arc<LiveState>>| async move {
+                    // Whether anything would be interrupted by stopping this server.
+                    // The desktop shell asks before it quits, and this is the only
+                    // question it needs answered: prep can be closed without a word,
+                    // a run in progress cannot.
+                    //
+                    // `running` is set true when the state is built and only ever
+                    // cleared by the engine finishing, so in prep — where there is no
+                    // engine — it stays true forever and means nothing. Hence the
+                    // guard: without it, closing a script somebody was reading at a
+                    // table would ask whether to interrupt the performance.
+                    axum::Json(serde_json::json!({
+                        "prep": s.prep,
+                        "running": !s.prep && *s.running.lock().unwrap(),
+                        "capture": s.capture.lock().unwrap().is_some(),
+                    }))
                 }),
             )
             .route(

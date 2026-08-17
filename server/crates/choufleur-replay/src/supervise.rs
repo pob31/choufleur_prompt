@@ -17,6 +17,19 @@
 //! **whoever sets the variable must give the child a pipe for stdin.** Armed against
 //! an inherited terminal instead, a backgrounded job would read from the tty and be
 //! stopped with SIGTTIN. That is why this is not simply always on.
+//!
+//! Three details here are not decoration, and all three were paid for by the same
+//! bug. The signal is sent to the *process* rather than raised on this thread; there
+//! is a deadline after it; and nothing on this path may panic — including printing.
+//!
+//! That last one is the subtle one. The supervisor going away usually takes our
+//! stdout and stderr with it, because they were its pipes too. A write to a pipe with
+//! no reader fails, and `println!` and `eprintln!` *panic* when a write fails. So the
+//! first version announced itself, panicked on the announcement, and the thread died
+//! before it could do the one thing it exists to do — leaving exactly the orphaned
+//! server it was written to prevent, in exactly the case it was written for. Under a
+//! parent that redirected the pipes elsewhere it worked perfectly, which is why the
+//! tests were happy and the app was not.
 
 /// Watch stdin for the parent's death, if we were started under supervision.
 ///
@@ -44,15 +57,43 @@ pub fn arm() {
                     Err(_) => break,
                 }
             }
-            eprintln!("supervisor gone — shutting down");
-            // Deliberately a signal to ourselves rather than a direct call into the
-            // shutdown code: there is then one way this process stops, already tested
-            // by every ctrl-c.
+            // Said, if anyone is still there to hear it, and never depended on.
+            say("supervisor gone — shutting down");
+            // To the process, not to this thread.
+            //
+            // `raise` sends the signal to whichever thread calls it, and a thread that
+            // inherited SIGTERM blocked or ignored — which is what a Mac GUI parent
+            // hands its children, because AppKit takes SIGTERM over for itself —
+            // swallows it in silence. That is not a theory: under the desktop shell
+            // this thread reached exactly here, the signal went nowhere, and the
+            // server kept serving on its port for as long as it was left alone, which
+            // is the whole bug this file exists to prevent. Sent to the process, the
+            // kernel gives it to any thread that will have it.
             unsafe {
-                libc::raise(libc::SIGTERM);
+                libc::kill(std::process::id() as libc::pid_t, libc::SIGTERM);
             }
+            // And if even that is refused, leave anyway.
+            //
+            // Long enough for an honest shutdown — a show server drains for three
+            // seconds and then gives its engine five to come out of a decode — and
+            // then it stops being a shutdown and starts being an orphan. Outliving
+            // the supervisor is the one outcome that is not allowed. Late is fine.
+            std::thread::sleep(std::time::Duration::from_secs(10));
+            say("shutting down took too long — leaving now");
+            unsafe { libc::_exit(0) }
         });
     if spawned.is_err() {
-        eprintln!("could not watch for the supervisor; this process will outlive it");
+        say("could not watch for the supervisor; this process will outlive it");
     }
+}
+
+/// Print a line to stderr, or do not. Never panic over it.
+///
+/// `eprintln!` panics when the write fails, and on this path the write failing is the
+/// expected case rather than the surprising one — the reader was our supervisor, and
+/// the supervisor is why we are here. Anything else that runs while shutting down
+/// should say things this way for the same reason.
+pub fn say(line: &str) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr(), "{line}");
 }

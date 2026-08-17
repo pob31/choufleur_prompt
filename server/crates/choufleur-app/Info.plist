@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Shown in the permission prompt, so it is addressed to the person standing at
+	     the machine rather than to a reviewer. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Choufleur listens to the stage microphones to follow the script.</string>
+
+	<!-- Insurance. What the app actually does is listen for connections, which is the
+	     firewall's business rather than this one — but macOS has moved the line here
+	     before, and an unexplained prompt during a show is worse than a spare key. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Operators' tablets connect to Choufleur over the venue network.</string>
+</dict>
+</plist>
