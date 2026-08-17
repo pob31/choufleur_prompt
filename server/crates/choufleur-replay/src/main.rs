@@ -88,6 +88,18 @@ struct AudioArgs {
 }
 
 #[derive(Subcommand)]
+enum ModelsCmd {
+    /// What is here, what is missing, and where to put it by hand.
+    List,
+    /// Download whatever is missing, resuming anything half-fetched.
+    Fetch {
+        /// Also fetch `medium`: three times the size, slower, more accurate.
+        #[arg(long)]
+        medium: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum ShowCmd {
     /// What is in the library.
     List,
@@ -174,6 +186,19 @@ enum Command {
         /// The library directory.
         #[arg(long, global = true)]
         library: Option<PathBuf>,
+    },
+
+    /// The recogniser's weights: what is here, and how to get the rest.
+    ///
+    /// About 490 MB, once per machine. They live beside the library rather than in the
+    /// repository — they carry their own licences and cannot be committed — and the
+    /// Shows screen offers the same thing with a button.
+    Models {
+        #[command(subcommand)]
+        what: ModelsCmd,
+        /// Where to put them. Defaults to `<library>/models`.
+        #[arg(long, global = true)]
+        into: Option<PathBuf>,
     },
 
     /// The server UI: the library, in a window.
@@ -376,6 +401,10 @@ fn main() -> Result<()> {
             seconds,
             scan,
         ),
+        Command::Models { what, into } => match what {
+            ModelsCmd::List => cmd::models::list(into),
+            ModelsCmd::Fetch { medium } => cmd::models::fetch_all(into, medium),
+        },
         Command::Ui { library, port } => {
             cmd::ui::run(library.unwrap_or_else(cmd::show::default_root), port)
         }

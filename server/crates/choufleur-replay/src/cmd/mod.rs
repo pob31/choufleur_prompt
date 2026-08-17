@@ -1,5 +1,6 @@
 pub mod eval;
 pub mod make_fixture;
+pub mod models;
 pub mod serve;
 pub mod listen;
 pub mod show;

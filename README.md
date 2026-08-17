@@ -58,10 +58,16 @@ the exact phrase that fires each cue, and editors for the script, the cues and t
 list's own vocabulary. Several devices join independently — position is shared,
 everything else belongs to a list.
 
+**An app**, signed, for the machine that runs the show. It is what makes live capture
+possible at all: macOS gives a plain binary a microphone stream that runs and delivers
+nothing — no error, no prompt — and only a bundle is ever asked about. It holds one
+window on the library, downloads the models on first run, and takes every server with
+it when it closes.
+
 **Still open.** Multitrack has never been tracked against a corpus, which is the case
 with the most to gain since knowing who is speaking should resolve most remaining
-ambiguity. Near-identical lines still cause the one reproducible error. And nothing here
-is installable by anyone who is not holding a Rust toolchain.
+ambiguity. Near-identical lines still cause the one reproducible error. And the app is
+not notarized yet, so another Mac will refuse it until it is.
 
 Findings, including the ones that failed and why, are in
 [docs/choufleur-phase0-notes.md](docs/choufleur-phase0-notes.md).
@@ -78,11 +84,42 @@ cd .. && ./server/target/release/choufleur-replay make-fixture corpus/fixture-sm
 Watch it follow a show, with the audio audible and the script on screen:
 
 ```bash
-# a live run: sound out of the default device, the page at localhost:8080
+# the library, and a show server started from it — what the app runs
+./server/target/release/choufleur-replay ui --port 8080
+
+# a live run on its own: sound out of the default device, the page at localhost:8080
 ./server/target/release/choufleur-replay serve <manifest> --port 8080
 
 # the same script with no audio, for preparing it and its cue lists
 ./server/target/release/choufleur-replay serve <manifest> --prep --port 8080
+```
+
+### The app
+
+```bash
+scripts/sidecar.sh                        # build the server the app carries
+cd server/crates/choufleur-app && cargo tauri dev
+
+# signed, and a DMG beside it
+APPLE_SIGNING_IDENTITY='Developer ID Application: … (TEAMID)' scripts/release-app.sh
+```
+
+Add `APPLE_ID`, `APPLE_PASSWORD` (an app-specific one) and `APPLE_TEAM_ID` — in
+`scripts/.env.release`, which is not committed — and it notarizes too. Without that a
+second Mac refuses it; `release-app.sh` says so rather than leaving it to be discovered
+on the door of a venue.
+
+**The microphone only works from the app.** A binary run from a terminal is given a
+stream that delivers nothing at all rather than an error, and never appears in System
+Settings to be allowed. `cargo tauri dev` is not proof either — under it, capture is
+attributed to the terminal's own permission. Test in the bundle.
+
+Models are fetched once per machine into `~/Choufleur/models`, from the app's first-run
+panel or from a terminal:
+
+```bash
+./server/target/release/choufleur-replay models list     # what is here, and where to put it
+./server/target/release/choufleur-replay models fetch    # ~490 MB, resumable, checksummed
 ```
 
 | Document | Contents |
@@ -100,10 +137,12 @@ choufleur/
 │   └── crates/
 │       ├── choufleur-core     # tracking engine: normalization, matching, position
 │       ├── choufleur-asr      # resample, VAD, Whisper: buffers in, segments out
-│       └── choufleur-replay   # offline replay, tracking and evaluation harness
+│       ├── choufleur-server   # the library on disk: shows, versions, safe writes
+│       ├── choufleur-replay   # the binary: servers, audio, CLI, and the web client
+│       └── choufleur-app      # the desktop shell — one window, and everything's lifetime
 ├── corpus/          # evaluation recordings — manifests in git, audio is not
 ├── research/        # Python sidecar for forced alignment; never in the show path
-├── scripts/         # model fetching
+├── scripts/         # model fetching, and building the app
 ├── remote/          # Flutter/Dart — web-first client (Phase 3, not started)
 ├── docs/            # PRD, notation spec, development plan, notes
 ├── LICENSE-MIT      # MIT OR Apache-2.0 dual license

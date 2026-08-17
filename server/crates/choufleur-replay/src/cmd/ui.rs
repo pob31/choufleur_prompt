@@ -39,6 +39,19 @@ struct Ui {
     port: u16,
     /// The one show server this process has started, if any.
     show: Mutex<Option<Running>>,
+    /// A model download, while one is happening.
+    ///
+    /// Only whether it is running and what went wrong last. How far along it is comes
+    /// from the size of the `.part` file on disk, which is the truth and which a
+    /// download started from a terminal — or finished by hand on a stick — moves in
+    /// exactly the same way.
+    fetching: Mutex<Fetching>,
+}
+
+#[derive(Default)]
+struct Fetching {
+    running: bool,
+    error: Option<String>,
 }
 
 /// Anything a handler can fail with, rendered as the message the screen shows.
@@ -321,6 +334,19 @@ async fn open(
     Json(req): Json<OpenReq>,
 ) -> Reply<Json<OpenDto>> {
     let e = ui.entry(&name)?;
+    // Asked here rather than discovered by the child.
+    //
+    // Without the models a show server starts, fails to load them, and exits — and
+    // all this end sees is a readiness check that times out after twelve seconds and
+    // says the script may not load, which is both wrong and slow. Prep needs no
+    // models at all and is left alone.
+    if !req.prep && !crate::cmd::models::ready(&models_dir(&ui)) {
+        return Err(Fail(anyhow::anyhow!(
+            "the recogniser's models are not here yet — download them from the panel at \
+             the top of this screen, or run `choufleur-replay models fetch`. Opening for \
+             prep works without them."
+        )));
+    }
     // A port nothing else is on.
     //
     // This used to be `ui.port + 1` and that was a trap. A show server outlives its
@@ -492,6 +518,103 @@ async fn wait_until_listening(port: u16, name: &str) -> Result<()> {
     )
 }
 
+/// What the recogniser needs, and how much of it is here.
+///
+/// Read from the folder on every request rather than remembered, so a file copied in
+/// from a stick — which is how this goes when a venue blocks the download — shows up
+/// without anything having to be told.
+async fn models(State(ui): State<Arc<Ui>>) -> Json<serde_json::Value> {
+    let dir = models_dir(&ui);
+    let files: Vec<serde_json::Value> = crate::cmd::models::CATALOG
+        .iter()
+        .map(|m| {
+            let (state, got) = match crate::cmd::models::state_of(&dir, m) {
+                crate::cmd::models::State::Ready => ("ready", m.bytes),
+                crate::cmd::models::State::Partial { got } => ("partial", got),
+                crate::cmd::models::State::Absent => ("absent", 0),
+            };
+            serde_json::json!({
+                "file": m.file,
+                "label": m.label,
+                "bytes": m.bytes,
+                "size": crate::cmd::models::megabytes(m.bytes),
+                "got": got,
+                "state": state,
+                "optional": m.optional,
+                "url": m.urls[0],
+            })
+        })
+        .collect();
+    let f = ui.fetching.lock().unwrap();
+    Json(serde_json::json!({
+        "dir": dir.to_string_lossy(),
+        "ready": crate::cmd::models::ready(&dir),
+        "fetching": f.running,
+        "error": f.error,
+        "models": files,
+    }))
+}
+
+/// Start fetching whatever is missing. Answers immediately; the screen watches
+/// `/api/models` to see it happen.
+async fn fetch_models(State(ui): State<Arc<Ui>>) -> Reply<Json<Report>> {
+    {
+        let mut f = ui.fetching.lock().unwrap();
+        if f.running {
+            return Ok(Json(Report {
+                ok: true,
+                text: "already downloading".into(),
+            }));
+        }
+        f.running = true;
+        f.error = None;
+    }
+    let dir = models_dir(&ui);
+    let ui2 = Arc::clone(&ui);
+    // On a blocking thread: this is minutes of network and disk, and it must not sit
+    // on the runtime that the screen is asking for progress on.
+    tokio::task::spawn_blocking(move || {
+        let mut outcome = Ok(());
+        for m in crate::cmd::models::CATALOG.iter().filter(|m| !m.optional) {
+            if let Err(e) = crate::cmd::models::fetch(&dir, m) {
+                outcome = Err(format!("{e:#}"));
+                break;
+            }
+        }
+        let mut f = ui2.fetching.lock().unwrap();
+        f.running = false;
+        f.error = outcome.err();
+    });
+    Ok(Json(Report {
+        ok: true,
+        text: "downloading".into(),
+    }))
+}
+
+/// Show the models folder in the Finder, making it if it is not there yet.
+///
+/// For the case the download cannot help with: a venue network that will not fetch
+/// them, and a file to be dropped in by hand from a stick. Opens on the machine
+/// running the server, which is the machine the folder is on.
+async fn reveal_models(State(ui): State<Arc<Ui>>) -> Reply<Json<Report>> {
+    let dir = models_dir(&ui);
+    std::fs::create_dir_all(&dir)?;
+    std::process::Command::new("open").arg(&dir).spawn()?;
+    Ok(Json(Report {
+        ok: true,
+        text: dir.to_string_lossy().into_owned(),
+    }))
+}
+
+/// The models folder for this library — `<library>/models`, honouring an explicit
+/// `$CHOUFLEUR_MODELS` so a machine that keeps them elsewhere is not contradicted.
+fn models_dir(ui: &Ui) -> PathBuf {
+    match std::env::var_os("CHOUFLEUR_MODELS") {
+        Some(dir) => PathBuf::from(dir),
+        None => ui.root.join("models"),
+    }
+}
+
 async fn close(State(ui): State<Arc<Ui>>) -> Reply<Json<Report>> {
     let mut slot = ui.show.lock().unwrap();
     let Some(r) = slot.take() else {
@@ -514,6 +637,7 @@ impl Ui {
             root,
             port,
             show: Mutex::new(None),
+            fetching: Mutex::new(Fetching::default()),
         }
     }
 }
@@ -540,6 +664,9 @@ pub fn run(root: PathBuf, port: u16) -> Result<()> {
         .route("/api/shows/{name}/check", post(check_show))
         .route("/api/shows/{name}/open", post(open))
         .route("/api/close", post(close))
+        .route("/api/models", get(models))
+        .route("/api/models/fetch", post(fetch_models))
+        .route("/api/models/reveal", post(reveal_models))
         .with_state(Arc::clone(&ui));
 
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
