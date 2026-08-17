@@ -26,6 +26,12 @@ struct Running {
     name: String,
     port: u16,
     child: Child,
+    /// The write end of the child's stdin, held and never written to.
+    ///
+    /// Not a channel — a deadline. Closing it, or dying and letting the kernel close
+    /// it, is what tells the child we are gone; see [`crate::supervise`]. It is the
+    /// only signal that still arrives when this process is killed outright.
+    stdin: Option<std::process::ChildStdin>,
 }
 
 struct Ui {
@@ -331,9 +337,8 @@ async fn open(
         let mut slot = ui.show.lock().unwrap();
         // One show at a time. Whatever was open closes first, so there is never a
         // second server quietly holding a lock on a different show's files.
-        if let Some(mut old) = slot.take() {
-            let _ = old.child.kill();
-            let _ = old.child.wait();
+        if let Some(old) = slot.take() {
+            stop_child(old);
         }
         let exe = std::env::current_exe().context("finding this binary")?;
         let mut cmd = std::process::Command::new(exe);
@@ -341,6 +346,10 @@ async fn open(
             .arg(&e.manifest)
             .arg("--port")
             .arg(port.to_string())
+            // A pipe the child watches for our death, and the contract that comes with
+            // the variable: whoever sets it owes the child a stdin it can read.
+            .stdin(std::process::Stdio::piped())
+            .env("CHOUFLEUR_SUPERVISED", "1")
             // Which library this show belongs to. Without it the child falls back to
             // `$HOME/Choufleur` and reads — and writes — the patch of a different
             // library entirely, which is how a show opened from the scratchpad ended up
@@ -349,18 +358,112 @@ async fn open(
         if req.prep {
             cmd.arg("--prep");
         }
-        let child = cmd
+        let mut child = cmd
             .spawn()
             .with_context(|| format!("starting a show server for {}", e.name))?;
+        let stdin = child.stdin.take();
         *slot = Some(Running {
             name: e.name.clone(),
             port,
             child,
+            stdin,
         });
     }
 
     wait_until_listening(port, &e.name).await?;
     Ok(Json(OpenDto { name: e.name, port }))
+}
+
+/// End a show server, asking before insisting.
+///
+/// Three steps, weakest first, because a show server that is asked to stop writes
+/// nothing more and lets go of the audio interface, and one that is killed outright
+/// does neither. The pipe goes first because it reaches the child even if the signal
+/// does not; SIGTERM is the ordinary path; SIGKILL is what is left when a process is
+/// wedged, and taking it means something was already wrong.
+///
+/// Blocks the caller for up to three seconds. A show server answers in a fraction of
+/// that unless it is mid-decode, and this server has one operator.
+fn stop_child(mut r: Running) {
+    // Closing the pipe: the child's supervisor thread sees EOF and raises SIGTERM on
+    // itself, which is the same shutdown the signal below asks for.
+    drop(r.stdin.take());
+    let pid = r.child.id() as libc::pid_t;
+    unsafe {
+        libc::kill(pid, libc::SIGTERM);
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        match r.child.try_wait() {
+            Ok(Some(_)) => return,
+            // Already gone, and somebody else reaped it.
+            Err(_) => return,
+            Ok(None) => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    eprintln!("{} did not stop when asked; killing it", r.name);
+    let _ = r.child.kill();
+    let _ = r.child.wait();
+}
+
+/// Kill any show server left behind by a previous run of this binary.
+///
+/// A parent that is killed outright cannot tidy up after itself, and what it leaves
+/// is a server holding a port and serving a show nobody asked for. That orphan has
+/// twice been mistaken for a server that had just started — most memorably as every
+/// show opening as Hécube. Scanning for a free port stopped the collision; this stops
+/// the orphan, which is the thing that was actually wrong.
+///
+/// Deliberately narrow: only processes whose parent is already gone (`ppid` 1), and
+/// only this exact binary running `serve`. A show server started by hand from a
+/// terminal still has its shell for a parent and is none of our business.
+fn sweep_orphans() {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let prefix = format!("{} serve", exe.display());
+    let Ok(out) = std::process::Command::new("ps")
+        .args(["-axo", "pid=,ppid=,command="])
+        .output()
+    else {
+        return;
+    };
+    let me = std::process::id();
+    let mut found = 0;
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let mut parts = line.split_whitespace();
+        let (Some(pid), Some(ppid)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        let (Ok(pid), Ok(ppid)) = (pid.parse::<u32>(), ppid.parse::<u32>()) else {
+            continue;
+        };
+        if ppid != 1 || pid == me {
+            continue;
+        }
+        let command = line
+            .split_once(char::is_whitespace)
+            .and_then(|(_, rest)| rest.trim_start().split_once(char::is_whitespace))
+            .map(|(_, rest)| rest.trim_start())
+            .unwrap_or("");
+        if !command.starts_with(&prefix) {
+            continue;
+        }
+        eprintln!("an orphaned show server was still running (pid {pid}); stopping it");
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGTERM);
+        }
+        found += 1;
+    }
+    // Long enough for a signalled server to let go of its port, so the next show can
+    // have the port it would have had anyway.
+    if found > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
 }
 
 /// The first port from `from` upward that nothing is listening on.
@@ -389,17 +492,17 @@ async fn wait_until_listening(port: u16, name: &str) -> Result<()> {
 
 async fn close(State(ui): State<Arc<Ui>>) -> Reply<Json<Report>> {
     let mut slot = ui.show.lock().unwrap();
-    let Some(mut r) = slot.take() else {
+    let Some(r) = slot.take() else {
         return Ok(Json(Report {
             ok: true,
             text: "nothing was open".into(),
         }));
     };
-    let _ = r.child.kill();
-    let _ = r.child.wait();
+    let name = r.name.clone();
+    stop_child(r);
     Ok(Json(Report {
         ok: true,
-        text: format!("closed {}", r.name),
+        text: format!("closed {name}"),
     }))
 }
 
@@ -414,6 +517,9 @@ impl Ui {
 }
 
 pub fn run(root: PathBuf, port: u16) -> Result<()> {
+    crate::supervise::arm();
+    // Before anything binds: whatever the last run left behind is still answering.
+    sweep_orphans();
     let ui = Arc::new(Ui::new(root.clone(), port));
     println!("library: {}", root.display());
     if !root.exists() {
@@ -456,9 +562,8 @@ pub fn run(root: PathBuf, port: u16) -> Result<()> {
             .await?;
         // A show server started from here is this process's child, and leaving it
         // running after its parent has gone is a port nobody can find again.
-        if let Some(mut r) = ui.show.lock().unwrap().take() {
-            let _ = r.child.kill();
-            let _ = r.child.wait();
+        if let Some(r) = ui.show.lock().unwrap().take() {
+            stop_child(r);
         }
         Ok::<(), anyhow::Error>(())
     })

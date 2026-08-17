@@ -690,6 +690,7 @@ pub fn run(
     live: bool,
     cues_path: &[PathBuf],
 ) -> Result<()> {
+    crate::supervise::arm();
     let corpus = Corpus::load(corpus_path, audio_root)?;
     let (script, prepared) = super::load_script(&corpus.script_path())?;
 
@@ -780,6 +781,7 @@ pub fn run(
         library: super::show::default_root(),
         capture: Mutex::new(None),
         paused: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        engine_stop: Mutex::new(None),
         channels: corpus
             .manifest
             .channels
@@ -886,6 +888,9 @@ pub fn run(
             // before it is ready would put the show ahead of the tracker from the
             // first word.
             let mut eng = Engine::load(ecfg)?;
+            // Published before anything runs, so a shutdown arriving during the first
+            // block of audio still finds something to stop.
+            *engine_state.engine_stop.lock().unwrap() = Some(eng.stop_handle());
             // One flag, two owners: the socket sets it, the loop reads it.
             engine_state
                 .paused
@@ -963,7 +968,25 @@ pub fn run(
         })
         .context("spawning the engine thread")?;
 
-    serve_http(state, port)?;
+    let outcome = serve_http(Arc::clone(&state), port);
+    // Serving has ended, which only happens on a signal, so the run ends too. A
+    // replay reaches the end of its corpus by itself; a room does not, and joining a
+    // live engine without asking it to stop is a process that never exits.
+    state.request_stop();
+    // The flag is read between blocks, so the wait is normally a moment. It is not
+    // unbounded, because a decode already inside Whisper finishes on its own schedule
+    // and a shell waiting to quit should not be held by it.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !engine.is_finished() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    if !engine.is_finished() {
+        eprintln!("the engine did not stop in time; leaving it behind");
+        outcome?;
+        // Nothing is left to write and the thread cannot be dropped while it runs.
+        std::process::exit(0);
+    }
+    outcome?;
     match engine.join() {
         Ok(r) => r,
         Err(_) => anyhow::bail!("the engine thread panicked"),
@@ -2509,13 +2532,49 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
 
         let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
         println!("\n  watch it at http://localhost:{port}   (ctrl-c to stop)\n");
+
+        // Ctrl-C *and* a plain kill. Only handling ctrl-c is how this process survived
+        // being asked to stop: the desktop shell and its parent both send SIGTERM, and
+        // an orphan that ignores it keeps a port and serves a stale show.
+        let (shut_tx, shut_rx) = tokio::sync::watch::channel(false);
+        tokio::spawn(async move {
+            let mut term =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("SIGTERM handler");
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+            }
+            let _ = shut_tx.send(true);
+        });
+
         // Serving outlives the run on purpose: when the show ends the page should
-        // still be there, showing where it finished, rather than going blank.
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async {
-                let _ = tokio::signal::ctrl_c().await;
-            })
-            .await?;
+        // still be there, showing where it finished, rather than going blank. Only a
+        // signal ends it — never the run ending, and never the last page closing.
+        let winding_down = {
+            let state = Arc::clone(&state);
+            let mut rx = shut_rx.clone();
+            async move {
+                let _ = rx.wait_for(|v| *v).await;
+                // Told here rather than after serving returns, so the engine winds
+                // down while the last connections drain instead of afterwards.
+                state.request_stop();
+            }
+        };
+        // A deadline on the drain, because a graceful shutdown waits for connections
+        // in flight and an operator's page holds its socket open for the whole show.
+        // Without this the wait is unbounded and every quit ends in a hard kill.
+        let deadline = {
+            let mut rx = shut_rx;
+            async move {
+                let _ = rx.wait_for(|v| *v).await;
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+        };
+        tokio::select! {
+            r = axum::serve(listener, app).with_graceful_shutdown(winding_down) => r?,
+            _ = deadline => {}
+        }
         Ok::<(), anyhow::Error>(())
     })
 }

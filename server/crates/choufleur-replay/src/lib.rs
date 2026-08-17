@@ -13,4 +13,5 @@ pub mod formats;
 pub mod live;
 pub mod manifest;
 pub mod monitor;
+pub mod supervise;
 pub mod wav_stream;

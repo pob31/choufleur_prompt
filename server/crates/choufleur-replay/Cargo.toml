@@ -21,6 +21,7 @@ axum = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
 cpal = { workspace = true }
+libc = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

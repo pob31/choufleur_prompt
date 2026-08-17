@@ -32,8 +32,13 @@ pub fn load_script(path: &Path) -> Result<(Script, PreparedScript)> {
 /// Find a model file without making the caller think about where they are.
 ///
 /// An explicit `--model` always wins. Otherwise look in `$CHOUFLEUR_MODELS`, then
-/// in the places the repository actually puts them, so the command works the same
-/// from the workspace root and from `server/`.
+/// beside the library, then in the places the repository actually puts them, so the
+/// command works the same from the workspace root and from `server/`.
+///
+/// `<library>/models` is where an installed copy keeps them. It is deliberately a
+/// visible folder next to the shows rather than somewhere under `Library/`: half a
+/// gigabyte of weights that a venue's network may refuse to hand over has to be
+/// somewhere a person can drop a file by hand, or copy from a USB stick.
 pub fn resolve_model(explicit: Option<&Path>, filename: &str) -> Result<PathBuf> {
     if let Some(p) = explicit {
         if !p.exists() {
@@ -46,6 +51,7 @@ pub fn resolve_model(explicit: Option<&Path>, filename: &str) -> Result<PathBuf>
     if let Ok(dir) = std::env::var("CHOUFLEUR_MODELS") {
         candidates.push(PathBuf::from(dir).join(filename));
     }
+    candidates.push(show::default_root().join("models").join(filename));
     candidates.push(PathBuf::from("models").join(filename));
     candidates.push(PathBuf::from("server/models").join(filename));
     candidates.push(PathBuf::from("../models").join(filename));
@@ -66,8 +72,9 @@ pub fn resolve_model(explicit: Option<&Path>, filename: &str) -> Result<PathBuf>
         tried.push(c.display().to_string());
     }
     anyhow::bail!(
-        "could not find {filename}. Run scripts/fetch-models.sh, pass an explicit \
-         path, or set CHOUFLEUR_MODELS.\nLooked in:\n  {}",
+        "could not find {filename}. Put it in {}, run scripts/fetch-models.sh, pass \
+         an explicit path, or set CHOUFLEUR_MODELS.\nLooked in:\n  {}",
+        show::default_root().join("models").display(),
         tried.join("\n  ")
     )
 }

@@ -343,6 +343,7 @@ dependencies = [
  "cpal",
  "futures-util",
  "hound",
+ "libc",
  "serde",
  "serde_json",
  "sha2",

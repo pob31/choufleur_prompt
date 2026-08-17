@@ -427,6 +427,16 @@ pub struct LiveState {
     /// blocking thread that cannot be reached from the socket — the same arrangement as
     /// `steer`, for the same reason.
     pub paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The engine's stop flag, once there is an engine to stop.
+    ///
+    /// Serving deliberately outlives the run, so nothing in the normal course of a
+    /// show sets this. It is for the one case that is not the normal course: the
+    /// process has been asked to end, and the engine — a blocking thread that may be
+    /// mid-decode and cannot be reached any other way — has to be told, or the
+    /// shutdown waits for a live run that will never finish on its own.
+    ///
+    /// `None` in prep mode, and until the models have loaded.
+    pub engine_stop: Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>,
     /// The input stream, while somebody is listening. `None` means nothing is open —
     /// which is most of the time, because holding an interface open is rude to whatever
     /// else the operator has running.
@@ -455,6 +465,17 @@ pub struct LiveState {
 }
 
 impl LiveState {
+    /// Ask the engine to end its run. A no-op when there is no engine.
+    ///
+    /// The flag is read at every block boundary, so a run stops within a block of
+    /// audio — except while Whisper is inside a decode, which is why the caller waits
+    /// with a deadline rather than joining outright.
+    pub fn request_stop(&self) {
+        if let Some(flag) = self.engine_stop.lock().unwrap().as_ref() {
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
     pub fn hello(&self) -> Update {
         Update::Hello {
             protocol: PROTOCOL_VERSION,
@@ -612,6 +633,7 @@ mod tests {
             library: std::path::PathBuf::new(),
             capture: Mutex::new(None),
             paused: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            engine_stop: Mutex::new(None),
             store: choufleur_server::Store::new(".", Vec::new()),
             sheets: Mutex::new(Vec::new()),
             prep: false,
