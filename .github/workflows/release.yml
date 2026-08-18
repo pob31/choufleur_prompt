@@ -31,6 +31,15 @@ jobs:
     # sidecar is named for the host triple — so an Intel runner produces a binary the
     # bundler will not bundle and nobody can run. macos-14 also retires in Nov 2026.
     runs-on: macos-15
+    # The signing material lives in this environment rather than in repository secrets,
+    # so that each project on this account keeps its own — and without naming it here a
+    # job is handed none of it and fails the preflight saying all five are missing.
+    #
+    # It also carries a required reviewer, which means this waits for a click before it
+    # starts. That is worth keeping: it is the last point at which a release can be
+    # stopped, and stopping one afterwards means deleting a tag somebody may already
+    # have.
+    environment: Choufleur
     # A cold build compiles whisper.cpp and ONNX Runtime, then waits on Apple twice.
     timeout-minutes: 120
 

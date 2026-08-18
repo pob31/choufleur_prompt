@@ -122,7 +122,10 @@ say `gh release edit v0.1.0 --draft=false`.
 git tag -a v0.1.0 -m "…" && git push origin main --follow-tags
 ```
 
-Five repository secrets, under Settings → Secrets and variables → Actions. The workflow
+Five secrets, in the **`Choufleur`** environment under Settings → Secrets and variables →
+Actions — each project on the account keeps its own, and the release job names that
+environment to be given them. It requires a reviewer, so a run waits for one click
+before it starts. The workflow
 checks all five are present, and that the certificate matches the identity, before it
 builds anything — the whole point being that the bundler would otherwise *warn* and
 publish an unsigned DMG.
