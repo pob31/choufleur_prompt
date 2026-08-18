@@ -1,0 +1,67 @@
+# Does it still work? Asked on every push, so the answer is not discovered at a get-in.
+#
+# Deliberately not a gate on anything — there are no pull requests here, and a solo
+# repository does not need a bureaucracy. It exists for the one class of bug that local
+# testing cannot see: something that passes on the machine it was written on because of
+# state that is not in the repository.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # The same architecture the app ships on. cpal talks to CoreAudio, whisper.cpp is
+    # built with Metal, and neither is exercised by a Linux runner.
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+
+      # The operator pages are inline JavaScript in HTML, embedded with `include_str!`
+      # and never compiled — so a syntax error in one of them is invisible until an
+      # operator opens that page, on a tablet, during a show. Node is on the runner
+      # already, and this is the only check that would ever catch it.
+      - name: Check the operator pages parse
+        run: |
+          set -euo pipefail
+          cd server/crates/choufleur-replay/assets
+          for f in live.html shows.html join.html; do
+            python3 -c "
+          import re,sys
+          h=open('$f').read()
+          blocks=re.findall(r'<script>(.*?)</script>', h, re.S)
+          sys.stdout.write(blocks[-1] if blocks else '')" > /tmp/"$f".js
+            node --check /tmp/"$f".js && echo "  $f ok"
+          done
+          node --check app.js && echo "  app.js ok"
+
+      # `--exclude choufleur-app` is not laziness: that crate's build script resolves the
+      # sidecar binary at compile time and hard-errors when it is absent, and the sidecar
+      # is a full release build of the server. Every line of logic lives in the other four
+      # crates; the app is a window around them, and the release workflow builds it in
+      # full before it will publish anything.
+      - name: Test
+        working-directory: server
+        run: cargo test --workspace --exclude choufleur-app
+
+      - name: Clippy
+        working-directory: server
+        run: cargo clippy --workspace --exclude choufleur-app --all-targets -- -D warnings
