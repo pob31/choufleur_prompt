@@ -1,0 +1,51 @@
+/*
+ * The DRV2605L sits on the XIAO's edge-pin I2C (D4/P0.04 SDA, D5/P0.05 SCL),
+ * EN on D10/P1.15. The node uses the ti,drv2605 binding so the properties are
+ * checked, but no driver binds to it (CONFIG_HAPTICS off) — haptic.c owns the
+ * registers directly for calibration and EN power-down. See buzzer/README.md.
+ *
+ * For a different LRA, set vib-rated-mv / vib-overdrive-mv here from its
+ * datasheet, and lra-freq-hz below from its resonant frequency.
+ */
+
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/adc/nrf-adc.h>
+
+/ {
+	zephyr,user {
+		/* Battery: VBAT through the board's 1 M / 510 k divider onto
+		 * P0.31 (AIN7); P0.14 low switches the divider in. */
+		io-channels = <&adc 7>;
+		vbatt-gpios = <&gpio0 14 GPIO_ACTIVE_LOW>;
+		/* Resonant frequency of the fitted LRA (VG0832013D: 235 Hz). */
+		lra-freq-hz = <235>;
+	};
+};
+
+&i2c0 {
+	status = "okay";
+
+	drv2605: drv2605@5a {
+		compatible = "ti,drv2605";
+		reg = <0x5a>;
+		actuator-mode = "LRA";
+		vib-rated-mv = <1800>;
+		vib-overdrive-mv = <2500>;
+		en-gpios = <&gpio1 15 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+&adc {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@7 {
+		reg = <7>;
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
+		zephyr,input-positive = <NRF_SAADC_AIN7>;
+		zephyr,resolution = <12>;
+	};
+};

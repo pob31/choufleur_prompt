@@ -576,9 +576,30 @@
     border-radius: 999px; padding: .25em .8em; cursor: pointer;
     font: 400 .84em/1.4 ui-sans-serif, system-ui, sans-serif;
   }
-  #cast, #lists, #audio { display: none; }
+  /* Unlike its three neighbours the buzzer button lives on every screen, live
+     included — a wearable is paired in the wings, not at the desk. */
+  #buzzbtn {
+    display: inline-block;
+    border: 1px solid var(--dimmer); background: none; color: var(--dim);
+    border-radius: 999px; padding: .25em .8em; cursor: pointer;
+    font: 400 .84em/1.4 ui-sans-serif, system-ui, sans-serif;
+  }
+  #buzzbtn.on { border-color: var(--now) !important; color: var(--now) !important; }
+  #buzzbtn.linked { color: var(--fg); }
+  /* Paired and gone: the lost colour at the edge of vision, not an alarm. */
+  #buzzbtn.offline { color: var(--lost); border-color: var(--lost); }
+  #buzzer .row { display: flex; gap: .6em; align-items: center; margin: .4em 0; flex-wrap: wrap; }
+  #buzzer input { width: 3.2em; background: none; border: 1px solid var(--dimmer);
+    color: var(--fg); border-radius: 4px; padding: .15em .3em; font: inherit; text-align: center; }
+  #buzzer button { border: 1px solid var(--dimmer); background: none; color: var(--dim);
+    border-radius: 999px; padding: .25em .8em; cursor: pointer; font: inherit; }
+  #buzzer button:hover { color: var(--fg); border-color: var(--dim); }
+  #buzzer .hint { color: var(--dim); font-size: .9em; line-height: 1.5; }
+  #buzzer .trail { color: var(--dim); font-size: .85em; margin-top: .5em; }
+  #cast, #lists, #audio, #buzzer { display: none; }
   body[data-cast="on"] #cast,
   body[data-lists="on"] #lists,
+  body[data-buzz="on"] #buzzer,
   body[data-audio="on"] #audio {
     display: block; position: absolute; z-index: 7; right: 1.2em; bottom: 3.4em;
     width: 34em; max-height: 66vh; overflow-y: auto; overflow-x: hidden;
@@ -844,6 +865,7 @@
   <div id="cast"></div>
   <div id="lists"></div>
   <div id="audio"></div>
+  <div id="buzzer"></div>
   <div id="view">
       <div id="hint">tap the line being spoken to put it back on track</div>
     <div id="prephint">click a line to edit it · double-click to give it a cue · alt-click to flag</div>
@@ -869,6 +891,7 @@
     <button id="listsbtn" title="the cue lists this show carries">lists</button>
     <button id="castbtn" title="who is in this show, and on which microphone">cast</button>
     <button id="audiobtn" title="the input device, and which channel each input feeds">audio</button>
+    <button id="buzzbtn" title="a wearable that taps the wrist before a cue">buzz</button>
     <span id="flags">
       <button id="flagprev" title="previous flag">&#9664;</button>
       <button id="flag" title="flag the current line (alt-click any line)">&#9873;</button>
@@ -1330,6 +1353,9 @@
     // empty — so the rail hid itself on the one pass where nothing could correct it.
     shown = mine();
     document.body.dataset.rail = shown.length ? 'on' : 'off';
+    // The wrist watches the same list the rail shows. Recomputed here, silently,
+    // so a mute toggled or a list switched settles the stages without a vibration.
+    buzzQuiet();
     // Only one mark per line: two cues on the same line would fight over the text,
     // and the second leader can point at the first one's mark perfectly well.
     // The union of before and after, not just after.
@@ -2694,10 +2720,11 @@
     document.body.dataset.cast = 'off';
     document.body.dataset.lists = 'off';
     document.body.dataset.audio = 'off';
+    document.body.dataset.buzz = 'off';
     if (!on) { document.body.dataset[which] = 'on'; paint(); }
     // The button that opened a panel lights up, because otherwise the way to close it
-    // is a guess — three identical buttons and no clue which one is holding the panel.
-    for (const [key, id] of [['cast', 'castbtn'], ['lists', 'listsbtn'], ['audio', 'audiobtn']]) {
+    // is a guess — identical buttons and no clue which one is holding the panel.
+    for (const [key, id] of [['cast', 'castbtn'], ['lists', 'listsbtn'], ['audio', 'audiobtn'], ['buzz', 'buzzbtn']]) {
       document.getElementById(id)
         .classList.toggle('on', document.body.dataset[key] === 'on');
     }
@@ -2716,6 +2743,7 @@
     await loadAudio();
     togglePanel('audio', paintAudio);
   });
+  document.getElementById('buzzbtn').addEventListener('click', () => togglePanel('buzz', paintBuzz));
 
   // The flag list.
   //
@@ -3347,6 +3375,388 @@
   };
   window.addEventListener('resize', () => { lineTops = null; replace(); });
 
+  // The buzzer.
+  //
+  // A wrist wearable that taps the operator ahead of their cues, for the moments
+  // the eyes are in an EQ and not on this page. This page is the bridge: it already
+  // knows the list, the position and the mutes, so it computes the warning and
+  // writes a one-byte opcode over Web Bluetooth. The wire contract — UUIDs,
+  // opcodes, patterns — is the table in buzzer/README.md; change it there, here
+  // and in the firmware together, or not at all.
+  //
+  // Distances are tracker position against cue lines, never scroll geometry: an
+  // operator who has scrolled away to read ahead has not moved the show. Stages
+  // are edge-triggered per cue — armed, standby, final, spent — so re-sent hellos
+  // and repeated updates on the same line cannot double-buzz, and a rewind past
+  // the window plus slack re-arms for rehearsal loops.
+  //
+  // Debug hook, hardware or not: __buzz.at(lineIndex, conf) walks the position
+  // from DevTools; __buzz.send(op, param) writes raw opcodes.
+  const BUZZ_SVC = 'c0f1e000-a7d3-4b8f-96f1-2b73d3c5a001';
+  const BUZZ_VIBE = 'c0f1e001-a7d3-4b8f-96f1-2b73d3c5a001';
+  const BUZZ_INFO = 'c0f1e002-a7d3-4b8f-96f1-2b73d3c5a001';
+  const BUZZ_OP = { hb: 0, standby: 1, final: 2, lostNear: 3, cancel: 4, test: 5, identify: 6, effect: 7 };
+  const BUZZ_CONTRACT = 1;
+
+  const buzzAt = {
+    // Six lines is the measured glance window; two is hands-on-the-fader.
+    standby: Math.max(2, +localStorage.getItem('choufleur.buzz.standby') || 6),
+    final: Math.max(1, +localStorage.getItem('choufleur.buzz.final') || 2),
+  };
+  let buzzDev = null;      // the granted BluetoothDevice, linked or not
+  let buzzChr = null;      // vibe characteristic while linked, else null
+  let buzzBattery = null;
+  let buzzContract = null;
+  let buzzChain = Promise.resolve();
+  const buzzPending = new Set();
+  const buzzStages = new Map(); // cue id -> armed | standby | final | spent
+  let buzzLine = -1;
+  let buzzConf = null;
+  let buzzLostSaid = false; // one lost_near per lost episode
+  let buzzVibedAt = 0;
+  let buzzHbAt = 0;
+  let buzzRetry = null;
+  const buzzLog = [];
+  const $buzzer = document.getElementById('buzzer');
+  const $buzzbtn = document.getElementById('buzzbtn');
+
+  // Web Bluetooth wants a secure context, which http://<lan-ip> is not. The desk
+  // machine on localhost qualifies by itself; a screen in the wings needs the
+  // one-time flag spelled out in the panel. Safari has no Web Bluetooth at all.
+  const buzzUsable = () => window.isSecureContext && !!navigator.bluetooth;
+
+  const buzzNote = (what) => {
+    const t = new Date();
+    const hh = String(t.getHours()).padStart(2, '0');
+    const mm = String(t.getMinutes()).padStart(2, '0');
+    const ss = String(t.getSeconds()).padStart(2, '0');
+    buzzLog.unshift(`${what} · ${hh}:${mm}:${ss}`);
+    buzzLog.length = Math.min(buzzLog.length, 3);
+    if (document.body.dataset.buzz === 'on') paintBuzz();
+  };
+
+  function paintBuzzBtn() {
+    $buzzbtn.classList.toggle('linked', !!buzzChr);
+    $buzzbtn.classList.toggle('offline', !!buzzDev && !buzzChr);
+    $buzzbtn.title = buzzChr
+      ? `${buzzDev.name || 'buzzer'} on the wrist`
+      : buzzDev
+        ? 'buzzer offline — is it charged?'
+        : 'a wearable that taps the wrist before a cue';
+  }
+
+  // The only writer. GATT operations must not overlap even without response, so
+  // every write rides one promise chain; identical pending opcodes collapse. A
+  // write while offline is dropped and said out loud, never pretended.
+  function buzzSend(op, param) {
+    if (!buzzChr) {
+      if (op !== BUZZ_OP.hb && op !== BUZZ_OP.cancel) buzzNote('dropped — buzzer offline');
+      return;
+    }
+    const key = `${op}/${param ?? ''}`;
+    if (buzzPending.has(key)) return;
+    buzzPending.add(key);
+    buzzChain = buzzChain.then(async () => {
+      buzzPending.delete(key);
+      if (!buzzChr) return;
+      const bytes = param == null ? [op] : [op, param & 0xff];
+      await buzzChr.writeValueWithoutResponse(new Uint8Array(bytes));
+      // A failed write means the link is going; the disconnect event carries the
+      // news, so here it only needs to not break the chain.
+    }).catch(() => { buzzPending.delete(key); });
+  }
+
+  async function adoptBuzzer(dev) {
+    buzzDev = dev;
+    dev.removeEventListener('gattserverdisconnected', buzzDropped);
+    dev.addEventListener('gattserverdisconnected', buzzDropped);
+    const gatt = await dev.gatt.connect();
+    const svc = await gatt.getPrimaryService(BUZZ_SVC);
+    buzzChr = await svc.getCharacteristic(BUZZ_VIBE);
+    buzzContract = null;
+    try {
+      const info = await (await svc.getCharacteristic(BUZZ_INFO)).readValue();
+      buzzContract = info.getUint8(0);
+    } catch { /* an info-less wearable is old, not broken */ }
+    try {
+      const bs = await gatt.getPrimaryService('battery_service');
+      const bl = await bs.getCharacteristic('battery_level');
+      buzzBattery = (await bl.readValue()).getUint8(0);
+      bl.addEventListener('characteristicvaluechanged', (e) => {
+        buzzBattery = e.target.value.getUint8(0);
+        if (document.body.dataset.buzz === 'on') paintBuzz();
+      });
+      await bl.startNotifications();
+    } catch { buzzBattery = null; }
+    localStorage.setItem('choufleur.buzz.id', dev.id);
+    buzzNote(`linked ${dev.name || ''}`);
+    paintBuzzBtn();
+    buzzWakeLock();
+    buzzHbAt = Date.now();
+  }
+
+  function buzzDropped() {
+    buzzChr = null;
+    buzzNote('buzzer offline');
+    paintBuzzBtn();
+    buzzWakeLock();
+    // Quiet retries for as long as a device is remembered: a wearable that walked
+    // out of range walks back in. The wearable itself already told the wrist.
+    if (!buzzRetry && buzzDev) {
+      buzzRetry = setInterval(async () => {
+        if (!buzzDev) { clearInterval(buzzRetry); buzzRetry = null; return; }
+        if (buzzChr) { clearInterval(buzzRetry); buzzRetry = null; return; }
+        try { await adoptBuzzer(buzzDev); } catch { /* still gone */ }
+      }, 5000);
+    }
+  }
+
+  async function pairBuzzer() {
+    const dev = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [BUZZ_SVC] }],
+      optionalServices: ['battery_service'],
+    });
+    await adoptBuzzer(dev);
+    paintBuzz();
+  }
+
+  // After a reload, re-take a device the browser already granted — no gesture
+  // needed where getDevices exists. Where it does not, pairing is one click.
+  async function reclaimBuzzer() {
+    if (!buzzUsable() || !navigator.bluetooth.getDevices) return;
+    const id = localStorage.getItem('choufleur.buzz.id');
+    if (!id) return;
+    try {
+      const dev = (await navigator.bluetooth.getDevices()).find((d) => d.id === id);
+      if (dev) await adoptBuzzer(dev);
+    } catch { /* buzzDropped's retry loop is not running yet; try again below */ }
+    if (buzzDev && !buzzChr) buzzDropped();
+  }
+
+  function forgetBuzzer() {
+    localStorage.removeItem('choufleur.buzz.id');
+    if (buzzRetry) { clearInterval(buzzRetry); buzzRetry = null; }
+    try { buzzDev?.gatt?.disconnect(); } catch { }
+    buzzDev = null;
+    buzzChr = null;
+    buzzBattery = null;
+    paintBuzzBtn();
+    buzzWakeLock();
+    paintBuzz();
+  }
+
+  // A sleeping tablet is a dead bridge, so the screen stays lit while a wearable
+  // is on the wrist and the show is live. The link-lost buzz is the backstop for
+  // the day the battery saver wins anyway.
+  let buzzWake = null;
+  async function buzzWakeLock() {
+    const want = !!buzzChr && document.body.dataset.prep !== 'on'
+      && 'wakeLock' in navigator;
+    if (want && !buzzWake && document.visibilityState === 'visible') {
+      try {
+        buzzWake = await navigator.wakeLock.request('screen');
+        buzzWake.addEventListener('release', () => { buzzWake = null; });
+      } catch { /* denied is fine; the wearable still says when the bridge dies */ }
+    } else if (!want && buzzWake) {
+      buzzWake.release();
+      buzzWake = null;
+    }
+  }
+  document.addEventListener('visibilitychange', buzzWakeLock);
+
+  const buzzSuppressed = () =>
+    document.body.dataset.prep === 'on'
+    || document.body.dataset.paused === 'on'
+    || document.body.dataset.running === 'false';
+
+  // The stage machine. Loud from position events; quiet from renderRail, where
+  // set changes settle without a sound. One position update crossing a cluster
+  // of cues sends one opcode — the strongest stage wins, the rest coalesce.
+  function buzzEval(loud) {
+    if (buzzLine < 0) return;
+    let strongest = null;
+    for (const c of mine()) {
+      if (!c.id) continue;
+      const st = buzzStages.get(c.id) || 'armed';
+      const d = c.lineIndex - buzzLine;
+      if (d < 0) {
+        // Behind the position, silently: a forward jump is operator-driven, and
+        // a buzz storm over skipped cues is noise about the past.
+        if (st !== 'spent') buzzStages.set(c.id, 'spent');
+        continue;
+      }
+      if (d > buzzAt.standby + 2) {
+        // Beyond the window plus slack: re-arm. The slack keeps a position
+        // wobbling on the boundary from re-arming and re-firing.
+        if (st !== 'armed') buzzStages.set(c.id, 'armed');
+        continue;
+      }
+      if (buzzConf === 'lost') continue; // frozen; lost_near speaks instead
+      if (d <= buzzAt.final && st !== 'final' && st !== 'spent') {
+        buzzStages.set(c.id, 'final');
+        if (loud) { strongest = 'final'; buzzNote(`final ${c.cue || c.id}`); }
+      } else if (d <= buzzAt.standby && st === 'armed') {
+        buzzStages.set(c.id, 'standby');
+        if (loud) { strongest = strongest || 'standby'; buzzNote(`standby ${c.cue || c.id}`); }
+      }
+    }
+    if (!strongest || buzzSuppressed()) return;
+    // Rate limit standbys so a cluster reads as one nudge; a final is the one
+    // that must always land.
+    const now = Date.now();
+    if (strongest !== 'final' && now - buzzVibedAt < 1200) return;
+    buzzVibedAt = now;
+    buzzSend(strongest === 'final' ? BUZZ_OP.final : BUZZ_OP.standby);
+  }
+
+  // A declaration, not a const: renderRail sits above this section and calls it.
+  function buzzQuiet() { buzzEval(false); }
+
+  function buzzPosition(lineIndex, conf) {
+    const wasLost = buzzConf === 'lost';
+    buzzLine = lineIndex;
+    buzzConf = conf;
+    if (conf === 'lost') {
+      // Say it once per episode, and only when trusting the silence would burn:
+      // the next live cue already inside the glance window of the last trusted
+      // position. Everywhere else the screen carries the state.
+      if (!buzzLostSaid) {
+        buzzLostSaid = true;
+        const near = mine().some((c) => {
+          const d = c.lineIndex - buzzLine;
+          return d >= 0 && d <= buzzAt.standby
+            && (buzzStages.get(c.id) || 'armed') !== 'spent';
+        });
+        if (near && !buzzSuppressed()) {
+          buzzNote('tracking lost, cue near');
+          buzzSend(BUZZ_OP.lostNear);
+        }
+      }
+    } else {
+      if (wasLost) buzzLostSaid = false;
+      // A relock straight inside a window buzzes that stage now.
+      buzzEval(true);
+    }
+    // Heartbeat rides the position stream — ws events still fire in throttled
+    // background tabs, where timers do not. The interval below covers idle.
+    if (buzzChr && Date.now() - buzzHbAt > 5000) {
+      buzzHbAt = Date.now();
+      buzzSend(BUZZ_OP.hb);
+    }
+  }
+
+  function buzzRunState() {
+    if (buzzSuppressed()) buzzSend(BUZZ_OP.cancel);
+    else buzzEval(true);
+    buzzWakeLock();
+  }
+
+  setInterval(() => {
+    if (buzzChr && Date.now() - buzzHbAt > 9000) {
+      buzzHbAt = Date.now();
+      buzzSend(BUZZ_OP.hb);
+    }
+  }, 10000);
+
+  function paintBuzz() {
+    $buzzer.textContent = '';
+    const row = (...kids) => {
+      const r = document.createElement('div');
+      r.className = 'row';
+      r.append(...kids);
+      $buzzer.appendChild(r);
+      return r;
+    };
+    const btn = (label, fn) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.onclick = fn;
+      return b;
+    };
+
+    if (!buzzUsable()) {
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = navigator.bluetooth
+        ? 'Web Bluetooth needs a secure context. On the desk machine open the page '
+          + 'as http://localhost. On any other machine, once: chrome://flags/'
+          + '#unsafely-treat-insecure-origin-as-secure with this page’s origin, '
+          + 'then relaunch the browser.'
+        : 'This browser has no Web Bluetooth — the buzzer pairs from Chrome or '
+          + 'Edge (desktop or Android).';
+      $buzzer.appendChild(hint);
+      return;
+    }
+
+    const status = document.createElement('div');
+    status.className = 'hint';
+    status.textContent = buzzChr
+      ? `${buzzDev.name || 'buzzer'} on the wrist`
+        + (buzzBattery != null ? ` · battery ${buzzBattery}%` : '')
+      : buzzDev
+        ? `${buzzDev.name || 'buzzer'} offline — is it charged?`
+        : 'no wearable paired';
+    if (buzzChr && buzzContract != null && buzzContract !== BUZZ_CONTRACT) {
+      status.textContent += ` · page speaks contract ${BUZZ_CONTRACT}, wearable ${buzzContract}`;
+    }
+    $buzzer.appendChild(status);
+
+    if (!buzzDev) {
+      row(btn('pair a wearable', () => pairBuzzer().then(paintBuzz).catch(() => { })));
+    } else {
+      row(
+        btn('test', () => buzzSend(BUZZ_OP.test, 0)),
+        btn('which one?', () => buzzSend(BUZZ_OP.identify)),
+        btn('forget', forgetBuzzer),
+      );
+    }
+
+    // Thresholds in lines, per device like the mutes: the wrist is personal.
+    const stand = document.createElement('input');
+    stand.type = 'number'; stand.min = 2; stand.max = 99; stand.value = buzzAt.standby;
+    const fin = document.createElement('input');
+    fin.type = 'number'; fin.min = 1; fin.max = 98; fin.value = buzzAt.final;
+    stand.onchange = () => {
+      buzzAt.standby = Math.max(buzzAt.final + 1, +stand.value || 6);
+      stand.value = buzzAt.standby;
+      localStorage.setItem('choufleur.buzz.standby', String(buzzAt.standby));
+      buzzQuiet();
+    };
+    fin.onchange = () => {
+      buzzAt.final = Math.min(Math.max(1, +fin.value || 2), buzzAt.standby - 1);
+      fin.value = buzzAt.final;
+      localStorage.setItem('choufleur.buzz.final', String(buzzAt.final));
+      buzzQuiet();
+    };
+    const lbl = (t) => {
+      const s = document.createElement('span');
+      s.className = 'hint';
+      s.textContent = t;
+      return s;
+    };
+    row(lbl('standby'), stand, lbl('lines ahead · final'), fin, lbl('lines'));
+
+    if (buzzLog.length) {
+      const trail = document.createElement('div');
+      trail.className = 'trail';
+      for (const line of buzzLog) {
+        const d = document.createElement('div');
+        d.textContent = line;
+        trail.appendChild(d);
+      }
+      $buzzer.appendChild(trail);
+    }
+  }
+
+  window.__buzz = {
+    at: buzzPosition,
+    send: buzzSend,
+    log: buzzLog,
+    stages: buzzStages,
+  };
+  paintBuzzBtn();
+  reclaimBuzzer();
+
   // What this page was written against. See PROTOCOL_VERSION in live.rs.
   const PROTOCOL = 8;
   // Whether this is a reconnection rather than the first join.
@@ -3384,7 +3794,12 @@
         // damage is invisible because the page looks exactly as it did before.
         if (joined) loadScript().then(replace);
         joined = true;
-        if (m.position) { show(m.position.lineIndex, m.position.confidence); $clock.textContent = fmt(m.position.tAudio); }
+        if (m.position) {
+          show(m.position.lineIndex, m.position.confidence);
+          $clock.textContent = fmt(m.position.tAudio);
+          // Edge-triggered stages make this idempotent under the re-sent hellos.
+          buzzPosition(m.position.lineIndex, m.position.confidence);
+        }
       } else if (m.type === 'position_update') {
         if (m.lane === 'b') {
           race('b', m.lineIndex);
@@ -3392,6 +3807,7 @@
           show(m.lineIndex, m.confidence);
           $clock.textContent = fmt(m.tAudio);
           race('a', m.lineIndex);
+          buzzPosition(m.lineIndex, m.confidence);
         }
       } else if (m.type === 'line_edited') {
         lines[m.lineIndex].text = m.text;
@@ -3436,6 +3852,7 @@
         }
       } else if (m.type === 'paused') {
         paintPaused(!!m.paused);
+        buzzRunState();
       } else if (m.type === 'input_health') {
         health = m.channels || [];
         capture = health.length > 0;
@@ -3487,6 +3904,7 @@
       } else if (m.type === 'run_state') {
         document.body.dataset.running = String(m.running);
         $clock.textContent = fmt(m.tAudio);
+        buzzRunState();
       }
     };
     // The run outlives any one connection; reconnecting resyncs through `hello`.
