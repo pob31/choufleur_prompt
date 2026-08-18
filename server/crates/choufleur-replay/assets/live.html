@@ -3709,6 +3709,15 @@
         btn('which one?', () => buzzSend(BUZZ_OP.identify)),
         btn('forget', forgetBuzzer),
       );
+      // The actuator tryout's main tool: play any of the DRV2605's 123 library
+      // effects on the wrist that is wearing it, and re-pick the vocabulary.
+      const eff = document.createElement('input');
+      eff.type = 'number'; eff.min = 1; eff.max = 123; eff.value = 1;
+      const effRow = row(
+        eff,
+        btn('audition', () => buzzSend(BUZZ_OP.effect, Math.min(123, Math.max(1, +eff.value || 1)))),
+      );
+      effRow.title = 'DRV2605 library effect 1–123, played as-is';
     }
 
     // Thresholds in lines, per device like the mutes: the wrist is personal.

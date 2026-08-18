@@ -4,9 +4,16 @@
  * here. The contract with the page is buzzer/README.md.
  *
  * Power model: the wearable spends almost all of its life not vibrating, so the
- * chip spends almost all of its life with EN low — shutdown, not standby.
- * Shutdown is not trusted to preserve registers, so every wake rewrites the
- * handful that matter from RAM (~1 ms, invisible against the 100 ms budget).
+ * chip spends almost all of its life powered down. With EN wired (bare-chip
+ * builds) that is hard shutdown; the tryout breakouts expose no EN, so there it
+ * is the standby bit (~5 µA) — same discipline, one pin less. Neither state is
+ * trusted to preserve registers, so every wake rewrites the handful that matter
+ * from RAM (~1 ms, invisible against the 100 ms budget).
+ *
+ * The actuator is a devicetree matter: actuator-mode "LRA" or "ERM" in
+ * app.overlay picks the feedback topology and effect library; the ratings and
+ * resonant seed live beside it. Swapping actuators for the tryout is numbers,
+ * not code.
  *
  * Threading: every entry point runs on the system workqueue (ble.c funnels all
  * opcodes and link events through one work item) or in main() before BLE
@@ -38,19 +45,24 @@ LOG_MODULE_REGISTER(haptic, LOG_LEVEL_INF);
 #define MODE_AUTOCAL 0x07
 #define MODE_STANDBY 0x40
 
-/* Feedback register base for an LRA: N_ERM_LRA set, brake factor 3x, loop gain
- * high — the datasheet's recommended starting point. Auto-cal rewrites the
- * BEMF gain bits; the calibrated value replaces this after boot. */
-#define FEEDBACK_LRA 0xb6
-
-/* Library 6 is the LRA-tuned effect set. */
-#define LIBRARY_LRA 6
-
 /* In a sequencer slot, MSB set means "wait (value & 0x7f) * 10 ms". */
 #define SEQ_WAIT(ms) (0x80 | ((ms) / 10))
 
 static const struct i2c_dt_spec bus = I2C_DT_SPEC_GET(DT_NODELABEL(drv2605));
-static const struct gpio_dt_spec en = GPIO_DT_SPEC_GET(DT_NODELABEL(drv2605), en_gpios);
+/* EN is optional: absent on the tryout breakouts, wired on bare-chip builds. */
+static const struct gpio_dt_spec en =
+	GPIO_DT_SPEC_GET_OR(DT_NODELABEL(drv2605), en_gpios, {0});
+
+#define IS_LRA DT_ENUM_HAS_VALUE(DT_NODELABEL(drv2605), actuator_mode, LRA)
+
+/* Feedback register base: N_ERM_LRA per the fitted actuator, brake factor 3x,
+ * loop gain high — the datasheet's recommended starting points. Auto-cal
+ * rewrites the BEMF gain bits; the calibrated value replaces this after boot. */
+#define FEEDBACK_DEFAULT (IS_LRA ? 0xb6 : 0x36)
+
+/* Library 6 is the LRA-tuned effect set; 2 (TS2200 B) suits a 3 V ERM — the
+ * ERM libraries 1-5 differ by voltage class, worth a lap of the tryout. */
+#define LIBRARY_SEL (IS_LRA ? 6 : 2)
 
 #define RATED_MV DT_PROP(DT_NODELABEL(drv2605), vib_rated_mv)
 #define OD_MV    DT_PROP(DT_NODELABEL(drv2605), vib_overdrive_mv)
@@ -63,12 +75,13 @@ static const struct gpio_dt_spec en = GPIO_DT_SPEC_GET(DT_NODELABEL(drv2605), en
 #define OD_REG    MIN(255, (OD_MV * 100) / 2122)
 
 /* DRIVE_TIME (CONTROL1 bits 4:0) is half the LRA period, offset per datasheet:
- * (half-period-us - 500) / 100. Bit 7 keeps STARTUP_BOOST on. */
+ * (half-period-us - 500) / 100. Bit 7 keeps STARTUP_BOOST on. LRA only; an
+ * ERM keeps the register's default. */
 #define DRIVE_TIME MIN(31, ((500000 / LRA_HZ) - 500) / 100)
 #define CONTROL1_VAL (0x80 | DRIVE_TIME)
 
 /* Auto-cal results, read once at boot, rewritten on every wake. */
-static uint8_t cal_feedback = FEEDBACK_LRA;
+static uint8_t cal_feedback = FEEDBACK_DEFAULT;
 static uint8_t cal_comp;
 static uint8_t cal_bemf;
 static bool calibrated;
@@ -95,17 +108,21 @@ static int wake(void)
 	if (awake) {
 		return 0;
 	}
-	if (gpio_pin_set_dt(&en, 1)) {
-		return -EIO;
+	if (en.port != NULL) {
+		if (gpio_pin_set_dt(&en, 1)) {
+			return -EIO;
+		}
+		k_msleep(1); /* 250 us minimum from EN to I2C-ready */
 	}
-	k_msleep(1); /* 250 us minimum from EN to I2C-ready; a round millisecond */
 
 	wr(REG_MODE, MODE_ACTIVE);
 	wr(REG_FEEDBACK, cal_feedback);
-	wr(REG_LIBRARY, LIBRARY_LRA);
+	wr(REG_LIBRARY, LIBRARY_SEL);
 	wr(REG_RATED, RATED_REG);
 	wr(REG_OD_CLAMP, OD_REG);
-	wr(REG_CONTROL1, CONTROL1_VAL);
+	if (IS_LRA) {
+		wr(REG_CONTROL1, CONTROL1_VAL);
+	}
 	if (calibrated) {
 		wr(REG_A_CAL_COMP, cal_comp);
 		wr(REG_A_CAL_BEMF, cal_bemf);
@@ -121,7 +138,9 @@ static void sleep_now(void)
 	}
 	wr(REG_GO, 0);
 	wr(REG_MODE, MODE_STANDBY);
-	gpio_pin_set_dt(&en, 0);
+	if (en.port != NULL) {
+		gpio_pin_set_dt(&en, 0);
+	}
 	awake = false;
 }
 
@@ -236,11 +255,14 @@ void haptic_off(void)
 
 int haptic_init(void)
 {
-	if (!i2c_is_ready_dt(&bus) || !gpio_is_ready_dt(&en)) {
+	if (!i2c_is_ready_dt(&bus)) {
 		return -ENODEV;
 	}
-	if (gpio_pin_configure_dt(&en, GPIO_OUTPUT_INACTIVE)) {
-		return -EIO;
+	if (en.port != NULL) {
+		if (!gpio_is_ready_dt(&en) ||
+		    gpio_pin_configure_dt(&en, GPIO_OUTPUT_INACTIVE)) {
+			return -EIO;
+		}
 	}
 	if (wake()) {
 		return -EIO;

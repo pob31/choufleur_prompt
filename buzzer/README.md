@@ -49,42 +49,55 @@ supervision timeout, the wrist learns the safety net is gone; **link-back** — 
 feather bumps on (re)connect. Patterns are distinct by pulse count (1 / 2 / 3),
 countable without looking.
 
-## Hardware
+## Hardware — an actuator tryout
 
-| Item | Spec | Note |
-|---|---|---|
-| Board | XIAO nRF52840 Sense | UF2 bootloader, no probe needed |
-| Haptic driver | DRV2605L breakout (Adafruit 2305, Grove, or bare) | I2C address `0x5a`; decoupling lives on the breakout |
-| Actuator | 8–10 mm coin LRA, ~170–235 Hz (e.g. Vybronics VG0832013D) | millisecond attack, quiet, polarity-insensitive |
-| Battery | 3.7 V LiPo with protection, 250–500 mAh (502530 fits) | on the BAT pads; the XIAO charges it at 50 mA (~5 h for 250 mAh) |
-| Strap | hook-and-loop watch strap | board + cell + breakout heat-shrunk to it, LRA against the skin, USB-C and the reset hole left reachable |
+The board is a XIAO nRF52840, base or Sense — the firmware builds for either, and
+the base model is the better fit (nothing on it to idle-drain). UF2 bootloader, no
+probe needed. Battery: a 3.7 V LiPo with protection, 250–500 mAh (502530 fits), on
+the BAT pads; the XIAO charges it at 50 mA (~5 h for 250 mAh), or 100 mA with the
+HICHG pin (P0.13) pulled low — only for cells of 250 mAh or more. Strap:
+hook-and-loop watch strap, board + cell + breakout heat-shrunk to it, actuator
+against the skin, USB-C and the reset hole left reachable.
 
-Six wires, no discrete parts:
+The driver is a DRV2605L breakout at I2C `0x5a`, and the actuator is deliberately
+undecided — this round is a tryout, narrowed after wrists have voted. Swapping is
+numbers in `app_buzzer/app.overlay`, plus a lap of the effect audition (the panel's
+audition field, or opcode `0x07`) to re-pick the vocabulary:
+
+| Unit under test | actuator-mode | vib-rated-mv | vib-overdrive-mv | lra-freq-hz |
+|---|---|---|---|---|
+| Adafruit 2305 + PUI HD-LA0803-LW10-R (8×8×3.2 mm LRA, 2 Vrms, 25 Ω) | `"LRA"` | 2000 | 2500 | ~235 — confirm from the boxed datasheet |
+| Pimoroni PIM452, ELV1411A on the PCB (14×11×2.5 mm LRA, 2 Vrms, 150 Hz) | `"LRA"` | 2000 | 2500 | 150 |
+| Adafruit 2305 + small 3 V coin ERM | `"ERM"` | 3000 | 3300 | unused |
+
+The frequency only seeds auto-resonance; calibration trims from there, so a
+roughly-right number starts crisp and gets crisper. Auto-cal runs at every boot (a
+short twitch — calibrate strapped, the datasheet wants the actuator mounted as
+worn). For an ERM the firmware switches feedback topology and effect library by
+itself, from `actuator-mode`.
+
+Four wires, no discrete parts:
 
 ```
-XIAO 3V3 → DRV2605L VIN        XIAO D4 (P0.04) → SDA
-XIAO GND → DRV2605L GND        XIAO D5 (P0.05) → SCL
-XIAO D10 (P1.15) → EN          LRA on OUT+ / OUT−
+XIAO 3V3 → breakout VIN        XIAO D4 (P0.04) → SDA
+XIAO GND → breakout GND        XIAO D5 (P0.05) → SCL
 ```
+
+The actuator goes on the Adafruit's OUT+ / OUT− (polarity-insensitive for an LRA);
+the PIM452's is already on the PCB. Both breakouts' IN/TRIG pin stays unconnected,
+and neither exposes EN — the power story lives in the notes below.
 
 An LRA at resonance draws tens of mA with no ERM-style inrush, so no bulk capacitor.
 A show's worth of vibes is a couple of mAh; connected idle is tens of µA — a 250 mAh
-cell runs weeks of shows. Charge current can be raised to 100 mA by pulling the
-XIAO's HICHG pin (P0.13) low — only with cells of 250 mAh or more.
-
-The LRA's ratings live in the devicetree overlay
-(`app_buzzer/boards/xiao_ble_nrf52840_sense.overlay`): `vib-rated-mv`,
-`vib-overdrive-mv` and `lra-freq-hz`. For a different LRA, set them from its
-datasheet; the firmware runs the DRV2605L's auto-calibration against them at every
-boot (a short twitch at power-on — calibrate strapped, the datasheet wants the
-actuator mounted as worn).
+cell runs weeks of shows.
 
 ## Build and flash
 
 From the nRF Connect SDK v3.3.0 environment (the same one headtracker_v1 uses):
 
 ```bash
-west build -b xiao_ble/nrf52840/sense /path/to/choufleur/buzzer/app_buzzer \
+# base board; append /sense for a XIAO nRF52840 Sense — same firmware either way
+west build -b xiao_ble/nrf52840 /path/to/choufleur/buzzer/app_buzzer \
     -d /path/to/choufleur/buzzer/build_buzzer
 ```
 
@@ -109,7 +122,8 @@ west build ... -- -DEXTRA_CONF_FILE=debug_usb.conf -DEXTRA_DTC_OVERLAY_FILE=debu
 3. On the vibe characteristic write `01`, `02`, `03`, then `05 00`: soft bump,
    double click, triple tick, then the tour. Crisp, no rattle — a rattle means the
    overlay's rated/overdrive voltages disagree with the LRA datasheet.
-4. Write `07 <n>` to audition raw library effects (1–123) when choosing new patterns.
+4. Write `07 <n>` to audition raw library effects (1–123) when choosing new
+   patterns — or, once paired to the page, use the audition field in its panel.
 5. Read the info characteristic: `[01, xx, yy]` — contract 1.
 6. Battery Service shows a plausible percentage and notifies.
 7. Kill the app without disconnecting: within 5 s, one long heavy buzz (link-lost)
@@ -128,18 +142,20 @@ off entirely — a tap on reset wakes it.
 ## Power path notes
 
 The wearable spends almost all of its life not vibrating, so the driver spends
-almost all of its life off: three seconds after the last pattern ends — and
-immediately on disconnect — `haptic.c` drops the DRV2605L's EN pin and the chip is
-in shutdown, not standby. Shutdown may not preserve registers, so auto-calibration
-runs once at boot, its three results are cached in RAM, and every wake (EN high,
-~1 ms) rewrites the handful of registers before the pattern plays — invisible
-against the 100 ms budget.
+almost all of its life powered down: three seconds after the last pattern ends —
+and immediately on disconnect — `haptic.c` puts the DRV2605L to sleep. On the
+tryout breakouts, which expose no EN pin, that is the chip's standby bit (~5 µA);
+a bare-chip build that wires EN (add `en-gpios` to the node in `app.overlay`) gets
+hard shutdown instead, and the firmware adapts to whichever is there. Neither
+state is trusted to preserve registers, so auto-calibration runs once at boot, its
+three results are cached in RAM, and every wake rewrites the handful of registers
+before the pattern plays — a millisecond against the 100 ms budget.
 
 That is also why `haptic.c` drives the registers directly rather than through
-Zephyr's `ti,drv2605` driver: calibration, the cal-result cache and EN discipline
-are not reachable through the haptics subsystem API. The devicetree node still uses
-the `ti,drv2605` binding so the properties are checked; no driver binds to it
-(`CONFIG_HAPTICS` stays off).
+Zephyr's `ti,drv2605` driver: calibration, the cal-result cache and the sleep
+discipline are not reachable through the haptics subsystem API. The devicetree
+node still uses the `ti,drv2605` binding so the properties are checked; no driver
+binds to it (`CONFIG_HAPTICS` stays off).
 
 ## The M2.3 seam
 

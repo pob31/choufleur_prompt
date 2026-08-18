@@ -1,0 +1,67 @@
+/*
+ * One overlay for either XIAO nRF52840, base or Sense — app.overlay applies to
+ * whatever board the app is built for, and the pins below are identical on both.
+ *
+ * The DRV2605L sits on the edge-pin I2C (D4/P0.04 SDA, D5/P0.05 SCL). The node
+ * uses the ti,drv2605 binding so the properties are checked, but no driver binds
+ * to it (CONFIG_HAPTICS off) — haptic.c owns the registers directly for
+ * calibration and the idle power path. See buzzer/README.md.
+ *
+ * The tryout breakouts — Adafruit 2305, Pimoroni PIM452 — expose no EN pin, so
+ * idle power-down is the chip's standby bit (~5 µA). A bare-chip build that
+ * wires EN adds to the node:
+ *     en-gpios = <&gpio1 15 GPIO_ACTIVE_HIGH>;    (D10/P1.15)
+ * and gets hard shutdown instead; the firmware adapts to either.
+ *
+ * Per-actuator values — the whole swap lives in these numbers (and the effect
+ * vocabulary auditioned with opcode 0x07):
+ *
+ *   PUI HD-LA0803-LW10-R      "LRA"  rated 2000  overdrive 2500  freq ~235 (*)
+ *   ELV1411A (on the PIM452)  "LRA"  rated 2000  overdrive 2500  freq 150
+ *   3 V coin ERM              "ERM"  rated 3000  overdrive 3300  freq unused
+ *
+ * (*) PUI publishes 2 Vrms / 25 Ω but keeps f0 in the PDF — confirm against
+ * the datasheet in the box. The seed only starts auto-resonance; calibration
+ * trims from there.
+ */
+
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/adc/nrf-adc.h>
+
+/ {
+	zephyr,user {
+		/* Battery: VBAT through the board's 1 M / 510 k divider onto
+		 * P0.31 (AIN7); P0.14 low switches the divider in. */
+		io-channels = <&adc 7>;
+		vbatt-gpios = <&gpio0 14 GPIO_ACTIVE_LOW>;
+		/* Resonant frequency of the fitted LRA; ignored for an ERM. */
+		lra-freq-hz = <235>;
+	};
+};
+
+&i2c0 {
+	status = "okay";
+
+	drv2605: drv2605@5a {
+		compatible = "ti,drv2605";
+		reg = <0x5a>;
+		actuator-mode = "LRA";
+		vib-rated-mv = <2000>;
+		vib-overdrive-mv = <2500>;
+	};
+};
+
+&adc {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@7 {
+		reg = <7>;
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
+		zephyr,input-positive = <NRF_SAADC_AIN7>;
+		zephyr,resolution = <12>;
+	};
+};
