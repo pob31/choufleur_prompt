@@ -122,19 +122,23 @@ say `gh release edit v0.1.0 --draft=false`.
 git tag -a v0.1.0 -m "…" && git push origin main --follow-tags
 ```
 
-Six repository secrets, under Settings → Secrets and variables → Actions. The workflow
-checks all six are present, and that the certificate matches the identity, before it
+Five repository secrets, under Settings → Secrets and variables → Actions. The workflow
+checks all five are present, and that the certificate matches the identity, before it
 builds anything — the whole point being that the bundler would otherwise *warn* and
 publish an unsigned DMG.
 
 | Secret | What it is |
 |---|---|
-| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Name (TEAMID)` — exactly as `security find-identity -v -p codesigning` prints it |
-| `APPLE_CERTIFICATE` | that certificate **and its private key**, as base64. In Keychain Access expand the triangle, select both rows, Export 2 items as `.p12`, then `base64 -i cert.p12 \| pbcopy`. Exporting the certificate alone signs nothing |
-| `APPLE_CERTIFICATE_PASSWORD` | the password given to that `.p12` |
-| `APPLE_ID` | the Apple account email |
-| `APPLE_PASSWORD` | an **app-specific** password from appleid.apple.com → Sign-In and Security, of the form `abcd-efgh-ijkl-mnop`. Not the account password |
-| `APPLE_TEAM_ID` | the ten characters in brackets in the identity |
+| `MACOS_CERT_P12_BASE64` | the *Developer ID Application* certificate **and its private key**, as base64. From Keychain Access: expand the triangle, select both rows, Export 2 items as `.p12`, then `base64 -i cert.p12 \| pbcopy`. Exporting the certificate alone signs nothing |
+| `MACOS_CERT_PASSWORD` | the password given to that `.p12` |
+| `NOTARY_API_KEY_BASE64` | the App Store Connect key file, as base64 — `base64 -i AuthKey_XXXXXXXXXX.p8 \| pbcopy`. Apple lets you download a `.p8` once, so keep the original |
+| `NOTARY_API_KEY_ID` | the key's id — the `XXXXXXXXXX` in `AuthKey_XXXXXXXXXX.p8` |
+| `NOTARY_API_ISSUER` | the issuer uuid, from App Store Connect → Users and Access → Integrations → Keys. One per account, shown above the key list |
+
+Notarizing with an API key rather than an Apple ID and app-specific password is
+deliberate: the key belongs to the team rather than to one person's account, and it
+keeps working when that account's password changes. `release-app.sh` accepts either, so
+a local build can still use `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID`.
 
 **The microphone only works from the app.** A binary run from a terminal is given a
 stream that delivers nothing at all rather than an error, and never appears in System

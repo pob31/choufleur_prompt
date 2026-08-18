@@ -46,17 +46,16 @@ jobs:
 
       - name: Check the signing secrets are present
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          NOTARY_API_KEY_BASE64: ${{ secrets.NOTARY_API_KEY_BASE64 }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER: ${{ secrets.NOTARY_API_ISSUER }}
         run: |
           set -euo pipefail
           missing=""
-          for k in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
-                   APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+          for k in MACOS_CERT_P12_BASE64 MACOS_CERT_PASSWORD \
+                   NOTARY_API_KEY_BASE64 NOTARY_API_KEY_ID NOTARY_API_ISSUER; do
             [ -n "${!k:-}" ] || missing="$missing $k"
           done
           if [ -n "$missing" ]; then
@@ -67,7 +66,7 @@ jobs:
             echo "other Mac will open."
             exit 1
           fi
-          echo "all six present"
+          echo "all five present"
 
       # The tag is what people quote back at you, and the version is baked into the DMG
       # filename. A tag that disagrees with the app is a support conversation nobody wins.
@@ -85,15 +84,14 @@ jobs:
           [ "$tag" = "$conf" ] && [ "$tag" = "$cargo" ] || {
             echo "these must agree before tagging"; exit 1; }
 
-      # The bundler checks that APPLE_SIGNING_IDENTITY is a substring of the certificate's
-      # own identity — but only once it reaches the bundling step, long after the build.
-      # Proving it here costs seconds. Values are never printed; the keychain is temporary
-      # and deleted whatever happens.
-      - name: Check the certificate and the identity agree
+      # A certificate that will not import, or that turns out to hold the wrong kind of
+      # identity, otherwise announces itself at the bundling step — long after a cold
+      # whisper.cpp build. Proving it here costs seconds. No value is ever printed, and
+      # the keychain is temporary and deleted whatever happens.
+      - name: Check the certificate imports and can sign an app
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
         run: |
           set -euo pipefail
           d=$(mktemp -d); kc="$d/preflight.keychain-db"; kp=$(openssl rand -hex 16)
@@ -108,13 +106,39 @@ jobs:
             echo "The certificate would not import. Either the password is wrong, or the"
             echo ".p12 was exported without its private key — expand the triangle in"
             echo "Keychain Access and export BOTH items."; exit 1; }
-          found=$(security find-identity -v -p codesigning "$kc" | grep -c "$APPLE_SIGNING_IDENTITY") || found=0
-          if [ "$found" = "0" ]; then
-            echo "The certificate does not carry the identity in APPLE_SIGNING_IDENTITY."
-            echo "It offers:"; security find-identity -v -p codesigning "$kc" | sed 's/^/  /'
-            exit 1
-          fi
-          echo "the certificate carries that identity, and has its private key"
+          # A "Developer ID Application" identity is the only kind that signs an app for
+          # distribution. The .p12 may well carry others — an Installer certificate signs
+          # .pkg files and an Apple Development one is for local runs — and the bundler
+          # picks the identity out of the certificate itself, so what matters is that the
+          # right kind is in there at all.
+          security find-identity -v -p codesigning "$kc" | sed 's/^/  /'
+          security find-identity -v -p codesigning "$kc" \
+            | grep -q "Developer ID Application" || {
+            echo "No 'Developer ID Application' identity in this .p12."
+            echo "An Installer certificate signs .pkg files, not apps; an Apple"
+            echo "Development one is refused off this machine."; exit 1; }
+          echo "ok — it carries a Developer ID Application identity and its private key"
+
+      # notarytool wants the key as a file, and the bundler derives nothing from the
+      # name when APPLE_API_KEY_PATH is set — but naming it AuthKey_<id>.p8 keeps it
+      # recognisable, and is what the fallback search would look for anyway.
+      - name: Put the notary key on disk
+        env:
+          NOTARY_API_KEY_BASE64: ${{ secrets.NOTARY_API_KEY_BASE64 }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/private_keys"; mkdir -p "$dir"; chmod 700 "$dir"
+          key="$dir/AuthKey_${NOTARY_API_KEY_ID}.p8"
+          printf '%s' "$NOTARY_API_KEY_BASE64" | tr -d '[:space:]' | base64 -d > "$key" || {
+            echo "NOTARY_API_KEY_BASE64 is not valid base64."
+            echo "Make it with:  base64 -i AuthKey_XXXXXXXX.p8 | pbcopy"; exit 1; }
+          chmod 600 "$key"
+          # A .p8 is a PEM private key; anything else means the wrong file was encoded.
+          head -1 "$key" | grep -q "BEGIN PRIVATE KEY" || {
+            echo "That does not look like an App Store Connect .p8 key."; exit 1; }
+          echo "APPLE_API_KEY_PATH=$key" >> "$GITHUB_ENV"
+          echo "key written, $(wc -c < "$key" | tr -d ' ') bytes"
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -160,12 +184,14 @@ jobs:
         env:
           # The bundler imports this into a temporary keychain of its own; no manual
           # keychain juggling, and nothing lands in the login keychain.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_CERTIFICATE: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          # The API-key route. APPLE_SIGNING_IDENTITY is deliberately not set: with a
+          # certificate present the bundler takes the identity from it, and setting it
+          # too only adds a string that has to agree.
+          APPLE_API_KEY: ${{ secrets.NOTARY_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.NOTARY_API_ISSUER }}
+          # APPLE_API_KEY_PATH comes from GITHUB_ENV, set above.
           # Turns the bundler's warnings, and the checks in the script, into failures.
           CHOUFLEUR_RELEASE_STRICT: '1'
         run: bash scripts/release-app.sh

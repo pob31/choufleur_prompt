@@ -14,9 +14,12 @@
 #   APPLE_SIGNING_IDENTITY   'Developer ID Application: … (TEAMID)'; without it the
 #                            build is ad-hoc signed — fine on this machine, refused
 #                            on anybody else's.
-#   APPLE_ID, APPLE_PASSWORD (app-specific), APPLE_TEAM_ID
-#                            all three, to notarize. Missing, it builds without and
-#                            says so; the DMG then needs right-click-Open elsewhere.
+#   To notarize, one of these two sets — missing both, it builds without and says so,
+#   and the DMG then needs right-click-Open on anybody else's machine:
+#     APPLE_API_KEY, APPLE_API_ISSUER, APPLE_API_KEY_PATH
+#                            an App Store Connect key: its id, the issuer uuid, and the
+#                            path to the AuthKey_<id>.p8 file itself.
+#     APPLE_ID, APPLE_PASSWORD (app-specific), APPLE_TEAM_ID
 #
 # Put them in scripts/.env.release, which is not committed.
 set -euo pipefail
@@ -35,17 +38,32 @@ cd "$app"
 # release, where the warning scrolls past in a log nobody reads and the artifact is
 # published looking finished. Strict turns every one of those into a failure.
 strict="${CHOUFLEUR_RELEASE_STRICT:-0}"
+
+# Two ways to prove who you are to the notary service, and the bundler takes either:
+# an Apple ID with an app-specific password, or an App Store Connect API key. The key
+# is the better one — it belongs to the team rather than to one person's account, and
+# it does not stop working when that account's password changes — so it is what CI
+# uses. Locally, either.
+notary=""
+if [ -n "${APPLE_API_KEY:-}" ] && [ -n "${APPLE_API_ISSUER:-}" ] && [ -n "${APPLE_API_KEY_PATH:-}" ]; then
+  notary="apikey"
+elif [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
+  notary="appleid"
+fi
+
 missing=""
-[ -z "${APPLE_SIGNING_IDENTITY:-}" ] && missing="$missing APPLE_SIGNING_IDENTITY"
-[ -z "${APPLE_CERTIFICATE:-}" ] && [ "$strict" = "1" ] && missing="$missing APPLE_CERTIFICATE"
-[ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ] && [ "$strict" = "1" ] && missing="$missing APPLE_CERTIFICATE_PASSWORD"
-[ -z "${APPLE_ID:-}" ] && missing="$missing APPLE_ID"
-[ -z "${APPLE_PASSWORD:-}" ] && missing="$missing APPLE_PASSWORD"
-[ -z "${APPLE_TEAM_ID:-}" ] && missing="$missing APPLE_TEAM_ID"
+[ -z "$notary" ] && missing="$missing notarization-credentials"
+if [ "$strict" = "1" ]; then
+  [ -z "${APPLE_CERTIFICATE:-}" ] && missing="$missing APPLE_CERTIFICATE"
+  [ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ] && missing="$missing APPLE_CERTIFICATE_PASSWORD"
+fi
 
 if [ "$strict" = "1" ] && [ -n "$missing" ]; then
   echo "these are not set, and a release cannot be signed or notarized without them:"
   for m in $missing; do echo "  $m"; done
+  echo
+  echo "For notarization, either APPLE_API_KEY + APPLE_API_ISSUER + APPLE_API_KEY_PATH"
+  echo "(an App Store Connect key) or APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID."
   echo
   echo "Add them as repository secrets. Without them this would still produce a DMG —"
   echo "one that every other Mac refuses to open, which is the failure worth catching"
@@ -120,20 +138,23 @@ xcrun stapler validate "$appdir" 2>&1 | sed 's/^/  /' || staple=1
 # is. Submitting it here is the difference between a colleague double-clicking and a
 # colleague being told the file is damaged.
 dmg="$(ls "$bundle/dmg/"*.dmg 2>/dev/null | head -1 || true)"
-if [ -n "$dmg" ] && [ -z "$missing" ]; then
+if [ -n "$dmg" ] && [ -n "$notary" ]; then
+  if [ "$notary" = "apikey" ]; then
+    set -- --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER"
+  else
+    set -- --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"
+  fi
   echo
   echo "── notarizing the disk image ──"
   # `--timeout` so an Apple-side hang is an error rather than a job that runs until
   # the runner gives up.
-  if ! sub=$(xcrun notarytool submit "$dmg" --wait --timeout 30m --output-format json \
-        --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"); then
+  if ! sub=$(xcrun notarytool submit "$dmg" --wait --timeout 30m --output-format json "$@"); then
     printf '%s\n' "$sub"
     # A rejection says only `status: Invalid`. The reason is in the log, and without
     # fetching it here the failure is unactionable.
     id=$(printf '%s' "$sub" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)
     if [ -n "$id" ]; then
-      xcrun notarytool log "$id" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" \
-        --team-id "$APPLE_TEAM_ID" || true
+      xcrun notarytool log "$id" "$@" || true
     fi
     echo "Apple did not accept the disk image — the log above says why."
     exit 1
