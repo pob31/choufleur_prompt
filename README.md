@@ -64,16 +64,25 @@ nothing — no error, no prompt — and only a bundle is ever asked about. It ho
 window on the library, downloads the models on first run, and takes every server with
 it when it closes.
 
+**A buzzer**, for the operator whose eyes are not on the page: a wrist wearable —
+XIAO nRF52840 Sense, a DRV2605L haptic driver, a coin LRA — paired to any screen over
+Web Bluetooth. The page computes the warnings and writes one-byte opcodes; the wrist
+answers with patterns countable without looking: one soft bump at standby, two sharp
+clicks at final, three light ticks when tracking is lost with a cue near. Both ends
+say so when the link is gone. Firmware in [buzzer/](buzzer/), same toolchain as
+headtracker_v1; the wire contract is the table in [buzzer/README.md](buzzer/README.md).
+
 **Still open.** Multitrack has never been tracked against a corpus, which is the case
 with the most to gain since knowing who is speaking should resolve most remaining
-ambiguity. Near-identical lines still cause the one reproducible error. And the app is
-not notarized yet, so another Mac will refuse it until it is.
+ambiguity. Near-identical lines still cause the one reproducible error. The app is
+not notarized yet, so another Mac will refuse it until it is. And the buzzer firmware
+is written but has not yet met its compiler or a wrist.
 
 Findings, including the ones that failed and why, are in
 [docs/choufleur-phase0-notes.md](docs/choufleur-phase0-notes.md).
 
 ```bash
-cd server && cargo test          # 170 tests; those needing models skip without them
+cd server && cargo test          # 261 tests; those needing models skip without them
 ../scripts/fetch-models.sh       # Whisper + Silero, ~490 MB, once
 cd .. && ./server/target/release/choufleur-replay make-fixture corpus/fixture-smoke
 ./server/target/release/choufleur-replay transcribe corpus/fixture-smoke -o out/segments.jsonl
@@ -174,6 +183,7 @@ choufleur/
 │       ├── choufleur-server   # the library on disk: shows, versions, safe writes
 │       ├── choufleur-replay   # the binary: servers, audio, CLI, and the web client
 │       └── choufleur-app      # the desktop shell — one window, and everything's lifetime
+├── buzzer/          # cue-warning wearable — Zephyr firmware; the wire contract is its README
 ├── corpus/          # evaluation recordings — manifests in git, audio is not
 ├── research/        # Python sidecar for forced alignment; never in the show path
 ├── scripts/         # model fetching, and building the app
