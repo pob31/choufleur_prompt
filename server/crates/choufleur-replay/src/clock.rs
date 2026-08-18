@@ -244,7 +244,12 @@ mod pause_tests {
         // the recording.
         let behind = c.elapsed_s();
         assert!(behind >= 0.1, "{behind}");
-        c.skip(std::time::Duration::from_millis(120));
+        // Skip what is actually owed, not the 120 ms that were asked for. `sleep`
+        // promises a floor and not a duration: on a loaded machine it overshoots, and a
+        // CI runner slept 181 ms — leaving 61 ms of backlog that this test read as a
+        // failure to skip rather than as the scheduler being busy. The property worth
+        // asserting is that skipping the backlog clears it, whatever the backlog is.
+        c.skip(std::time::Duration::from_secs_f64(behind));
         assert!(c.elapsed_s() < 0.05, "the pause is no longer owed: {}", c.elapsed_s());
     }
 }
