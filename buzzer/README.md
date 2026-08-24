@@ -117,7 +117,9 @@ forearm, upper arm, shoulder, neck. Every pulse of the light vocabulary — one 
 bump, two sharp clicks, three light ticks — was felt at every site, and the three
 heavier candidates (strong click 1, strong buzz 14, 1000 ms alert 16) all got
 through too. Fingertips read best, the trapezius least, the forearm in between;
-none needed the heavier set. Calibration passed at every site once strapped, and
+none needed the heavier set. Tucked at the hipbone under a trouser waistband —
+beltpack territory, and bone underneath — the short pulses read especially well,
+which makes the waistband a wearing position with no strap to design. Calibration passed at every site once strapped, and
 failed only while the board hung from its cable. Vocabulary left as is pending the
 other two actuators.
 
