@@ -342,6 +342,24 @@ int haptic_init(void)
 			return -EIO;
 		}
 	}
+	/* A warm reboot — DFU, a reset tap — leaves the chip wherever the last
+	 * firmware left it, mid-waveform included, and calibration started from
+	 * there has failed on the bench. DEV_RESET is a power-on reset in a bit;
+	 * it self-clears when done. */
+	if (en.port != NULL) {
+		gpio_pin_set_dt(&en, 1);
+		k_msleep(1);
+	}
+	wr(REG_MODE, 0x80);
+	for (int i = 0; i < 20; i++) {
+		uint8_t mode = 0x80;
+
+		k_msleep(1);
+		if (!i2c_reg_read_byte_dt(&bus, REG_MODE, &mode) && !(mode & 0x80)) {
+			break;
+		}
+	}
+	awake = false;
 	if (wake()) {
 		return -EIO;
 	}

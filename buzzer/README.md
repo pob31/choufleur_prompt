@@ -75,7 +75,14 @@ audition field, or opcode `0x07`) to re-pick the vocabulary:
 The frequency only seeds auto-resonance; calibration trims from there, so a
 roughly-right number starts crisp and gets crisper — and a wrong one fails
 calibration outright rather than sounding merely dull, which is how the PIM452's
-"150 Hz" was caught. Opcode `0x08` with a seed sweeps for the truth from the page. Auto-cal runs at every boot (a
+"150 Hz" was caught. Opcode `0x08` with a seed sweeps for the truth from the page.
+
+**Calibrate as mounted — the datasheet means it.** An LRA rings against the mass it
+is bonded to; a breakout dangling from its four wires has none, swings instead of
+ringing, and fails calibration at every seed (status `0xe8`). The same board laid
+flat with a cable resting on it passed at every seed a minute later. On the wrist
+the strap is the mass: calibrate there, and treat a fail as "not coupled" before
+"wrong numbers". Auto-cal runs at every boot (a
 short twitch — calibrate strapped, the datasheet wants the actuator mounted as
 worn). For an ERM the firmware switches feedback topology and effect library by
 itself, from `actuator-mode`.
