@@ -65,8 +65,8 @@ window on the library, downloads the models on first run, and takes every server
 it when it closes.
 
 **A buzzer**, for the operator whose eyes are not on the page: a wrist wearable —
-XIAO nRF52840 Sense, a DRV2605L haptic driver, a coin LRA — paired to any screen over
-Web Bluetooth. The page computes the warnings and writes one-byte opcodes; the wrist
+a XIAO nRF52840, a DRV2605L haptic driver, and an actuator still on trial — paired to
+any screen over Web Bluetooth. The page computes the warnings and writes one-byte opcodes; the wrist
 answers with patterns countable without looking: one soft bump at standby, two sharp
 clicks at final, three light ticks when tracking is lost with a cue near. Both ends
 say so when the link is gone. Firmware in [buzzer/](buzzer/), same toolchain as
