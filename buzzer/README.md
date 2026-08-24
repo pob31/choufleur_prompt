@@ -121,7 +121,8 @@ none needed the heavier set. Tucked at the hipbone under a trouser waistband —
 beltpack territory, and bone underneath — the short pulses read especially well,
 which makes the waistband a wearing position with no strap to design. Calibration passed at every site once strapped, and
 failed only while the board hung from its cable. Vocabulary left as is pending the
-other two actuators.
+other two actuators. The full account is
+[docs/choufleur-buzzer-notes.md](../docs/choufleur-buzzer-notes.md).
 
 ## Build and flash
 

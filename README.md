@@ -172,6 +172,7 @@ panel or from a terminal:
 | [docs/choufleur-notation_1.md](docs/choufleur-notation_1.md) | Normative spec — cue notation, line identity, language tagging, show file format |
 | [docs/choufleur-devplan_1.md](docs/choufleur-devplan_1.md) | Development plan — phased milestones, go/no-go gate, workspace layout, test strategy |
 | [docs/choufleur-phase0-notes.md](docs/choufleur-phase0-notes.md) | What building it has taught us, including two findings that change the design |
+| [docs/choufleur-buzzer-notes.md](docs/choufleur-buzzer-notes.md) | The evening the buzzer met a wrist — bugs the bench found, what the chip said about the actuator, two people and six sites |
 
 ## Repository layout
 
