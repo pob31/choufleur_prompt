@@ -110,6 +110,17 @@ An LRA at resonance draws tens of mA with no ERM-style inrush, so no bulk capaci
 A show's worth of vibes is a couple of mAh; connected idle is tens of µA — a 250 mAh
 cell runs weeks of shows.
 
+## Tryout log
+
+**2026-08-24 — PIM452 (ELV1411A), first night.** Two people, strapped (no fingers):
+forearm, upper arm, shoulder, neck. Every pulse of the light vocabulary — one soft
+bump, two sharp clicks, three light ticks — was felt at every site, and the three
+heavier candidates (strong click 1, strong buzz 14, 1000 ms alert 16) all got
+through too. Fingertips read best, the trapezius least, the forearm in between;
+none needed the heavier set. Calibration passed at every site once strapped, and
+failed only while the board hung from its cable. Vocabulary left as is pending the
+other two actuators.
+
 ## Build and flash
 
 The toolchain is nRF Connect SDK v3.3.0, installed the way headtracker_v1 does it —
