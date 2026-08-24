@@ -106,7 +106,7 @@ static void ops_fn(struct k_work *work)
 			haptic_effect(f.param);
 			break;
 		case OP_CALIBRATE:
-			haptic_calibrate();
+			haptic_calibrate(f.param);
 			break;
 		case OP_LINK_LOST:
 			haptic_play(HAPTIC_LINK_LOST);

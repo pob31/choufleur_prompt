@@ -77,8 +77,11 @@ static const struct gpio_dt_spec en =
 /* DRIVE_TIME (CONTROL1 bits 4:0) is half the LRA period, offset per datasheet:
  * (half-period-us - 500) / 100. Bit 7 keeps STARTUP_BOOST on. LRA only; an
  * ERM keeps the register's default. */
-#define DRIVE_TIME MIN(31, ((500000 / LRA_HZ) - 500) / 100)
-#define CONTROL1_VAL (0x80 | DRIVE_TIME)
+#define DRIVE_TIME_FOR(hz) MIN(31, ((500000 / (hz)) - 500) / 100)
+
+/* Seeded from the overlay; opcode 0x08 with a parameter re-seeds it, so the
+ * tryout can sweep for an actuator's real resonance from the page. */
+static uint8_t drive_time = DRIVE_TIME_FOR(LRA_HZ);
 
 /* Auto-cal results, read once at boot, rewritten on every wake. */
 static uint8_t cal_feedback = FEEDBACK_DEFAULT;
@@ -121,7 +124,7 @@ static int wake(void)
 	wr(REG_RATED, RATED_REG);
 	wr(REG_OD_CLAMP, OD_REG);
 	if (IS_LRA) {
-		wr(REG_CONTROL1, CONTROL1_VAL);
+		wr(REG_CONTROL1, 0x80 | drive_time); /* STARTUP_BOOST on */
 	}
 	if (calibrated) {
 		wr(REG_A_CAL_COMP, cal_comp);
@@ -262,9 +265,11 @@ static bool autocal(void)
 	wr(REG_MODE, MODE_AUTOCAL);
 	wr(REG_GO, 1);
 
+	/* The chip takes ~1.2 s by default, more with a weak start; the first
+	 * night's firmware waited 1.5 s and gave up while it was still going. */
 	uint8_t go = 1;
 
-	for (int i = 0; i < 75 && go; i++) {
+	for (int i = 0; i < 150 && go; i++) {
 		k_msleep(20);
 		if (i2c_reg_read_byte_dt(&bus, REG_GO, &go)) {
 			go = 1;
@@ -295,12 +300,22 @@ bool haptic_calibrated(void)
 }
 
 /* Opcode 0x08: the tryout swaps actuators on a cable, and a swap deserves a
- * fresh calibration without a power cycle. Blocks the workqueue ~1.5 s. */
-int haptic_calibrate(void)
+ * fresh calibration without a power cycle. Blocks the workqueue up to ~3 s.
+ * hz_half: 0 keeps the current resonance seed; otherwise the seed becomes
+ * hz_half * 2 Hz (75 -> 150 Hz, 118 -> 236 Hz) — a sweep finds an actuator's
+ * real resonance without a rebuild. */
+int haptic_calibrate(uint8_t hz_half)
 {
 	k_work_cancel_delayable(&tour_work);
+	if (hz_half >= 50 && IS_LRA) { /* 100 Hz floor: below it the maths wraps */
+		drive_time = DRIVE_TIME_FOR((uint32_t)hz_half * 2);
+		LOG_INF("resonance seed %u Hz (drive_time %u)", hz_half * 2, drive_time);
+	}
 	if (wake()) {
 		return -EIO;
+	}
+	if (IS_LRA) {
+		wr(REG_CONTROL1, 0x80 | drive_time);
 	}
 	bool ok = autocal();
 

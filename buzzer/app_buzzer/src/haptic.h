@@ -33,8 +33,9 @@ void haptic_cancel(void);
 /* EN low immediately — the road to sys_poweroff(). */
 void haptic_off(void);
 
-/* Re-run auto-calibration now (opcode 0x08) — after an actuator swap. */
-int haptic_calibrate(void);
+/* Re-run auto-calibration now (opcode 0x08) — after an actuator swap.
+ * hz_half: 0 keeps the resonance seed, else seeds hz_half * 2 Hz first. */
+int haptic_calibrate(uint8_t hz_half);
 
 /* Whether the last auto-calibration passed; the info characteristic's 4th byte. */
 bool haptic_calibrated(void);

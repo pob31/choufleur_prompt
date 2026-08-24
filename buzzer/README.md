@@ -44,7 +44,7 @@ degrades to silence on the new verbs, never to garbage.
 | `0x05` | `test` | 0 = tour of the three patterns, 700 ms apart; 1–3 = one of them | How an operator learns the vocabulary, from the panel |
 | `0x06` | `identify` | — | LED-only triple wink — which wearable is this one |
 | `0x07` | `effect` | DRV2605 library effect 1–123 | Plays the raw effect. For auditioning the vocabulary on a wrist before freezing the constants in `haptic.c` |
-| `0x08` | `calibrate` | — | Re-runs the driver's auto-calibration now (~1.5 s, a twitch) — after swapping the actuator on its cable, no power cycle needed. The info byte reports the result |
+| `0x08` | `calibrate` | 0, or resonance seed in Hz ÷ 2 (75 = 150 Hz, 118 = 236 Hz) | Re-runs the driver's auto-calibration now (up to ~3 s, a twitch) — after swapping the actuator on its cable, no power cycle needed. A non-zero param first re-seeds the LRA drive time, so a sweep finds an actuator's real resonance from the page. The info byte reports the result |
 
 Wearable-initiated, no opcode: **link-lost** — one long heavy buzz on disconnect or
 supervision timeout, the wrist learns the safety net is gone; **link-back** — two
