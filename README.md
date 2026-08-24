@@ -75,8 +75,9 @@ headtracker_v1; the wire contract is the table in [buzzer/README.md](buzzer/READ
 **Still open.** Multitrack has never been tracked against a corpus, which is the case
 with the most to gain since knowing who is speaking should resolve most remaining
 ambiguity. Near-identical lines still cause the one reproducible error. The app is
-not notarized yet, so another Mac will refuse it until it is. And the buzzer firmware
-builds clean and boots on a XIAO, but has not yet met a driver board or a wrist.
+not notarized yet, so another Mac will refuse it until it is. And the buzzer has
+vibrated an LRA on the bench, calibrated, from a page-style opcode over BLE — but no
+wrist has yet worn it through a show, and the actuator tryout has one contender in.
 
 Findings, including the ones that failed and why, are in
 [docs/choufleur-phase0-notes.md](docs/choufleur-phase0-notes.md).
