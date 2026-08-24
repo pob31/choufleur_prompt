@@ -2,10 +2,12 @@
  * One overlay for either XIAO nRF52840, base or Sense — app.overlay applies to
  * whatever board the app is built for, and the pins below are identical on both.
  *
- * The DRV2605L sits on the edge-pin I2C (D4/P0.04 SDA, D5/P0.05 SCL). The node
- * uses the ti,drv2605 binding so the properties are checked, but no driver binds
- * to it (CONFIG_HAPTICS off) — haptic.c owns the registers directly for
- * calibration and the idle power path. See buzzer/README.md.
+ * The DRV2605L sits on the edge-pin I2C (D4/P0.04 SDA, D5/P0.05 SCL), which the
+ * board calls xiao_i2c — it is i2c1. Not i2c0: on the Sense that is the internal
+ * bus carrying the IMU (P0.07/P0.27), and on the base board it is nothing at all.
+ * The node uses the ti,drv2605 binding so the properties are checked, but no
+ * driver binds to it (CONFIG_HAPTICS off) — haptic.c owns the registers directly
+ * for calibration and the idle power path. See buzzer/README.md.
  *
  * The tryout breakouts — Adafruit 2305, Pimoroni PIM452 — expose no EN pin, so
  * idle power-down is the chip's standby bit (~5 µA). A bare-chip build that
@@ -39,7 +41,7 @@
 	};
 };
 
-&i2c0 {
+&xiao_i2c {
 	status = "okay";
 
 	drv2605: drv2605@5a {

@@ -76,7 +76,7 @@ headtracker_v1; the wire contract is the table in [buzzer/README.md](buzzer/READ
 with the most to gain since knowing who is speaking should resolve most remaining
 ambiguity. Near-identical lines still cause the one reproducible error. The app is
 not notarized yet, so another Mac will refuse it until it is. And the buzzer firmware
-is written but has not yet met its compiler or a wrist.
+builds clean and boots on a XIAO, but has not yet met a driver board or a wrist.
 
 Findings, including the ones that failed and why, are in
 [docs/choufleur-phase0-notes.md](docs/choufleur-phase0-notes.md).

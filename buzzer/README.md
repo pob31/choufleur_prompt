@@ -102,25 +102,46 @@ cell runs weeks of shows.
 
 ## Build and flash
 
-From the nRF Connect SDK v3.3.0 environment (the same one headtracker_v1 uses):
+The toolchain is nRF Connect SDK v3.3.0, installed the way headtracker_v1 does it —
+`nrfutil install sdk-manager`, then `nrfutil sdk-manager install v3.3.0`; on macOS
+that lands in `/opt/nordic/ncs`. The build runs inside the launched environment:
 
 ```bash
-# base board; append /sense for a XIAO nRF52840 Sense — same firmware either way
-west build -b xiao_ble/nrf52840 /path/to/choufleur/buzzer/app_buzzer \
+# base board; /sense for a XIAO nRF52840 Sense — same firmware either way
+nrfutil sdk-manager toolchain launch --ncs-version v3.3.0 --chdir /opt/nordic/ncs/v3.3.0 -- \
+    west build -b xiao_ble/nrf52840/sense /path/to/choufleur/buzzer/app_buzzer \
     -d /path/to/choufleur/buzzer/build_buzzer
 ```
 
-Double-tap the reset button — the board mounts as `XIAO-SENSE` — then:
+Flashing, two ways. Double-tap the reset button and the board mounts as `XIAO-SENSE`:
 
 ```bash
 cp buzzer/build_buzzer/app_buzzer/zephyr/zephyr.uf2 /Volumes/XIAO-SENSE/
-# (non-sysbuild layouts put it at buzzer/build_buzzer/zephyr/zephyr.uf2)
 ```
 
-For a USB serial console (log output, driverless CDC as in headtracker_v1), add:
+If the drive does not appear — it did not, the first night, though the bootloader's
+serial port did — the same bootloader takes serial DFU:
 
 ```bash
-west build ... -- -DEXTRA_CONF_FILE=debug_usb.conf -DEXTRA_DTC_OVERLAY_FILE=debug_usb.overlay
+pip install adafruit-nrfutil
+adafruit-nrfutil dfu genpkg --dev-type 0x0052 \
+    --application buzzer/build_buzzer/app_buzzer/zephyr/zephyr.hex buzzer.zip
+adafruit-nrfutil dfu serial --package buzzer.zip -p /dev/cu.usbmodem* -b 115200 --singlebank
+```
+
+Getting into the bootloader: double-tap reset, always. Only the stock Arduino
+firmware answers the 1200-baud "touch" on its serial port; once this firmware is on,
+the tap is the way.
+
+The XIAO board definition switches on a USB serial console by default, so a running
+wearable shows up as a CDC port ("Zephyr Project") whenever it is on USB — the
+quickest sign that the app booted, and where logs go in a `debug_usb.conf` build.
+On battery the USB peripheral is unpowered and costs nothing.
+
+For log output on that console, add:
+
+```bash
+west build ... -- -DEXTRA_CONF_FILE=debug_usb.conf
 ```
 
 ## Bench test — no Choufleur needed
