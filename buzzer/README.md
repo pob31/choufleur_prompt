@@ -9,8 +9,9 @@ page computes the warnings (the server sends none — see the M2.3 seam note at 
 bottom) and writes tiny opcodes to the device. Latency budget is 100 ms; a 30–50 ms
 connection interval spends well under half of it.
 
-Hardware: Seeed XIAO nRF52840 Sense, a DRV2605L haptic driver and a coin LRA —
-crisp millisecond-attack pulses, countable without looking, silent to a neighbour.
+Hardware: a Seeed XIAO nRF52840 (base or Sense), a DRV2605L haptic driver and an
+actuator still on trial — LRAs for crisp millisecond-attack pulses, an ERM for
+contrast — countable without looking, silent to a neighbour.
 Firmware: nRF Connect SDK v3.3.0 / Zephyr, same toolchain and layout as
 [headtracker_v1](https://github.com/pob31/headtracker_v1), BLE instead of ESB.
 
