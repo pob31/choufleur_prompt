@@ -53,7 +53,12 @@ static const struct i2c_dt_spec bus = I2C_DT_SPEC_GET(DT_NODELABEL(drv2605));
 static const struct gpio_dt_spec en =
 	GPIO_DT_SPEC_GET_OR(DT_NODELABEL(drv2605), en_gpios, {0});
 
-#define IS_LRA DT_ENUM_HAS_VALUE(DT_NODELABEL(drv2605), actuator_mode, LRA)
+/* The enum token is lowercased in the generated devicetree ("LRA" -> lra); asked
+ * for LRA in capitals this macro quietly answers 0, and the chip spends the
+ * night in ERM mode driving an LRA. It did. */
+#define IS_LRA DT_ENUM_HAS_VALUE(DT_NODELABEL(drv2605), actuator_mode, lra)
+BUILD_ASSERT(IS_LRA || DT_ENUM_HAS_VALUE(DT_NODELABEL(drv2605), actuator_mode, erm),
+	     "actuator-mode must be LRA or ERM");
 
 /* Feedback register base: N_ERM_LRA per the fitted actuator, brake factor 3x,
  * loop gain high — the datasheet's recommended starting points. Auto-cal
@@ -262,6 +267,9 @@ void haptic_off(void)
  * and the info characteristic says so, so the page can too. Assumes awake. */
 static bool autocal(void)
 {
+	/* Start from the datasheet base each time; BEMF gain is an output. */
+	cal_feedback = FEEDBACK_DEFAULT;
+	wr(REG_FEEDBACK, cal_feedback);
 	wr(REG_MODE, MODE_AUTOCAL);
 	wr(REG_GO, 1);
 
@@ -337,7 +345,12 @@ int haptic_init(void)
 	if (wake()) {
 		return -EIO;
 	}
-	autocal();
+	/* The first run after power-up has failed fast on the bench — the chip
+	 * answering before it was really ready. One more try, unhurried. */
+	if (!autocal()) {
+		k_msleep(500);
+		autocal();
+	}
 	sleep_now();
 	return 0;
 }
