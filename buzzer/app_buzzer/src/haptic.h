@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* Patterns are distinct by pulse count (1 / 2 / 3), countable without looking.
@@ -31,3 +32,9 @@ void haptic_cancel(void);
 
 /* EN low immediately — the road to sys_poweroff(). */
 void haptic_off(void);
+
+/* Re-run auto-calibration now (opcode 0x08) — after an actuator swap. */
+int haptic_calibrate(void);
+
+/* Whether the last auto-calibration passed; the info characteristic's 4th byte. */
+bool haptic_calibrated(void);

@@ -253,26 +253,12 @@ void haptic_off(void)
 	haptic_cancel();
 }
 
-int haptic_init(void)
+/* Auto-calibration against the overlay's ratings: a short twitch. The datasheet
+ * wants the actuator mounted as worn, which is its normal state. On failure the
+ * recommended defaults still drive the actuator — worse crispness, not silence —
+ * and the info characteristic says so, so the page can too. Assumes awake. */
+static bool autocal(void)
 {
-	if (!i2c_is_ready_dt(&bus)) {
-		return -ENODEV;
-	}
-	if (en.port != NULL) {
-		if (!gpio_is_ready_dt(&en) ||
-		    gpio_pin_configure_dt(&en, GPIO_OUTPUT_INACTIVE)) {
-			return -EIO;
-		}
-	}
-	if (wake()) {
-		return -EIO;
-	}
-
-	/* Auto-calibration against the overlay's ratings: a short twitch at
-	 * every boot. The datasheet wants the actuator mounted as worn, which
-	 * is its normal state. On failure the recommended defaults still
-	 * drive the LRA — worse crispness, not silence — and the bench test
-	 * in the README is where a rattle gets noticed. */
 	wr(REG_MODE, MODE_AUTOCAL);
 	wr(REG_GO, 1);
 
@@ -296,9 +282,47 @@ int haptic_init(void)
 		LOG_INF("auto-cal ok (fb %02x comp %02x bemf %02x)",
 			cal_feedback, cal_comp, cal_bemf);
 	} else {
+		calibrated = false;
 		LOG_WRN("auto-cal failed (status %02x), using defaults", status);
 	}
+	wr(REG_MODE, MODE_ACTIVE);
+	return calibrated;
+}
 
+bool haptic_calibrated(void)
+{
+	return calibrated;
+}
+
+/* Opcode 0x08: the tryout swaps actuators on a cable, and a swap deserves a
+ * fresh calibration without a power cycle. Blocks the workqueue ~1.5 s. */
+int haptic_calibrate(void)
+{
+	k_work_cancel_delayable(&tour_work);
+	if (wake()) {
+		return -EIO;
+	}
+	bool ok = autocal();
+
+	k_work_reschedule(&sleep_work, K_SECONDS(3));
+	return ok ? 0 : -EIO;
+}
+
+int haptic_init(void)
+{
+	if (!i2c_is_ready_dt(&bus)) {
+		return -ENODEV;
+	}
+	if (en.port != NULL) {
+		if (!gpio_is_ready_dt(&en) ||
+		    gpio_pin_configure_dt(&en, GPIO_OUTPUT_INACTIVE)) {
+			return -EIO;
+		}
+	}
+	if (wake()) {
+		return -EIO;
+	}
+	autocal();
 	sleep_now();
 	return 0;
 }

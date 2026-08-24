@@ -26,7 +26,7 @@ together or not at all.
 | Advertised name | `CHF-<XXXX>` — last two bytes of the BT address, so two wearables at one desk are tellable apart |
 | Primary service (in the AD, filterable) | `c0f1e000-a7d3-4b8f-96f1-2b73d3c5a001` |
 | Vibe characteristic (write, write-without-response) | `c0f1e001-a7d3-4b8f-96f1-2b73d3c5a001` |
-| Info characteristic (read) | `c0f1e002-a7d3-4b8f-96f1-2b73d3c5a001` → `[contract, fw_major, fw_minor]`, contract = **1** |
+| Info characteristic (read) | `c0f1e002-a7d3-4b8f-96f1-2b73d3c5a001` → `[contract, fw_major, fw_minor, calibrated]`, contract = **1**; the 4th byte (1 = the driver's last auto-cal passed) is additive — a page reading three bytes is none the wiser |
 | Battery Service | standard `0x180f` / level `0x2a19`, read + notify |
 | Connection parameters (requested by the wearable) | interval 30–50 ms, latency 2, supervision timeout 5 s |
 
@@ -44,6 +44,7 @@ degrades to silence on the new verbs, never to garbage.
 | `0x05` | `test` | 0 = tour of the three patterns, 700 ms apart; 1–3 = one of them | How an operator learns the vocabulary, from the panel |
 | `0x06` | `identify` | — | LED-only triple wink — which wearable is this one |
 | `0x07` | `effect` | DRV2605 library effect 1–123 | Plays the raw effect. For auditioning the vocabulary on a wrist before freezing the constants in `haptic.c` |
+| `0x08` | `calibrate` | — | Re-runs the driver's auto-calibration now (~1.5 s, a twitch) — after swapping the actuator on its cable, no power cycle needed. The info byte reports the result |
 
 Wearable-initiated, no opcode: **link-lost** — one long heavy buzz on disconnect or
 supervision timeout, the wrist learns the safety net is gone; **link-back** — two

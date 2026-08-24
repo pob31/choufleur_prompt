@@ -30,7 +30,7 @@ LOG_MODULE_REGISTER(ble, LOG_LEVEL_INF);
 
 #define CONTRACT 1
 #define FW_MAJOR 0
-#define FW_MINOR 1
+#define FW_MINOR 2
 
 #define OP_HB        0x00
 #define OP_STANDBY   0x01
@@ -40,6 +40,7 @@ LOG_MODULE_REGISTER(ble, LOG_LEVEL_INF);
 #define OP_TEST      0x05
 #define OP_IDENTIFY  0x06
 #define OP_EFFECT    0x07
+#define OP_CALIBRATE 0x08
 /* Internal, never on the wire: link events from the conn callbacks. */
 #define OP_LINK_LOST 0xf0
 #define OP_LINK_BACK 0xf1
@@ -104,6 +105,9 @@ static void ops_fn(struct k_work *work)
 		case OP_EFFECT:
 			haptic_effect(f.param);
 			break;
+		case OP_CALIBRATE:
+			haptic_calibrate();
+			break;
 		case OP_LINK_LOST:
 			haptic_play(HAPTIC_LINK_LOST);
 			break;
@@ -114,7 +118,7 @@ static void ops_fn(struct k_work *work)
 			break; /* newer page, older wearable: silence */
 		}
 
-		if (f.op <= OP_EFFECT) {
+		if (f.op <= OP_CALIBRATE) {
 			/* Any write from the page proves somebody is home. */
 			k_work_reschedule(&stale_work, K_SECONDS(90));
 			led_set(LED_CONNECTED);
@@ -151,7 +155,10 @@ static ssize_t vibe_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 static ssize_t info_read(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			 void *buf, uint16_t len, uint16_t offset)
 {
-	static const uint8_t info[3] = {CONTRACT, FW_MAJOR, FW_MINOR};
+	/* A fourth byte, additive: whether the driver's last auto-calibration
+	 * passed. A page that reads three bytes is none the wiser. */
+	const uint8_t info[4] = {CONTRACT, FW_MAJOR, FW_MINOR,
+				 haptic_calibrated() ? 1 : 0};
 
 	return bt_gatt_attr_read(conn, attr, buf, len, offset, info,
 				 sizeof(info));

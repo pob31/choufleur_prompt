@@ -3395,7 +3395,7 @@
   const BUZZ_SVC = 'c0f1e000-a7d3-4b8f-96f1-2b73d3c5a001';
   const BUZZ_VIBE = 'c0f1e001-a7d3-4b8f-96f1-2b73d3c5a001';
   const BUZZ_INFO = 'c0f1e002-a7d3-4b8f-96f1-2b73d3c5a001';
-  const BUZZ_OP = { hb: 0, standby: 1, final: 2, lostNear: 3, cancel: 4, test: 5, identify: 6, effect: 7 };
+  const BUZZ_OP = { hb: 0, standby: 1, final: 2, lostNear: 3, cancel: 4, test: 5, identify: 6, effect: 7, calibrate: 8 };
   const BUZZ_CONTRACT = 1;
 
   const buzzAt = {
@@ -3406,6 +3406,9 @@
   let buzzDev = null;      // the granted BluetoothDevice, linked or not
   let buzzChr = null;      // vibe characteristic while linked, else null
   let buzzBattery = null;
+  let buzzInfoChr = null;
+  // 4th info byte, additive in contract 1: did the driver's last auto-cal pass.
+  let buzzCal = null;
   let buzzContract = null;
   let buzzChain = Promise.resolve();
   const buzzPending = new Set();
@@ -3473,10 +3476,10 @@
     const gatt = await dev.gatt.connect();
     const svc = await gatt.getPrimaryService(BUZZ_SVC);
     buzzChr = await svc.getCharacteristic(BUZZ_VIBE);
-    buzzContract = null;
+    buzzContract = null; buzzCal = null; buzzInfoChr = null;
     try {
-      const info = await (await svc.getCharacteristic(BUZZ_INFO)).readValue();
-      buzzContract = info.getUint8(0);
+      buzzInfoChr = await svc.getCharacteristic(BUZZ_INFO);
+      await buzzReadInfo();
     } catch { /* an info-less wearable is old, not broken */ }
     try {
       const bs = await gatt.getPrimaryService('battery_service');
@@ -3493,6 +3496,13 @@
     paintBuzzBtn();
     buzzWakeLock();
     buzzHbAt = Date.now();
+  }
+
+  async function buzzReadInfo() {
+    if (!buzzInfoChr) return;
+    const info = await buzzInfoChr.readValue();
+    buzzContract = info.getUint8(0);
+    buzzCal = info.byteLength > 3 ? info.getUint8(3) : null;
   }
 
   function buzzDropped() {
@@ -3699,6 +3709,9 @@
     if (buzzChr && buzzContract != null && buzzContract !== BUZZ_CONTRACT) {
       status.textContent += ` · page speaks contract ${BUZZ_CONTRACT}, wearable ${buzzContract}`;
     }
+    // Honest about the driver too: an uncalibrated actuator still moves, just
+    // not crisply — the usual cause is a swap without a recalibrate.
+    if (buzzChr && buzzCal === 0) status.textContent += ' · driver uncalibrated';
     $buzzer.appendChild(status);
 
     if (!buzzDev) {
@@ -3718,6 +3731,13 @@
         btn('audition', () => buzzSend(BUZZ_OP.effect, Math.min(123, Math.max(1, +eff.value || 1)))),
       );
       effRow.title = 'DRV2605 library effect 1–123, played as-is';
+      // After swapping the actuator on its cable: a fresh auto-cal, no power
+      // cycle. The wearable is busy ~1.5 s, then the info byte says how it went.
+      row(btn('calibrate', () => {
+        buzzSend(BUZZ_OP.calibrate);
+        buzzNote('calibrating');
+        setTimeout(() => buzzReadInfo().then(paintBuzz).catch(() => { }), 2500);
+      }));
     }
 
     // Thresholds in lines, per device like the mutes: the wrist is personal.
