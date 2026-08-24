@@ -69,11 +69,13 @@ audition field, or opcode `0x07`) to re-pick the vocabulary:
 | Unit under test | actuator-mode | vib-rated-mv | vib-overdrive-mv | lra-freq-hz |
 |---|---|---|---|---|
 | Adafruit 2305 + PUI HD-LA0803-LW10-R (8×8×3.2 mm LRA, 2 Vrms, 25 Ω) | `"LRA"` | 2000 | 2500 | ~235 — confirm from the boxed datasheet |
-| Pimoroni PIM452, ELV1411A on the PCB (14×11×2.5 mm LRA, 2 Vrms, 150 Hz) | `"LRA"` | 2000 | 2500 | 150 |
+| Pimoroni PIM452, ELV1411A on the PCB (14×11×2.5 mm LRA, 2 Vrms) | `"LRA"` | 2000 | 2500 | 200 — swept: 150 fails auto-cal, 170–235 all lock |
 | Adafruit 2305 + small 3 V coin ERM | `"ERM"` | 3000 | 3300 | unused |
 
 The frequency only seeds auto-resonance; calibration trims from there, so a
-roughly-right number starts crisp and gets crisper. Auto-cal runs at every boot (a
+roughly-right number starts crisp and gets crisper — and a wrong one fails
+calibration outright rather than sounding merely dull, which is how the PIM452's
+"150 Hz" was caught. Opcode `0x08` with a seed sweeps for the truth from the page. Auto-cal runs at every boot (a
 short twitch — calibrate strapped, the datasheet wants the actuator mounted as
 worn). For an ERM the firmware switches feedback topology and effect library by
 itself, from `actuator-mode`.

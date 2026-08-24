@@ -19,12 +19,15 @@
  * vocabulary auditioned with opcode 0x07):
  *
  *   PUI HD-LA0803-LW10-R      "LRA"  rated 2000  overdrive 2500  freq ~235 (*)
- *   ELV1411A (on the PIM452)  "LRA"  rated 2000  overdrive 2500  freq 150
+ *   ELV1411A (on the PIM452)  "LRA"  rated 2000  overdrive 2500  freq 200 (**)
  *   3 V coin ERM              "ERM"  rated 3000  overdrive 3300  freq unused
  *
  * (*) PUI publishes 2 Vrms / 25 Ω but keeps f0 in the PDF — confirm against
  * the datasheet in the box. The seed only starts auto-resonance; calibration
  * trims from there.
+ * (**) A reseller page said 150 Hz; the chip disagrees. Swept from the page with
+ * opcode 0x08: 150 fails auto-cal every time, 170 through 235 all lock with
+ * identical results. 200 sits in the middle of what works.
  */
 
 #include <zephyr/dt-bindings/adc/adc.h>
@@ -37,7 +40,7 @@
 		io-channels = <&adc 7>;
 		vbatt-gpios = <&gpio0 14 GPIO_ACTIVE_LOW>;
 		/* Resonant frequency of the fitted LRA; ignored for an ERM. */
-		lra-freq-hz = <150>;  /* PIM452 / ELV1411A — first unit on the bench */
+		lra-freq-hz = <200>;  /* PIM452 / ELV1411A: 150 fails auto-cal, 170-235 all lock */
 	};
 };
 
