@@ -76,12 +76,20 @@ short twitch — calibrate strapped, the datasheet wants the actuator mounted as
 worn). For an ERM the firmware switches feedback topology and effect library by
 itself, from `actuator-mode`.
 
-Four wires, no discrete parts:
+Four wires, no discrete parts — and they are the four of a STEMMA QT / Qwiic cable,
+whose colours are fixed, so the harness cannot be wired wrong:
 
 ```
-XIAO 3V3 → breakout VIN        XIAO D4 (P0.04) → SDA
-XIAO GND → breakout GND        XIAO D5 (P0.05) → SCL
+red    3.3 V   XIAO 3V3 → breakout VIN
+black  GND     XIAO GND → breakout GND
+blue   SDA     XIAO D4 (P0.04) → SDA
+yellow SCL     XIAO D5 (P0.05) → SCL
 ```
+
+No board on the bench carries a JST-SH socket (bare XIAO, PIM452, plain Adafruit
+2305), so the solder joint lives on the XIAO once — a socket on 3V3/GND/D4/D5 — and
+each breakout gets a plug-ended pigtail. Swapping units under test is then a
+connector, not an iron.
 
 The actuator goes on the Adafruit's OUT+ / OUT− (polarity-insensitive for an LRA);
 the PIM452's is already on the PCB. Both breakouts' IN/TRIG pin stays unconnected,
