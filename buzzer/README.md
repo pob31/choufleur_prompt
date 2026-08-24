@@ -132,7 +132,9 @@ adafruit-nrfutil dfu genpkg --dev-type 0x0052 \
 adafruit-nrfutil dfu serial --package buzzer.zip -p /dev/cu.usbmodem* -b 115200 --singlebank
 ```
 
-Getting into the bootloader: double-tap reset, always. Only the stock Arduino
+The stock bootloader announces itself on USB as "XIAO nRF52840 Sense" on the base
+board too, so that string says nothing about which variant is on the bench — build
+for the board you bought. Getting into the bootloader: double-tap reset, always. Only the stock Arduino
 firmware answers the 1200-baud "touch" on its serial port; once this firmware is on,
 the tap is the way.
 
