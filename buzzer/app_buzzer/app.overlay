@@ -35,7 +35,7 @@
 		io-channels = <&adc 7>;
 		vbatt-gpios = <&gpio0 14 GPIO_ACTIVE_LOW>;
 		/* Resonant frequency of the fitted LRA; ignored for an ERM. */
-		lra-freq-hz = <235>;
+		lra-freq-hz = <150>;  /* PIM452 / ELV1411A — first unit on the bench */
 	};
 };
 
