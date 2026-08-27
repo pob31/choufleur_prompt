@@ -71,7 +71,7 @@ audition field, or opcode `0x07`) to re-pick the vocabulary:
 |---|---|---|---|---|
 | Adafruit 2305 + PUI HD-LA0803-LW10-R (8×8×3.2 mm LRA, 2 Vrms / 235 Hz / 25 Ω per its datasheet) | `"LRA"` | **1400** — the 3.3 V rail's ceiling: locks up to 1400, refuses from 1600 | 1750 | 235 (any seed 100–300 locks once the rating is within the rail) |
 | Pimoroni PIM452, ELV1411A on the PCB (14×11×2.5 mm LRA, 2 Vrms) | `"LRA"` | **1400** — same rail, same ceiling; it passed at "2000" only while the register maths under-asked | 1750 | 200 — swept: 150 fails auto-cal, 170–235 all lock |
-| Adafruit 2305 + small 3 V coin ERM | `"ERM"` | 3000 | 3300 | unused |
+| Adafruit 2305 + 3 V coin ERM (`erm.overlay`) | `"ERM"` | **2600** — the rail again: locks up to 2600, refuses from 2800 | 3000 | unused |
 
 The frequency only seeds auto-resonance; calibration trims from there, so a
 roughly-right number starts crisp and gets crisper — and a wrong one fails
@@ -143,7 +143,14 @@ the ceiling. Both LRAs now run at 1.4 V rated; with that in the overlay the PUI
 calibrates at boot, unaided, and plays the tour. Between the fingers the two feel
 quite different for the same pattern: the 8 mm coin's mass moves **axially**, into
 the skin; the ELV1411A's moves **laterally**, shearing along it. A mounting fact as
-much as a preference — which way the actuator faces the wrist is part of the design. Calibration passed at every site once strapped, and
+much as a preference — which way the actuator faces the wrist is part of the design.
+
+**2026-08-25 — Adafruit 2305 + 3 V coin ERM, third XIAO.** `erm.overlay` on the same
+firmware; ERM mode confirmed by the feedback register (`0x36`). Calibrated at boot,
+unaided, at 2.6 V; the ratings sweep locks up to 2.6 and refuses from 2.8 — the
+3.3 V rail once more, so a 3 V motor runs at 2.6. Feels different again, as it
+should: a spinning mass with 50 ms spin-up and 80 ms spin-down rumbles where the
+LRAs click, and the short countable ticks blur towards a buzz. Calibration passed at every site once strapped, and
 failed only while the board hung from its cable. Vocabulary left as is pending the
 other two actuators. The full account is
 [docs/choufleur-buzzer-notes.md](../docs/choufleur-buzzer-notes.md).
