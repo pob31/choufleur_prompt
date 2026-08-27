@@ -3398,11 +3398,41 @@
   const BUZZ_OP = { hb: 0, standby: 1, final: 2, lostNear: 3, cancel: 4, test: 5, identify: 6, effect: 7, calibrate: 8 };
   const BUZZ_CONTRACT = 1;
 
+  // Distances are spoken words, not lines: a line is a monologue or a "Oui."
+  // and six of either is not the same warning. Sixty words is the old six lines
+  // at a stage line's typical ten; twenty is hands-on-the-fader. Cut lines and
+  // stage directions count for nothing — nobody speaks them. Debuzz is the
+  // quiet after any buzz in which a further standby stays silent, so a cluster
+  // of cues reads as one nudge and not as a final it never was; a final always
+  // lands.
   const buzzAt = {
-    // Six lines is the measured glance window; two is hands-on-the-fader.
-    standby: Math.max(2, +localStorage.getItem('choufleur.buzz.standby') || 6),
-    final: Math.max(1, +localStorage.getItem('choufleur.buzz.final') || 2),
+    standby: Math.max(10, +localStorage.getItem('choufleur.buzz.standbyWords') || 60),
+    final: Math.max(3, +localStorage.getItem('choufleur.buzz.finalWords') || 20),
+    debuzz: Math.max(0, +localStorage.getItem('choufleur.buzz.debuzz') || 5),
   };
+  // Prefix sum of spoken words per line, rebuilt when the script changes.
+  let buzzWords = null;
+  const buzzScriptChanged = () => { buzzWords = null; };
+  function buzzWordsBefore() {
+    if (buzzWords && buzzWords.length === lines.length + 1) return buzzWords;
+    const w = new Array(lines.length + 1);
+    w[0] = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      const n = (l.cut || l.kind === 'stage') ? 0
+        : (l.text || '').trim().split(/\s+/).filter(Boolean).length;
+      w[i + 1] = w[i] + n;
+    }
+    return (buzzWords = w);
+  }
+  // Spoken words between the position's line and the cue's line, exclusive of
+  // both: on the cue's own line the distance is zero.
+  function buzzDist(cueLine) {
+    if (cueLine <= buzzLine) return cueLine - buzzLine; // negative or zero: passed / here
+    const w = buzzWordsBefore();
+    return w[cueLine] - w[Math.min(buzzLine + 1, w.length - 1)];
+  }
+  let buzzQuietUntil = 0;
   let buzzDev = null;      // the granted BluetoothDevice, linked or not
   let buzzChr = null;      // vibe characteristic while linked, else null
   let buzzBattery = null;
@@ -3591,14 +3621,14 @@
     for (const c of mine()) {
       if (!c.id) continue;
       const st = buzzStages.get(c.id) || 'armed';
-      const d = c.lineIndex - buzzLine;
+      const d = buzzDist(c.lineIndex);
       if (d < 0) {
         // Behind the position, silently: a forward jump is operator-driven, and
         // a buzz storm over skipped cues is noise about the past.
         if (st !== 'spent') buzzStages.set(c.id, 'spent');
         continue;
       }
-      if (d > buzzAt.standby + 2) {
+      if (d > buzzAt.standby + 10) {
         // Beyond the window plus slack: re-arm. The slack keeps a position
         // wobbling on the boundary from re-arming and re-firing.
         if (st !== 'armed') buzzStages.set(c.id, 'armed');
@@ -3614,11 +3644,13 @@
       }
     }
     if (!strongest || buzzSuppressed()) return;
-    // Rate limit standbys so a cluster reads as one nudge; a final is the one
-    // that must always land.
+    // Debuzz: after any buzz, a further standby stays silent for a while — a
+    // cluster of cues reads as one nudge, not as a final it never was. A final
+    // is the one that must always land, and it restarts the quiet.
     const now = Date.now();
-    if (strongest !== 'final' && now - buzzVibedAt < 1200) return;
+    if (strongest !== 'final' && now < buzzQuietUntil) { buzzNote('standby debuzzed'); return; }
     buzzVibedAt = now;
+    buzzQuietUntil = now + buzzAt.debuzz * 1000;
     buzzSend(strongest === 'final' ? BUZZ_OP.final : BUZZ_OP.standby);
   }
 
@@ -3636,7 +3668,7 @@
       if (!buzzLostSaid) {
         buzzLostSaid = true;
         const near = mine().some((c) => {
-          const d = c.lineIndex - buzzLine;
+          const d = buzzDist(c.lineIndex);
           return d >= 0 && d <= buzzAt.standby
             && (buzzStages.get(c.id) || 'armed') !== 'spent';
         });
@@ -3752,22 +3784,29 @@
       }));
     }
 
-    // Thresholds in lines, per device like the mutes: the wrist is personal.
+    // Thresholds in spoken words, per device like the mutes: the wrist is personal.
     const stand = document.createElement('input');
-    stand.type = 'number'; stand.min = 2; stand.max = 99; stand.value = buzzAt.standby;
+    stand.type = 'number'; stand.min = 10; stand.max = 999; stand.value = buzzAt.standby;
     const fin = document.createElement('input');
-    fin.type = 'number'; fin.min = 1; fin.max = 98; fin.value = buzzAt.final;
+    fin.type = 'number'; fin.min = 3; fin.max = 998; fin.value = buzzAt.final;
+    const deb = document.createElement('input');
+    deb.type = 'number'; deb.min = 0; deb.max = 60; deb.value = buzzAt.debuzz;
     stand.onchange = () => {
-      buzzAt.standby = Math.max(buzzAt.final + 1, +stand.value || 6);
+      buzzAt.standby = Math.max(buzzAt.final + 5, +stand.value || 60);
       stand.value = buzzAt.standby;
-      localStorage.setItem('choufleur.buzz.standby', String(buzzAt.standby));
+      localStorage.setItem('choufleur.buzz.standbyWords', String(buzzAt.standby));
       buzzQuiet();
     };
     fin.onchange = () => {
-      buzzAt.final = Math.min(Math.max(1, +fin.value || 2), buzzAt.standby - 1);
+      buzzAt.final = Math.min(Math.max(3, +fin.value || 20), buzzAt.standby - 5);
       fin.value = buzzAt.final;
-      localStorage.setItem('choufleur.buzz.final', String(buzzAt.final));
+      localStorage.setItem('choufleur.buzz.finalWords', String(buzzAt.final));
       buzzQuiet();
+    };
+    deb.onchange = () => {
+      buzzAt.debuzz = Math.min(60, Math.max(0, +deb.value || 0));
+      deb.value = buzzAt.debuzz;
+      localStorage.setItem('choufleur.buzz.debuzz', String(buzzAt.debuzz));
     };
     const lbl = (t) => {
       const s = document.createElement('span');
@@ -3775,7 +3814,8 @@
       s.textContent = t;
       return s;
     };
-    row(lbl('standby'), stand, lbl('lines ahead · final'), fin, lbl('lines'));
+    row(lbl('standby'), stand, lbl('words ahead · final'), fin, lbl('words'));
+    row(lbl('debuzz'), deb, lbl('s of quiet after a buzz'));
 
     if (buzzLog.length) {
       const trail = document.createElement('div');
@@ -3851,6 +3891,7 @@
           buzzPosition(m.lineIndex, m.confidence);
         }
       } else if (m.type === 'line_edited') {
+        buzzScriptChanged();
         lines[m.lineIndex].text = m.text;
         if (m.character) lines[m.lineIndex].character = m.character;
         lines[m.lineIndex].cut = m.cut;
@@ -3928,10 +3969,12 @@
         if (flagListOpen) paintFlagList();
         lineTops = null;
       } else if (m.type === 'line_deleted') {
+        buzzScriptChanged();
         lines.splice(m.lineIndex, 1);
         build();
         replace();
       } else if (m.type === 'line_inserted') {
+        buzzScriptChanged();
         lines.splice(m.lineIndex, 0, m.line);
         build();
         replace();
