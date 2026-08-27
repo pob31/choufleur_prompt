@@ -150,7 +150,11 @@ firmware; ERM mode confirmed by the feedback register (`0x36`). Calibrated at bo
 unaided, at 2.6 V; the ratings sweep locks up to 2.6 and refuses from 2.8 — the
 3.3 V rail once more, so a 3 V motor runs at 2.6. Feels different again, as it
 should: a spinning mass with 50 ms spin-up and 80 ms spin-down rumbles where the
-LRAs click, and the short countable ticks blur towards a buzz. Calibration passed at every site once strapped, and
+LRAs click, and the short countable ticks blur towards a buzz. Mounted to the back
+of the PCB and recalibrated, it is **stronger than both LRAs** — as the arithmetic
+says it should be: 2.6 of 3 V is 87 % of its rating where the LRAs get 70 % of theirs,
+and a coin motor's mass is the larger. Strength against crispness is the trade the
+three rows now put on the table. Calibration passed at every site once strapped, and
 failed only while the board hung from its cable. Vocabulary left as is pending the
 other two actuators. The full account is
 [docs/choufleur-buzzer-notes.md](../docs/choufleur-buzzer-notes.md).
