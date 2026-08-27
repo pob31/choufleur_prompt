@@ -3407,8 +3407,10 @@
   let buzzChr = null;      // vibe characteristic while linked, else null
   let buzzBattery = null;
   let buzzInfoChr = null;
-  // 4th info byte, additive in contract 1: did the driver's last auto-cal pass.
+  // 4th and 5th info bytes, additive in contract 1: did the driver's last
+  // auto-cal pass, and is the driver answering on I2C at all.
   let buzzCal = null;
+  let buzzDriver = null;
   let buzzContract = null;
   let buzzChain = Promise.resolve();
   const buzzPending = new Set();
@@ -3503,6 +3505,7 @@
     const info = await buzzInfoChr.readValue();
     buzzContract = info.getUint8(0);
     buzzCal = info.byteLength > 3 ? info.getUint8(3) : null;
+    buzzDriver = info.byteLength > 4 ? info.getUint8(4) : null;
   }
 
   function buzzDropped() {
@@ -3711,7 +3714,10 @@
     }
     // Honest about the driver too: an uncalibrated actuator still moves, just
     // not crisply — the usual cause is a swap without a recalibrate.
-    if (buzzChr && buzzCal === 0) status.textContent += ' · driver uncalibrated';
+    // A driver that is not answering is a broken lead, not a bad calibration —
+    // one evening was spent learning the difference.
+    if (buzzChr && buzzDriver === 0) status.textContent += ' · driver not answering';
+    else if (buzzChr && buzzCal === 0) status.textContent += ' · driver uncalibrated';
     $buzzer.appendChild(status);
 
     if (!buzzDev) {

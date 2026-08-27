@@ -153,6 +153,9 @@ static uint8_t cal_comp;
 static uint8_t cal_bemf;
 static bool calibrated;
 static bool awake;
+/* Whether the DRV2605L answered its last register read — a broken I2C lead
+ * looks like "uncalibrated" otherwise, and the page deserves the difference. */
+static bool present;
 
 static const uint8_t pat_standby[]   = {7, 0};                              /* soft bump 100% */
 static const uint8_t pat_final[]     = {10, 0};                             /* double click 100% */
@@ -167,7 +170,13 @@ static int wr(uint8_t reg, uint8_t val)
 	if (err) {
 		LOG_WRN("write %02x=%02x failed (%d)", reg, val, err);
 	}
+	present = (err == 0);
 	return err;
+}
+
+bool haptic_present(void)
+{
+	return present;
 }
 
 static int wake(void)

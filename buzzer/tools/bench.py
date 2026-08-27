@@ -45,6 +45,7 @@ async def main():
         print("connected", adv.local_name)
         info = await c.read_gatt_char(INFO)
         cal = ("calibrated" if info[3] else "UNCALIBRATED") if len(info) > 3 else "(no cal byte)"
+        if len(info) > 4 and not info[4]: cal += " DRIVER NOT ANSWERING"
         print("info", list(info), "-> contract", info[0], f"fw {info[1]}.{info[2]}", cal)
         try:
             print("battery %", (await c.read_gatt_char(BATT))[0])

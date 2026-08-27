@@ -26,7 +26,7 @@ together or not at all.
 | Advertised name | `CHF-<XXXX>` — last two bytes of the BT address, so two wearables at one desk are tellable apart |
 | Primary service (in the AD, filterable) | `c0f1e000-a7d3-4b8f-96f1-2b73d3c5a001` |
 | Vibe characteristic (write, write-without-response) | `c0f1e001-a7d3-4b8f-96f1-2b73d3c5a001` |
-| Info characteristic (read) | `c0f1e002-a7d3-4b8f-96f1-2b73d3c5a001` → `[contract, fw_major, fw_minor, calibrated]`, contract = **1**; the 4th byte (1 = the driver's last auto-cal passed) is additive — a page reading three bytes is none the wiser |
+| Info characteristic (read) | `c0f1e002-a7d3-4b8f-96f1-2b73d3c5a001` → `[contract, fw_major, fw_minor, calibrated, driver_present]`, contract = **1**; bytes 4 and 5 are additive — 1 = the driver's last auto-cal passed, 1 = the DRV2605L answered its last I2C write (a broken lead is not an uncalibrated actuator) — and a page reading three bytes is none the wiser |
 | Battery Service | standard `0x180f` / level `0x2a19`, read + notify |
 | Connection parameters (requested by the wearable) | interval 30–50 ms, latency 2, supervision timeout 5 s |
 

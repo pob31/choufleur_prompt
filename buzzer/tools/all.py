@@ -22,6 +22,7 @@ async def one(d, name):
             try: batt = (await c.read_gatt_char(BATT))[0]
             except Exception: batt = "?"
             cal = ("calibrated" if info[3] else "UNCALIBRATED") if len(info) > 3 else "?"
+            if len(info) > 4 and not info[4]: cal += " DRIVER-NOT-ANSWERING"
             if ops:
                 await c.write_gatt_char(VIBE, bytes(ops), response=False)
             print(f"{name}: fw {info[1]}.{info[2]} {cal} battery {batt}%" + (f" wrote {[hex(o) for o in ops]}" if ops else ""), flush=True)

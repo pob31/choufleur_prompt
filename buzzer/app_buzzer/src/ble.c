@@ -30,7 +30,7 @@ LOG_MODULE_REGISTER(ble, LOG_LEVEL_INF);
 
 #define CONTRACT 1
 #define FW_MAJOR 0
-#define FW_MINOR 2
+#define FW_MINOR 3
 
 #define OP_HB        0x00
 #define OP_STANDBY   0x01
@@ -159,10 +159,13 @@ static ssize_t vibe_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 static ssize_t info_read(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			 void *buf, uint16_t len, uint16_t offset)
 {
-	/* A fourth byte, additive: whether the driver's last auto-calibration
-	 * passed. A page that reads three bytes is none the wiser. */
-	const uint8_t info[4] = {CONTRACT, FW_MAJOR, FW_MINOR,
-				 haptic_calibrated() ? 1 : 0};
+	/* Additive bytes: whether the driver's last auto-calibration passed, and
+	 * whether the driver answered on I2C at all — a broken lead read as
+	 * "uncalibrated" for a whole evening once. A page that reads three
+	 * bytes is none the wiser. */
+	const uint8_t info[5] = {CONTRACT, FW_MAJOR, FW_MINOR,
+				 haptic_calibrated() ? 1 : 0,
+				 haptic_present() ? 1 : 0};
 
 	return bt_gatt_attr_read(conn, attr, buf, len, offset, info,
 				 sizeof(info));
