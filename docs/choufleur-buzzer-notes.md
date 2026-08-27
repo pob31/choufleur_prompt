@@ -179,4 +179,9 @@ scratch directory overnight and were rebuilt into `buzzer/tools/` first.
   against the LRAs' 70 %, and the larger mass — at the cost of the click: 50 ms of
   spin-up turns ticks into rumble. Three contenders in, one trade on the table:
   strength against crispness, and which way the mass moves against the skin.
+- All three boards on USB, driven together with `tools/all.py`: one opcode, three
+  actuators, the same instant. Both LRAs at the hipbones under the waistband, each
+  calibrated as worn: **the PIM452 reads stronger than the PUI coin** — the coin's
+  axial stroke is the axis the waistband clamps, the ELV1411A's lateral stroke is
+  not, and the ELV carries the larger mass. Under a strap, lateral wins.
 - Pairing from the live page in Chrome remains untested; so does a night on the cell.

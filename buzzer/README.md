@@ -154,7 +154,16 @@ LRAs click, and the short countable ticks blur towards a buzz. Mounted to the ba
 of the PCB and recalibrated, it is **stronger than both LRAs** — as the arithmetic
 says it should be: 2.6 of 3 V is 87 % of its rating where the LRAs get 70 % of theirs,
 and a coin motor's mass is the larger. Strength against crispness is the trade the
-three rows now put on the table. Calibration passed at every site once strapped, and
+three rows now put on the table.
+
+**Side by side, at the hips.** Both LRAs under the trouser waistband, one on each
+hipbone, calibrated as worn, fired together with `tools/all.py`: the **PIM452 reads
+stronger** than the PUI. The geometry says why. The coin's stroke is axial — into the
+skin, the very axis the waistband clamps, so the pressure that couples it also
+shortens its travel. The ELV1411A's stroke is lateral, shearing along the skin;
+clamping barely touches that axis and only improves the coupling — and it carries
+the larger moving mass. Rule: **under a strap or waistband, a lateral LRA; an axial
+coin belongs where it faces the skin without being pressed.** Calibration passed at every site once strapped, and
 failed only while the board hung from its cable. Vocabulary left as is pending the
 other two actuators. The full account is
 [docs/choufleur-buzzer-notes.md](../docs/choufleur-buzzer-notes.md).
