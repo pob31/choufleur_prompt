@@ -173,4 +173,10 @@ scratch directory overnight and were rebuilt into `buzzer/tools/` first.
   one rating, one explanation.
 - How the PUI reads on skin against the PIM — crisper, smaller, 235 Hz coin against
   a 200 Hz rectangle — is the felt comparison still to be written down.
-- Pairing from the live page in Chrome remains untested. The ERM remains untried.
+- ~~The ERM remains untried.~~ Tried the same evening, on a third XIAO with the same
+  Adafruit breakout, via `erm.overlay`: calibrates at boot at 2.6 V, refuses from 2.8
+  (the rail again), and mounted it is **stronger than both LRAs** — 87 % of its rating
+  against the LRAs' 70 %, and the larger mass — at the cost of the click: 50 ms of
+  spin-up turns ticks into rumble. Three contenders in, one trade on the table:
+  strength against crispness, and which way the mass moves against the skin.
+- Pairing from the live page in Chrome remains untested; so does a night on the cell.
