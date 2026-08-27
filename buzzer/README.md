@@ -163,7 +163,14 @@ skin, the very axis the waistband clamps, so the pressure that couples it also
 shortens its travel. The ELV1411A's stroke is lateral, shearing along the skin;
 clamping barely touches that axis and only improves the coupling — and it carries
 the larger moving mass. Rule: **under a strap or waistband, a lateral LRA; an axial
-coin belongs where it faces the skin without being pressed.** Calibration passed at every site once strapped, and
+coin belongs where it faces the skin without being pressed.**
+
+**ERM against PIM, same hips, same instant:** the ERM is stronger and **not good at
+short bursts** — the tour's clicks and ticks smear into rumble. The vocabulary is
+countable bursts; strength was never the shortage. **Where the tryout points:** a
+lateral LRA — the ELV1411A as fitted on the PIM452 — under the strap or waistband,
+driven at 1.4 V from the 3.3 V rail. The PUI coin for a mount that faces skin
+unclamped; the ERM for nothing that has to be counted. Calibration passed at every site once strapped, and
 failed only while the board hung from its cable. Vocabulary left as is pending the
 other two actuators. The full account is
 [docs/choufleur-buzzer-notes.md](../docs/choufleur-buzzer-notes.md).

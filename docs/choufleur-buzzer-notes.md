@@ -184,4 +184,8 @@ scratch directory overnight and were rebuilt into `buzzer/tools/` first.
   calibrated as worn: **the PIM452 reads stronger than the PUI coin** — the coin's
   axial stroke is the axis the waistband clamps, the ELV1411A's lateral stroke is
   not, and the ELV carries the larger mass. Under a strap, lateral wins.
+- Then the ERM in the PUI's place, same hips, same instant: stronger, and **not good
+  at short bursts** — the countable vocabulary smears into rumble. Where the tryout
+  points: the lateral LRA (ELV1411A / PIM452) under the strap at 1.4 V. Strength was
+  never the shortage; countability is the whole design.
 - Pairing from the live page in Chrome remains untested; so does a night on the cell.
