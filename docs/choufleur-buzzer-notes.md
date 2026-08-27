@@ -198,3 +198,29 @@ scratch directory overnight and were rebuilt into `buzzer/tools/` first.
   fabric."** Its place, exactly: not for the countable vocabulary, but for the
   wearer who cannot have the thing against skin — pocket, costume, pouch.
 - Pairing from the live page in Chrome remains untested; so does a night on the cell.
+
+---
+
+# From the chair, with the wrist on — 27 August 2026
+
+First show run with a wearable paired from the page (Brave, once its Web Bluetooth
+flag was on). Five notes came back, and four of them changed the buzzer:
+
+- **Lines are not a unit.** Six lines through a monologue is a standby minutes early.
+  Distance is spoken words now — sixty for standby, twenty for final — and cut lines
+  and stage directions count for nothing.
+- **Debuzz.** Close cues repeated the standby, which on the wrist reads like a final.
+  After any buzz a further standby stays silent for a few seconds; a final always
+  lands and restarts the quiet.
+- **Lost and caught up** can skip a standby; a relock inside the final window sends
+  the final, which is the best truth available — one warning instead of two.
+- **A refused pairing now says why** (Brave ships Web Bluetooth off).
+
+The fifth note was about the tracker — "a little lower than initially, nothing
+changed on the audio side" — and was checked offline rather than argued: night 16 of
+Hécube, replayed through the current binary on the prepped script, tracks with 0 s
+lost, one move over a hundred lines, and 14.6 % of the time at low confidence
+against the README's 22.6 %. The matcher has not regressed offline; whatever was
+lower in the room is in the live path — capture, feed, or the night — and is the
+next thing to measure with the room's own recording.
+
