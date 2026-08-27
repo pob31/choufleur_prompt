@@ -3721,7 +3721,13 @@
     $buzzer.appendChild(status);
 
     if (!buzzDev) {
-      row(btn('pair a wearable', () => pairBuzzer().then(paintBuzz).catch(() => { })));
+      // A refused pairing must say why — Brave ships Web Bluetooth off, Chrome
+      // needs the insecure-origin flag off-desk, macOS may still be asking the
+      // browser for Bluetooth. Silence here cost a bench evening a few minutes.
+      row(btn('pair a wearable', () => pairBuzzer().then(paintBuzz).catch((e) => {
+        buzzNote(`pairing failed — ${e && e.message ? e.message : e}`);
+        paintBuzz();
+      })));
     } else {
       row(
         btn('test', () => buzzSend(BUZZ_OP.test, 0)),
