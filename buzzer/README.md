@@ -139,7 +139,8 @@ from the page (opcode `0x09`) settled it in forty seconds: locks at 0.8, 1.0, 1.
 25 Ω, 90 mA — so it is not the part but the 3.3 V rail, which the corrected register
 maths had just started asking for the full 2 V of. The PIM452 on the same XIAO
 calibrated first time only because it was tested before that correction; it shares
-the ceiling. Both LRAs now run at 1.4 V rated. Calibration passed at every site once strapped, and
+the ceiling. Both LRAs now run at 1.4 V rated; with that in the overlay the PUI
+calibrates at boot, unaided, and plays the tour. Calibration passed at every site once strapped, and
 failed only while the board hung from its cable. Vocabulary left as is pending the
 other two actuators. The full account is
 [docs/choufleur-buzzer-notes.md](../docs/choufleur-buzzer-notes.md).

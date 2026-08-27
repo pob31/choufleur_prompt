@@ -77,7 +77,8 @@ with the most to gain since knowing who is speaking should resolve most remainin
 ambiguity. Near-identical lines still cause the one reproducible error. The app is
 not notarized yet, so another Mac will refuse it until it is. And the buzzer has
 vibrated an LRA on the bench, calibrated, from a page-style opcode over BLE — but no
-wrist has yet worn it through a show, and the actuator tryout has one contender in.
+wrist has yet worn it through a show, and the actuator tryout has two LRAs in — both
+2 V parts held to 1.4 V by the 3.3 V rail — and an ERM still to try.
 
 Findings, including the ones that failed and why, are in
 [docs/choufleur-phase0-notes.md](docs/choufleur-phase0-notes.md).
