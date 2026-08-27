@@ -102,18 +102,40 @@ static uint32_t isqrt(uint32_t n)
 	return r;
 }
 
+/* Opcode 0x09 overrides the overlay's rated voltage for the session (tryout
+ * only): rated_mv = param * 20, overdrive kept at 1.25x. A ratings sweep from
+ * the page says whether a unit is being asked for more than its supply gives. */
+static uint32_t rated_mv = RATED_MV;
+static uint32_t od_mv = OD_MV;
+static uint32_t seed_hz = LRA_HZ;
+
 static void ratings_for(uint32_t hz)
 {
 	/* s = 1000 * sqrt(1 - 0.0015 * hz); an ERM has no dead time (s = 1000). */
 	uint32_t s = 1000;
 
+	seed_hz = hz;
 	if (IS_LRA) {
 		uint32_t f2 = 1000 - MIN(999, (1500 * hz) / 1000); /* x1000 */
 
 		s = isqrt(f2 * 1000);
 	}
-	rated_reg = MIN(255, ((uint32_t)RATED_MV * 100000) / (2058 * s));
-	od_reg = MIN(255, ((uint32_t)OD_MV * 100000) / (2122 * s));
+	rated_reg = MIN(255, (rated_mv * 100000) / (2058 * s));
+	od_reg = MIN(255, (od_mv * 100000) / (2122 * s));
+}
+
+void haptic_set_rated(uint8_t mv_over_20)
+{
+	if (mv_over_20 == 0) {
+		rated_mv = RATED_MV;
+		od_mv = OD_MV;
+	} else {
+		rated_mv = (uint32_t)mv_over_20 * 20;
+		od_mv = rated_mv * 5 / 4;
+	}
+	ratings_for(seed_hz);
+	LOG_INF("rated %u mV od %u mV -> rated %02x od %02x", rated_mv, od_mv,
+		rated_reg, od_reg);
 }
 
 /* DRIVE_TIME (CONTROL1 bits 4:0) is half the LRA period, offset per datasheet:

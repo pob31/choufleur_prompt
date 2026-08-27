@@ -45,6 +45,7 @@ degrades to silence on the new verbs, never to garbage.
 | `0x06` | `identify` | — | LED-only triple wink — which wearable is this one |
 | `0x07` | `effect` | DRV2605 library effect 1–123 | Plays the raw effect. For auditioning the vocabulary on a wrist before freezing the constants in `haptic.c` |
 | `0x08` | `calibrate` | 0, or resonance seed in Hz ÷ 2 (75 = 150 Hz, 118 = 236 Hz) | Re-runs the driver's auto-calibration now (up to ~3 s, a twitch) — after swapping the actuator on its cable, no power cycle needed. A non-zero param first re-seeds the LRA drive time, so a sweep finds an actuator's real resonance from the page. The info byte reports the result |
+| `0x09` | `rated` | rated voltage ÷ 20 mV (100 = 2.0 V); 0 = overlay value | Tryout only: overrides the actuator's rated voltage for the session (overdrive follows at 1.25×), applied at the next calibrate. A ratings sweep tells a supply-headroom failure from a resonance one |
 
 Wearable-initiated, no opcode: **link-lost** — one long heavy buzz on disconnect or
 supervision timeout, the wrist learns the safety net is gone; **link-back** — two

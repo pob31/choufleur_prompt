@@ -41,6 +41,7 @@ LOG_MODULE_REGISTER(ble, LOG_LEVEL_INF);
 #define OP_IDENTIFY  0x06
 #define OP_EFFECT    0x07
 #define OP_CALIBRATE 0x08
+#define OP_RATED     0x09
 /* Internal, never on the wire: link events from the conn callbacks. */
 #define OP_LINK_LOST 0xf0
 #define OP_LINK_BACK 0xf1
@@ -108,6 +109,9 @@ static void ops_fn(struct k_work *work)
 		case OP_CALIBRATE:
 			haptic_calibrate(f.param);
 			break;
+		case OP_RATED:
+			haptic_set_rated(f.param);
+			break;
 		case OP_LINK_LOST:
 			haptic_play(HAPTIC_LINK_LOST);
 			break;
@@ -118,7 +122,7 @@ static void ops_fn(struct k_work *work)
 			break; /* newer page, older wearable: silence */
 		}
 
-		if (f.op <= OP_CALIBRATE) {
+		if (f.op <= OP_RATED) {
 			/* Any write from the page proves somebody is home. */
 			k_work_reschedule(&stale_work, K_SECONDS(90));
 			led_set(LED_CONNECTED);

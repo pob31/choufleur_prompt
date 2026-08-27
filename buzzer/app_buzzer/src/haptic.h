@@ -39,3 +39,7 @@ int haptic_calibrate(uint8_t hz_half);
 
 /* Whether the last auto-calibration passed; the info characteristic's 4th byte. */
 bool haptic_calibrated(void);
+
+/* Opcode 0x09, tryout only: override the rated voltage (param * 20 mV; 0 restores
+ * the overlay's). Takes effect at the next calibrate / wake. */
+void haptic_set_rated(uint8_t mv_over_20);
