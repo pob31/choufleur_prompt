@@ -119,3 +119,56 @@ nothing to design — a clip, or a pocket.
   paper numbers until it does.
 - The vocabulary is unchanged and unfrozen: two wrists said it reads; nobody has
   yet said which stage they would *want* louder or softer.
+
+---
+
+# The second LRA — Adafruit 2305 + PUI HD-LA0803-LW10-R, 25 August 2026
+
+A second XIAO on stock firmware, the Adafruit breakout, the 8 mm PUI coin LRA taped
+to the back of the PCB, the same four QT wires. The bench tools had died with the
+scratch directory overnight and were rebuilt into `buzzer/tools/` first.
+
+## What happened, in order
+
+1. The 1200-baud touch took the fresh board into its bootloader; serial DFU put the
+   firmware on. Advertised as `CHF-A011`, info, battery, opcodes — all as the first
+   board. It vibrated at once. It calibrated never: `0xE8` at every seed, boot and
+   on demand, dangling or held.
+2. Swapping the **PIM452 onto the new XIAO**: calibrated first time. So the board,
+   firmware and cable were clean; the unit was the difference.
+3. A real error surfaced in the register maths: the datasheet scales a closed-loop
+   LRA's rated and overdrive registers by √(1 − 1.5 ms·f) — the back-EMF sampling
+   dead time — which is 0.80 at 235 Hz. Left out, the chip was asked for four
+   fifths of the rating. Fixed, recomputed with every seed. **It did not fix the
+   PUI.**
+4. A resonance sweep from 100 to 300 Hz: every seed failed. Not the frequency.
+5. A new opcode, `0x09 rated`, and `tools/ratings.py`: step the rated voltage from
+   0.8 to 2.0 V, calibrating at each. **Locks at 0.8, 1.0, 1.2, 1.4; refuses at
+   1.6, 1.8, 2.0.** Forty seconds, and the whole picture.
+6. The boxed datasheet arrived: **2 Vrms, 235 Hz, 25 Ω, 90 mA at rating.** The
+   vendor page had been right. So the ceiling is not the part but the **3.3 V
+   rail**: 2 Vrms is 2.83 V peak before overdrive, and an H-bridge on 3.3 V with
+   90 mA through it does not get there.
+
+## What it means
+
+- **Both LRAs are 2 V parts on a 3.3 V supply.** The PIM452 passed at "2000" on the
+  first night only because the old maths was asking for 1.6. With the maths right,
+  it shares the ceiling. Both are rated **1400** in the overlay now — about 70 % of
+  their rating, and exactly what two people felt on five sites last night.
+- Feeding the breakout more than 3.3 V is not available: its I2C pull-ups hang off
+  the same VIN, and the nRF52840 is not 5 V tolerant. On the cell the 3V3 LDO holds
+  3.3 V, so the number is the same off USB.
+- The order of diagnosis mattered. Mount, then resonance, then rating — each one a
+  sweep from the page, none a rebuild. The tools that do it are in the repository.
+- **Three bugs the first night, one the second**, and one lesson the datasheet had to
+  deliver in person: a calibration that "cannot converge" can be the rail, and the
+  fastest way to know is to ask for less and watch it lock.
+
+## Open
+
+- The 1400 build goes onto the second XIAO at the next double-tap; the PIM452 gets
+  re-checked under the corrected maths at 1400.
+- How the PUI reads on skin against the PIM — crisper, smaller, 235 Hz coin against
+  a 200 Hz rectangle — is the felt comparison still to be written down.
+- Pairing from the live page in Chrome remains untested. The ERM remains untried.
