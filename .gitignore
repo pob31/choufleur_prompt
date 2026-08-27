@@ -65,3 +65,6 @@ server/crates/choufleur-app/binaries/
 # Signing and notarization credentials for scripts/release-app.sh.
 scripts/.env.release
 buzzer/tools/.venv/
+
+# vendor datasheets: proprietary, kept locally only
+docs/*.pdf

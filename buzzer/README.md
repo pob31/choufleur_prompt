@@ -69,14 +69,22 @@ audition field, or opcode `0x07`) to re-pick the vocabulary:
 
 | Unit under test | actuator-mode | vib-rated-mv | vib-overdrive-mv | lra-freq-hz |
 |---|---|---|---|---|
-| Adafruit 2305 + PUI HD-LA0803-LW10-R (8×8×3.2 mm LRA, 25 Ω) | `"LRA"` | **1200** — swept: locks up to 1400, refuses from 1600; the vendor page's "2 Vrms" is not what this unit takes | 1500 | any seed 100–300 locks once the rating is right |
-| Pimoroni PIM452, ELV1411A on the PCB (14×11×2.5 mm LRA, 2 Vrms) | `"LRA"` | 2000 | 2500 | 200 — swept: 150 fails auto-cal, 170–235 all lock |
+| Adafruit 2305 + PUI HD-LA0803-LW10-R (8×8×3.2 mm LRA, 2 Vrms / 235 Hz / 25 Ω per its datasheet) | `"LRA"` | **1400** — the 3.3 V rail's ceiling: locks up to 1400, refuses from 1600 | 1750 | 235 (any seed 100–300 locks once the rating is within the rail) |
+| Pimoroni PIM452, ELV1411A on the PCB (14×11×2.5 mm LRA, 2 Vrms) | `"LRA"` | **1400** — same rail, same ceiling; it passed at "2000" only while the register maths under-asked | 1750 | 200 — swept: 150 fails auto-cal, 170–235 all lock |
 | Adafruit 2305 + small 3 V coin ERM | `"ERM"` | 3000 | 3300 | unused |
 
 The frequency only seeds auto-resonance; calibration trims from there, so a
 roughly-right number starts crisp and gets crisper — and a wrong one fails
 calibration outright rather than sounding merely dull, which is how the PIM452's
 "150 Hz" was caught. Opcode `0x08` with a seed sweeps for the truth from the page.
+
+**The rail sets the rating.** Both LRAs are 2 Vrms parts, and on a 3.3 V supply the
+DRV2605L cannot reach 2 Vrms plus overdrive: calibration locks at 1.4 V rated and
+refuses at 1.6, on either unit. A ratings sweep (opcode `0x09`, `tools/ratings.py`)
+finds that ceiling in forty seconds. 1.4 V is about 70 % of the parts' rating — and
+it is what two people felt on five sites, since the first night's firmware was
+quietly asking for 1.6. Feeding the breakout more than 3.3 V is not an option while
+its I2C pull-ups hang off the same pin — the nRF52840 is not 5 V tolerant.
 
 **Calibrate as mounted — the datasheet means it.** An LRA rings against the mass it
 is bonded to; a breakout dangling from its four wires has none, swings instead of
@@ -127,9 +135,11 @@ which makes the waistband a wearing position with no strap to design. The full a
 calibrated never — at any seed from 100 to 300 Hz, dangling or held, before and after
 the register maths gained the LRA sampling factor it had been missing. A ratings sweep
 from the page (opcode `0x09`) settled it in forty seconds: locks at 0.8, 1.0, 1.2 and
-1.4 V rated, fails at 1.6, 1.8 and 2.0. Whether that is the Adafruit board's supply
-headroom or a "2 Vrms" that was never true of this part, the working number is 1.2 V.
-The PIM452 on the same XIAO calibrated first time, which is what pointed at the unit. Calibration passed at every site once strapped, and
+1.4 V rated, fails at 1.6, 1.8 and 2.0. The boxed datasheet says 2 Vrms, 235 Hz,
+25 Ω, 90 mA — so it is not the part but the 3.3 V rail, which the corrected register
+maths had just started asking for the full 2 V of. The PIM452 on the same XIAO
+calibrated first time only because it was tested before that correction; it shares
+the ceiling. Both LRAs now run at 1.4 V rated. Calibration passed at every site once strapped, and
 failed only while the board hung from its cable. Vocabulary left as is pending the
 other two actuators. The full account is
 [docs/choufleur-buzzer-notes.md](../docs/choufleur-buzzer-notes.md).

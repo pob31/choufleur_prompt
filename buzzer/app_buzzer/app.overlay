@@ -18,14 +18,15 @@
  * Per-actuator values — the whole swap lives in these numbers (and the effect
  * vocabulary auditioned with opcode 0x07):
  *
- *   PUI HD-LA0803-LW10-R      "LRA"  rated 1200  overdrive 1500  freq 235 (*)
- *   ELV1411A (on the PIM452)  "LRA"  rated 2000  overdrive 2500  freq 200 (**)
+ *   PUI HD-LA0803-LW10-R      "LRA"  rated 1400  overdrive 1750  freq 235 (*)
+ *   ELV1411A (on the PIM452)  "LRA"  rated 1400  overdrive 1750  freq 200 (**)
  *   3 V coin ERM              "ERM"  rated 3000  overdrive 3300  freq unused
  *
- * (*) PUI's page says 2 Vrms; the chip says otherwise. A ratings sweep from the
- * page (opcode 0x09) locks at 0.8-1.4 V and refuses from 1.6 V — on the Adafruit
- * board from 3.3 V. Once the rating is right, every seed from 100 to 300 Hz
- * locks, so the frequency is the least of it.
+ * (*) Both LRAs are 2 Vrms parts (PUI datasheet: 2 Vrms, 235 Hz, 25 Ω, 90 mA).
+ * On the 3.3 V rail the DRV2605L cannot reach that plus overdrive: a ratings
+ * sweep (opcode 0x09) locks at 0.8-1.4 V and refuses from 1.6 V. 1400 is the
+ * rail's ceiling, about 70 % of the rating, and is what two people felt on five
+ * sites. Once the rating fits the rail, every seed from 100 to 300 Hz locks.
  * (**) A reseller page said 150 Hz; the chip disagrees. Swept from the page with
  * opcode 0x08: 150 fails auto-cal every time, 170 through 235 all lock with
  * identical results. 200 sits in the middle of what works.
@@ -52,8 +53,8 @@
 		compatible = "ti,drv2605";
 		reg = <0x5a>;
 		actuator-mode = "LRA";
-		vib-rated-mv = <2000>;
-		vib-overdrive-mv = <2500>;
+		vib-rated-mv = <1400>;
+		vib-overdrive-mv = <1750>;
 	};
 };
 
