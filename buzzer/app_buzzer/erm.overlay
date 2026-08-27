@@ -1,0 +1,17 @@
+/*
+ * The ERM contender: the same Adafruit DRV2605L breakout with a 3 V coin
+ * vibrating motor on OUT+/OUT-. Layered over app.overlay:
+ *
+ *   west build -b xiao_ble/nrf52840 app_buzzer -d build_erm -- \
+ *       -DEXTRA_DTC_OVERLAY_FILE=erm.overlay [-DEXTRA_CONF_FILE=debug_usb.conf]
+ *
+ * actuator-mode flips the feedback topology and effect library in haptic.c;
+ * the resonance seed is ignored for an ERM. Ratings: a 3 V motor on a 3.3 V
+ * rail leaves little headroom — if calibration refuses, sweep the rating from
+ * the page (opcode 0x09, tools/ratings.py) as with the LRAs.
+ */
+&drv2605 {
+	actuator-mode = "ERM";
+	vib-rated-mv = <2600>;
+	vib-overdrive-mv = <3000>;
+};

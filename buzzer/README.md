@@ -140,7 +140,10 @@ from the page (opcode `0x09`) settled it in forty seconds: locks at 0.8, 1.0, 1.
 maths had just started asking for the full 2 V of. The PIM452 on the same XIAO
 calibrated first time only because it was tested before that correction; it shares
 the ceiling. Both LRAs now run at 1.4 V rated; with that in the overlay the PUI
-calibrates at boot, unaided, and plays the tour. Calibration passed at every site once strapped, and
+calibrates at boot, unaided, and plays the tour. Between the fingers the two feel
+quite different for the same pattern: the 8 mm coin's mass moves **axially**, into
+the skin; the ELV1411A's moves **laterally**, shearing along it. A mounting fact as
+much as a preference — which way the actuator faces the wrist is part of the design. Calibration passed at every site once strapped, and
 failed only while the board hung from its cable. Vocabulary left as is pending the
 other two actuators. The full account is
 [docs/choufleur-buzzer-notes.md](../docs/choufleur-buzzer-notes.md).
@@ -184,6 +187,13 @@ The XIAO board definition switches on a USB serial console by default, so a runn
 wearable shows up as a CDC port ("Zephyr Project") whenever it is on USB — the
 quickest sign that the app booted, and where logs go in a `debug_usb.conf` build.
 On battery the USB peripheral is unpowered and costs nothing.
+
+For the ERM contender, layer `erm.overlay` on top (it flips `actuator-mode` and the
+ratings; nothing in the code changes):
+
+```bash
+west build ... -d buzzer/build_erm -- -DEXTRA_DTC_OVERLAY_FILE=erm.overlay
+```
 
 For log output on that console, add:
 
