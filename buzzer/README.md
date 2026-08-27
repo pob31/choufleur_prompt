@@ -163,7 +163,12 @@ skin, the very axis the waistband clamps, so the pressure that couples it also
 shortens its travel. The ELV1411A's stroke is lateral, shearing along the skin;
 clamping barely touches that axis and only improves the coupling — and it carries
 the larger moving mass. Rule: **under a strap or waistband, a lateral LRA; an axial
-coin belongs where it faces the skin without being pressed.**
+coin belongs where it faces the skin without being pressed.** Behind the clavicle,
+one at a time under a hand-held strap, the coin made the nuance exact: with gentle
+pressure it gives "a very nice pulsating feel"; with the strap pulled firm it is
+choked. The coin is not the lesser actuator — it is the one whose mount must control
+its preload: an elastic, a foam pad spreading the load, or a shallow well in a rigid
+housing so the coin's face meets skin without carrying strap tension.
 
 **ERM against PIM, same hips, same instant:** the ERM is stronger and **not good at
 short bursts** — the tour's clicks and ticks smear into rumble. The vocabulary is

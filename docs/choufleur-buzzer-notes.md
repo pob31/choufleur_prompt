@@ -188,4 +188,10 @@ scratch directory overnight and were rebuilt into `buzzer/tools/` first.
   at short bursts** — the countable vocabulary smears into rumble. Where the tryout
   points: the lateral LRA (ELV1411A / PIM452) under the strap at 1.4 V. Strength was
   never the shortage; countability is the whole design.
+- Behind the clavicle (above the scapula, under a hand-held strap), one at a time:
+  the PUI coin under **gentle** pressure — "a very nice pulsating feel"; under a firm
+  strap — choked. The axial rule gains its nuance: the coin is fine where the mount
+  controls preload (elastic, foam, a shallow well), and wrong where a strap clamps.
+  The ERM's turn was lost to a broken I2C lead, which the wearable reported as
+  "uncalibrated" — a fifth info byte now says "driver not answering" instead.
 - Pairing from the live page in Chrome remains untested; so does a night on the cell.
