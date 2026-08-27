@@ -167,8 +167,10 @@ scratch directory overnight and were rebuilt into `buzzer/tools/` first.
 
 ## Open
 
-- The 1400 build goes onto the second XIAO at the next double-tap; the PIM452 gets
-  re-checked under the corrected maths at 1400.
+- ~~The 1400 build goes onto the second XIAO; the PIM452 gets re-checked under the
+  corrected maths at 1400.~~ Done the same evening: the PUI calibrates at boot,
+  unaided, and the PIM452 on the same XIAO locks at 170, 200 and 235 Hz. Both LRAs,
+  one rating, one explanation.
 - How the PUI reads on skin against the PIM — crisper, smaller, 235 Hz coin against
   a 200 Hz rectangle — is the felt comparison still to be written down.
 - Pairing from the live page in Chrome remains untested. The ERM remains untried.
