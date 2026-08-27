@@ -3544,15 +3544,31 @@
     paintBuzzBtn();
     buzzWakeLock();
     // Quiet retries for as long as a device is remembered: a wearable that walked
-    // out of range walks back in. The wearable itself already told the wrist.
+    // out of range walks back in, and one whose battery was swapped reboots to
+    // the same address and advertises again. The wearable itself already told
+    // the wrist. One attempt in flight at a time — a connect that is still
+    // timing out must not be joined by the next tick's.
     if (!buzzRetry && buzzDev) {
-      buzzRetry = setInterval(async () => {
-        if (!buzzDev) { clearInterval(buzzRetry); buzzRetry = null; return; }
-        if (buzzChr) { clearInterval(buzzRetry); buzzRetry = null; return; }
-        try { await adoptBuzzer(buzzDev); } catch { /* still gone */ }
-      }, 5000);
+      buzzRetry = setInterval(buzzReconnect, 5000);
     }
   }
+
+  let buzzReconnecting = false;
+  async function buzzReconnect() {
+    if (!buzzDev || buzzChr) {
+      if (buzzRetry) { clearInterval(buzzRetry); buzzRetry = null; }
+      return;
+    }
+    if (buzzReconnecting) return;
+    buzzReconnecting = true;
+    try { await adoptBuzzer(buzzDev); buzzNote('buzzer back'); paintBuzz(); }
+    catch { /* still gone; the next tick tries again */ }
+    finally { buzzReconnecting = false; }
+  }
+  // A tab coming back to the front has probably been throttled; try at once.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && buzzDev && !buzzChr) buzzReconnect();
+  });
 
   async function pairBuzzer() {
     const dev = await navigator.bluetooth.requestDevice({
