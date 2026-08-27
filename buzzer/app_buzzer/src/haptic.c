@@ -73,11 +73,48 @@ BUILD_ASSERT(IS_LRA || DT_ENUM_HAS_VALUE(DT_NODELABEL(drv2605), actuator_mode, e
 #define OD_MV    DT_PROP(DT_NODELABEL(drv2605), vib_overdrive_mv)
 #define LRA_HZ   DT_PROP(DT_PATH(zephyr_user), lra_freq_hz)
 
-/* Register LSBs from the datasheet: rated ~20.58 mV, overdrive clamp ~21.22 mV.
- * Close enough to seed auto-calibration, which then trims the back-EMF gain —
- * for exact closed-loop math see DRV2605L datasheet §8.5.2.1. */
-#define RATED_REG MIN(255, (RATED_MV * 100) / 2058)
-#define OD_REG    MIN(255, (OD_MV * 100) / 2122)
+/* Register LSBs from the datasheet: rated 20.58 mV, overdrive clamp 21.22 mV.
+ * For a closed-loop LRA both are scaled by sqrt(1 - (4*t_sample + 300 us) * f)
+ * — the back-EMF sampling dead time, 1.5 ms per cycle at the default t_sample —
+ * which is 0.80 at 235 Hz. Left out, the chip is asked for four fifths of the
+ * actuator's rating, never reaches its own target, and reports 0xE8: cannot
+ * converge. The PUI found that; the ELV1411A at 200 Hz had just enough margin.
+ * DRV2605L datasheet §8.5.2.1. Recomputed whenever the resonance seed moves. */
+static uint8_t rated_reg;
+static uint8_t od_reg;
+
+static uint32_t isqrt(uint32_t n)
+{
+	uint32_t r = 0, bit = 1u << 30;
+
+	while (bit > n) {
+		bit >>= 2;
+	}
+	while (bit) {
+		if (n >= r + bit) {
+			n -= r + bit;
+			r = (r >> 1) + bit;
+		} else {
+			r >>= 1;
+		}
+		bit >>= 2;
+	}
+	return r;
+}
+
+static void ratings_for(uint32_t hz)
+{
+	/* s = 1000 * sqrt(1 - 0.0015 * hz); an ERM has no dead time (s = 1000). */
+	uint32_t s = 1000;
+
+	if (IS_LRA) {
+		uint32_t f2 = 1000 - MIN(999, (1500 * hz) / 1000); /* x1000 */
+
+		s = isqrt(f2 * 1000);
+	}
+	rated_reg = MIN(255, ((uint32_t)RATED_MV * 100000) / (2058 * s));
+	od_reg = MIN(255, ((uint32_t)OD_MV * 100000) / (2122 * s));
+}
 
 /* DRIVE_TIME (CONTROL1 bits 4:0) is half the LRA period, offset per datasheet:
  * (half-period-us - 500) / 100. Bit 7 keeps STARTUP_BOOST on. LRA only; an
@@ -126,8 +163,8 @@ static int wake(void)
 	wr(REG_MODE, MODE_ACTIVE);
 	wr(REG_FEEDBACK, cal_feedback);
 	wr(REG_LIBRARY, LIBRARY_SEL);
-	wr(REG_RATED, RATED_REG);
-	wr(REG_OD_CLAMP, OD_REG);
+	wr(REG_RATED, rated_reg);
+	wr(REG_OD_CLAMP, od_reg);
 	if (IS_LRA) {
 		wr(REG_CONTROL1, 0x80 | drive_time); /* STARTUP_BOOST on */
 	}
@@ -317,7 +354,9 @@ int haptic_calibrate(uint8_t hz_half)
 	k_work_cancel_delayable(&tour_work);
 	if (hz_half >= 50 && IS_LRA) { /* 100 Hz floor: below it the maths wraps */
 		drive_time = DRIVE_TIME_FOR((uint32_t)hz_half * 2);
-		LOG_INF("resonance seed %u Hz (drive_time %u)", hz_half * 2, drive_time);
+		ratings_for((uint32_t)hz_half * 2);
+		LOG_INF("resonance seed %u Hz (drive_time %u rated %02x od %02x)",
+			hz_half * 2, drive_time, rated_reg, od_reg);
 	}
 	if (wake()) {
 		return -EIO;
@@ -325,6 +364,8 @@ int haptic_calibrate(uint8_t hz_half)
 	if (IS_LRA) {
 		wr(REG_CONTROL1, 0x80 | drive_time);
 	}
+	wr(REG_RATED, rated_reg);
+	wr(REG_OD_CLAMP, od_reg);
 	bool ok = autocal();
 
 	k_work_reschedule(&sleep_work, K_SECONDS(3));
@@ -333,6 +374,9 @@ int haptic_calibrate(uint8_t hz_half)
 
 int haptic_init(void)
 {
+	ratings_for(LRA_HZ);
+	LOG_INF("ratings: rated %02x od %02x drive_time %u (%u Hz)",
+		rated_reg, od_reg, drive_time, LRA_HZ);
 	if (!i2c_is_ready_dt(&bus)) {
 		return -ENODEV;
 	}
