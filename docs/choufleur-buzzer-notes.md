@@ -194,4 +194,7 @@ scratch directory overnight and were rebuilt into `buzzer/tools/` first.
   controls preload (elastic, foam, a shallow well), and wrong where a strap clamps.
   The ERM's turn was lost to a broken I2C lead, which the wearable reported as
   "uncalibrated" — a fifth info byte now says "driver not answering" instead.
+  Lead repaired, the ERM took its turn: **"brutal, would be felt even through heavy
+  fabric."** Its place, exactly: not for the countable vocabulary, but for the
+  wearer who cannot have the thing against skin — pocket, costume, pouch.
 - Pairing from the live page in Chrome remains untested; so does a night on the cell.

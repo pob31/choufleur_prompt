@@ -168,7 +168,11 @@ one at a time under a hand-held strap, the coin made the nuance exact: with gent
 pressure it gives "a very nice pulsating feel"; with the strap pulled firm it is
 choked. The coin is not the lesser actuator — it is the one whose mount must control
 its preload: an elastic, a foam pad spreading the load, or a shallow well in a rigid
-housing so the coin's face meets skin without carrying strap tension.
+housing so the coin's face meets skin without carrying strap tension. The ERM at
+the same spot: **"brutal — would be felt even through heavy fabric."** That is its
+place in the picture, stated exactly: not the vocabulary's actuator, but the one for
+a wearer who cannot have it against skin — a jacket pocket, a costume, a beltpack
+pouch — where a click would never arrive and a rumble still does.
 
 **ERM against PIM, same hips, same instant:** the ERM is stronger and **not good at
 short bursts** — the tour's clicks and ticks smear into rumble. The vocabulary is
