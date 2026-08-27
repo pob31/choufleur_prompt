@@ -69,7 +69,7 @@ audition field, or opcode `0x07`) to re-pick the vocabulary:
 
 | Unit under test | actuator-mode | vib-rated-mv | vib-overdrive-mv | lra-freq-hz |
 |---|---|---|---|---|
-| Adafruit 2305 + PUI HD-LA0803-LW10-R (8×8×3.2 mm LRA, 2 Vrms, 25 Ω) | `"LRA"` | 2000 | 2500 | ~235 — confirm from the boxed datasheet |
+| Adafruit 2305 + PUI HD-LA0803-LW10-R (8×8×3.2 mm LRA, 25 Ω) | `"LRA"` | **1200** — swept: locks up to 1400, refuses from 1600; the vendor page's "2 Vrms" is not what this unit takes | 1500 | any seed 100–300 locks once the rating is right |
 | Pimoroni PIM452, ELV1411A on the PCB (14×11×2.5 mm LRA, 2 Vrms) | `"LRA"` | 2000 | 2500 | 200 — swept: 150 fails auto-cal, 170–235 all lock |
 | Adafruit 2305 + small 3 V coin ERM | `"ERM"` | 3000 | 3300 | unused |
 
@@ -120,7 +120,16 @@ heavier candidates (strong click 1, strong buzz 14, 1000 ms alert 16) all got
 through too. Fingertips read best, the trapezius least, the forearm in between;
 none needed the heavier set. Tucked at the hipbone under a trouser waistband —
 beltpack territory, and bone underneath — the short pulses read especially well,
-which makes the waistband a wearing position with no strap to design. Calibration passed at every site once strapped, and
+which makes the waistband a wearing position with no strap to design. The full account is
+[docs/choufleur-buzzer-notes.md](../docs/choufleur-buzzer-notes.md).
+
+**2026-08-25 — Adafruit 2305 + PUI HD-LA0803-LW10-R, second XIAO.** Vibrated at once,
+calibrated never — at any seed from 100 to 300 Hz, dangling or held, before and after
+the register maths gained the LRA sampling factor it had been missing. A ratings sweep
+from the page (opcode `0x09`) settled it in forty seconds: locks at 0.8, 1.0, 1.2 and
+1.4 V rated, fails at 1.6, 1.8 and 2.0. Whether that is the Adafruit board's supply
+headroom or a "2 Vrms" that was never true of this part, the working number is 1.2 V.
+The PIM452 on the same XIAO calibrated first time, which is what pointed at the unit. Calibration passed at every site once strapped, and
 failed only while the board hung from its cable. Vocabulary left as is pending the
 other two actuators. The full account is
 [docs/choufleur-buzzer-notes.md](../docs/choufleur-buzzer-notes.md).

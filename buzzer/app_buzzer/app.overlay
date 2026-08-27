@@ -18,13 +18,14 @@
  * Per-actuator values — the whole swap lives in these numbers (and the effect
  * vocabulary auditioned with opcode 0x07):
  *
- *   PUI HD-LA0803-LW10-R      "LRA"  rated 2000  overdrive 2500  freq ~235 (*)
+ *   PUI HD-LA0803-LW10-R      "LRA"  rated 1200  overdrive 1500  freq 235 (*)
  *   ELV1411A (on the PIM452)  "LRA"  rated 2000  overdrive 2500  freq 200 (**)
  *   3 V coin ERM              "ERM"  rated 3000  overdrive 3300  freq unused
  *
- * (*) PUI publishes 2 Vrms / 25 Ω but keeps f0 in the PDF — confirm against
- * the datasheet in the box. The seed only starts auto-resonance; calibration
- * trims from there.
+ * (*) PUI's page says 2 Vrms; the chip says otherwise. A ratings sweep from the
+ * page (opcode 0x09) locks at 0.8-1.4 V and refuses from 1.6 V — on the Adafruit
+ * board from 3.3 V. Once the rating is right, every seed from 100 to 300 Hz
+ * locks, so the frequency is the least of it.
  * (**) A reseller page said 150 Hz; the chip disagrees. Swept from the page with
  * opcode 0x08: 150 fails auto-cal every time, 170 through 235 all lock with
  * identical results. 200 sits in the middle of what works.
