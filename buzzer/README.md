@@ -222,6 +222,8 @@ west build ... -- -DEXTRA_CONF_FILE=debug_usb.conf
    overlay's rated/overdrive voltages disagree with the LRA datasheet.
 4. Write `07 <n>` to audition raw library effects (1–123) when choosing new
    patterns — or, once paired to the page, use the audition field in its panel.
+   With several wearables powered, `tools/all.py 07 <n>` plays it on all of them
+   at once — the side-by-side the actuator tryout is made of.
 5. Read the info characteristic: `[01, xx, yy]` — contract 1.
 6. Battery Service shows a plausible percentage and notifies.
 7. Kill the app without disconnecting: within 5 s, one long heavy buzz (link-lost)
