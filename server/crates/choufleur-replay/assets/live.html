@@ -1565,11 +1565,6 @@
   // where the whole board is somebody's job, not on a screen that has one list to run.
   if (!AT_THE_DESK && viewing === '*') viewing = null;
   if (AT_THE_DESK) document.body.dataset.desk = 'on';
-  const deviceId = (() => {
-    let d = localStorage.getItem('choufleur.device');
-    if (!d) { d = crypto.randomUUID(); localStorage.setItem('choufleur.device', d); }
-    return d;
-  })();
   const sheetOf = (id) => sheets.find((s) => s.id === id);
   // The categories in force are the showing list's. With "everything" selected there is
   // no single vocabulary, so every list's categories are pooled — ids are per-list and
