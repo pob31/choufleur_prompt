@@ -3985,16 +3985,55 @@
       // exactly the screens it was written for. Every tablet in the wings was told its
       // browser had no Web Bluetooth, which sent at least one operator through Chrome
       // and Brave in turn looking for a fault that was never in either.
-      hint.textContent = !window.isSecureContext
-        ? 'Web Bluetooth needs a secure context, and this is a plain http address — so '
-          + 'it is missing here in every browser, not just this one. On the desk '
-          + 'machine, open the page as http://localhost. On any other, once: '
-          + 'chrome://flags/#unsafely-treat-insecure-origin-as-secure with '
-          + location.origin + ' — note the port, which changes each time a show is '
-          + 'opened — then relaunch the browser.'
-        : 'This browser has no Web Bluetooth. Chrome and Edge have it, on desktop and '
-          + 'on Android; Safari and Firefox have none at all. Brave has it but ships it '
-          + 'off — turn on brave://flags/#brave-web-bluetooth-api.';
+      if (!window.isSecureContext) {
+        hint.textContent =
+          'Web Bluetooth needs a secure context, and this is a plain http address — so '
+          + 'it is missing here in every browser, not just this one. At the desk, open '
+          + 'the page as http://localhost. On an Android tablet, once: '
+          + 'chrome://flags/#unsafely-treat-insecure-origin-as-secure, set it to '
+          + 'Enabled, paste the line below, and relaunch the browser.';
+        $buzzer.appendChild(hint);
+
+        // Ready to paste, not described.
+        //
+        // The flag wants exact origins and takes a comma-separated list, so the only
+        // useful form of this instruction is the string itself. The extra ports are
+        // margin: the show server takes the library's port + 1 and keeps it night after
+        // night, and only walks upward if something is still holding one — which is
+        // rare, and is also the one evening you would not want to be editing a browser
+        // flag in the dark.
+        const origins = document.createElement('div');
+        origins.className = 'hint';
+        const list = [0, 1, 2]
+          .map((n) => location.protocol + '//' + location.hostname + ':'
+            + (Number(location.port || 80) + n))
+          .join(',');
+        const code = document.createElement('code');
+        code.textContent = list;
+        code.style.wordBreak = 'break-all';
+        origins.appendChild(code);
+        $buzzer.appendChild(origins);
+        row(btn('copy the line', async (e) => {
+          const was = e.target.textContent;
+          e.target.textContent = (await App.copyText(list)) ? 'copied' : 'select it above';
+          setTimeout(() => { e.target.textContent = was; }, 1600);
+        }));
+
+        // The half of the origin no flag can hold still.
+        const lease = document.createElement('div');
+        lease.className = 'hint';
+        lease.textContent =
+          'Give this machine a fixed address on the venue network while you are at it. '
+          + 'The line above is by number, because Android will not resolve the .local '
+          + 'name — and a new lease is a new origin, and this flag set again.';
+        $buzzer.appendChild(lease);
+        return;
+      }
+      hint.textContent =
+        'This browser has no Web Bluetooth. Chrome and Edge have it, on desktop and on '
+        + 'Android; Safari and every browser on iPadOS have none at all — there, only '
+        + 'Bluefy or WebBLE do, and both want https. Brave has it and ships it off: '
+        + 'turn on brave://flags/#brave-web-bluetooth-api.';
       $buzzer.appendChild(hint);
       return;
     }
