@@ -1776,7 +1776,21 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
             // durable address, and on a tablet it cannot even see that one.
             .route(
                 "/join.json",
-                get(move || async move { axum::Json(crate::join::where_to_join(port)) }),
+                // Never from a cache. The address here is read off the routing table at
+                // the moment it is asked for, precisely so that carrying the machine to
+                // another network — or being handed a new lease on this one — changes
+                // the answer. A browser holding this morning's copy would defeat the
+                // whole point of asking again, and would do it silently: a code that
+                // scans perfectly and leads nowhere.
+                get(move || async move {
+                    (
+                        [(
+                            axum::http::header::CACHE_CONTROL,
+                            "no-store, must-revalidate",
+                        )],
+                        axum::Json(crate::join::where_to_join(port)),
+                    )
+                }),
             )
             // Public here, unlike on the library server. Everything this server offers
             // is: the page itself is what every operator loads, and a code for a list
