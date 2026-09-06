@@ -601,17 +601,18 @@
   }
   #buzzbtn.on { border-color: var(--now) !important; color: var(--now) !important; }
 
-  /* The same rule as the buzzer's, for the same kind of reason: every screen that is
-     not pinned to one list. A tablet that followed somebody's link has no picker and no
-     business handing lists out; any other screen might be the one an operator is
-     standing at when the next one asks how to join. */
+  /* The buzzer's rule, and for a reason worth stating: *every* screen, the ones pinned
+     to a single list included. Being unable to change which list you are watching is not
+     the same as being unable to tell somebody else how to join, and treating them as one
+     thing took this away from the only device that had just proved it wanted it — the
+     tablet that arrived by scanning a code, whose operator is then the nearest person to
+     ask. The panel moves nobody's list; it only says where the others are. */
   #joinbtn {
-    display: none;
+    display: inline-flex; align-items: center; gap: .4em;
     border: 1px solid var(--dimmer); background: none; color: var(--dim);
     border-radius: 999px; padding: .25em .8em; cursor: pointer;
     font: 400 .84em/1.4 ui-sans-serif, system-ui, sans-serif;
   }
-  body[data-share="on"] #joinbtn { display: inline-flex; align-items: center; gap: .4em; }
   #joinbtn.on { border-color: var(--now) !important; color: var(--now) !important; }
   #joinbtn svg { width: 1.05em; height: 1.05em; }
 
@@ -1625,11 +1626,6 @@
   // passing thumb change it, so for them there is no picker — which is what the
   // comment above this has always claimed and the code did not do.
   const LIST_IS_FIXED = !AT_THE_DESK && !!pinned;
-  // A screen that hands lists out is any screen not pinned to one. A tablet that
-  // followed an operator's own link is theirs and shows no picker; everything else —
-  // the desk, and a tablet that came through the join page — might be where the next
-  // person is standing when they ask how to join.
-  const CAN_SHARE = !LIST_IS_FIXED;
   // Everything-at-once is the stage manager's view and the desk's cross-check. Offered
   // where the whole board is somebody's job, not on a screen that has one list to run.
   if (!AT_THE_DESK && viewing === '*') viewing = null;
@@ -1870,12 +1866,10 @@
         // The single clicks it is built from land first and select it, which is what
         // was wanted anyway. `all` has no address to give, so it opens on whatever the
         // panel would have shown.
-        if (CAN_SHARE) {
-          b.ondblclick = () => {
-            if (document.body.dataset.join !== 'on') togglePanel('join', () => {});
-            paintJoin(id === '*' ? null : id);
-          };
-        }
+        b.ondblclick = () => {
+          if (document.body.dataset.join !== 'on') togglePanel('join', () => {});
+          paintJoin(id === '*' ? null : id);
+        };
         $picker.appendChild(b);
       }
       return;
@@ -2987,7 +2981,6 @@
   document.getElementById('buzzbtn').addEventListener('click', () => togglePanel('buzz', paintBuzz));
   document.getElementById('joinbtn').innerHTML = QR_MARK;
   document.getElementById('joinbtn').append('join');
-  if (CAN_SHARE) document.body.dataset.share = 'on';
   document.getElementById('joinbtn').addEventListener('click', () => togglePanel('join', paintJoin));
 
   // The flag list.
