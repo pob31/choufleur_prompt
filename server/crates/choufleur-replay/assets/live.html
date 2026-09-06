@@ -3977,13 +3977,24 @@
     if (!buzzUsable()) {
       const hint = document.createElement('div');
       hint.className = 'hint';
-      hint.textContent = navigator.bluetooth
-        ? 'Web Bluetooth needs a secure context. On the desk machine open the page '
-          + 'as http://localhost. On any other machine, once: chrome://flags/'
-          + '#unsafely-treat-insecure-origin-as-secure with this page’s origin, '
-          + 'then relaunch the browser.'
-        : 'This browser has no Web Bluetooth — the buzzer pairs from Chrome or '
-          + 'Edge (desktop or Android).';
+      // Which of the two it is, asked in the order that can answer it.
+      //
+      // This used to test `navigator.bluetooth` first, which cannot work: that property
+      // is itself [SecureContext], so on a plain http address it is undefined whatever
+      // the browser is — and the secure-context message was therefore unreachable on
+      // exactly the screens it was written for. Every tablet in the wings was told its
+      // browser had no Web Bluetooth, which sent at least one operator through Chrome
+      // and Brave in turn looking for a fault that was never in either.
+      hint.textContent = !window.isSecureContext
+        ? 'Web Bluetooth needs a secure context, and this is a plain http address — so '
+          + 'it is missing here in every browser, not just this one. On the desk '
+          + 'machine, open the page as http://localhost. On any other, once: '
+          + 'chrome://flags/#unsafely-treat-insecure-origin-as-secure with '
+          + location.origin + ' — note the port, which changes each time a show is '
+          + 'opened — then relaunch the browser.'
+        : 'This browser has no Web Bluetooth. Chrome and Edge have it, on desktop and '
+          + 'on Android; Safari and Firefox have none at all. Brave has it but ships it '
+          + 'off — turn on brave://flags/#brave-web-bluetooth-api.';
       $buzzer.appendChild(hint);
       return;
     }
