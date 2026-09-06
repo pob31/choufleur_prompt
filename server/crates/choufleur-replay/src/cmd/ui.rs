@@ -105,11 +105,6 @@ struct StateDto {
     /// The show that is up, and what it is doing — see [`state`]. Not `OpenDto`,
     /// because "which show" and "what is it doing" come from different processes.
     open: Option<serde_json::Value>,
-    /// What to give the operators — see [`lan_addresses`]. Shown on the library screen
-    /// because that is the screen somebody is looking at when they read it out, and
-    /// typed rather than printed because the screen also has to draw one of them as a
-    /// QR code and only this end knows which one a phone can resolve.
-    operators: Vec<crate::join::Operator>,
 }
 
 #[derive(Serialize, Clone)]
@@ -260,7 +255,6 @@ async fn state(State(ui): State<Arc<Ui>>) -> Json<StateDto> {
     Json(StateDto {
         root: ui.root.to_string_lossy().into_owned(),
         open,
-        operators: crate::join::lan_addresses(ui.port),
     })
 }
 
@@ -991,7 +985,6 @@ pub fn run(root: PathBuf, port: u16, admin_from_anywhere: bool) -> Result<()> {
     let admin = axum::Router::new()
         .route("/admin", asset_route!("shows.html", "text/html; charset=utf-8"))
         .route("/api/state", get(state))
-        .route("/qr", get(crate::join::qr))
         .route("/api/shows", get(list).post(create))
         .route("/api/import", post(import_show))
         .route("/api/shows/{name}/versions", get(versions))
