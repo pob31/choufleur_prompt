@@ -600,6 +600,51 @@
     font: 400 .84em/1.4 ui-sans-serif, system-ui, sans-serif;
   }
   #buzzbtn.on { border-color: var(--now) !important; color: var(--now) !important; }
+
+  /* The same rule as the buzzer's, for the same kind of reason: every screen that is
+     not pinned to one list. A tablet that followed somebody's link has no picker and no
+     business handing lists out; any other screen might be the one an operator is
+     standing at when the next one asks how to join. */
+  #joinbtn {
+    display: none;
+    border: 1px solid var(--dimmer); background: none; color: var(--dim);
+    border-radius: 999px; padding: .25em .8em; cursor: pointer;
+    font: 400 .84em/1.4 ui-sans-serif, system-ui, sans-serif;
+  }
+  body[data-share="on"] #joinbtn { display: inline-flex; align-items: center; gap: .4em; }
+  #joinbtn.on { border-color: var(--now) !important; color: var(--now) !important; }
+  #joinbtn svg { width: 1.05em; height: 1.05em; }
+
+  #join .lists { display: flex; gap: .4em; flex-wrap: wrap; margin: 0 0 .9em; }
+  #join .lists button {
+    border: 1px solid var(--dimmer); background: none; color: var(--dim);
+    border-radius: 999px; padding: .25em .8em; cursor: pointer;
+    font: 400 .84em/1.4 ui-sans-serif, system-ui, sans-serif;
+  }
+  #join .lists button.on { border-color: var(--now); color: var(--now); }
+  #join .say { font: 400 .72em/1.5 ui-sans-serif, system-ui, sans-serif; color: var(--dim); }
+
+  /* The one light thing in the whole application, and it has to be.
+     A scanner wants dark modules on a light field with a margin of its own. The quiet
+     zone is already inside the SVG — four modules, as the format asks — and this adds a
+     second one for a phone held at an angle. Dimming the white to spare the eye in a
+     dark booth is the one change here that would stop it working. */
+  #join .tile {
+    background: #fff; border-radius: 6px; padding: .8em;
+    width: min(44vh, 17em); margin: .2em auto .8em;
+  }
+  #join .tile img { display: block; width: 100%; height: auto; }
+
+  /* The address, verbatim, under its own picture. Not decoration: the routing table is
+     asked for the default route, and a machine with a lighting network on ethernet and
+     the house on wifi can answer with the wrong one. Nobody reads a code, so this line
+     is the only thing left that would show it. */
+  #join .url { font: 400 .74em/1.5 ui-monospace, Menlo, monospace; color: var(--fg);
+               text-align: center; overflow-wrap: anywhere; }
+  #join .also { font: 400 .72em/1.5 ui-sans-serif, system-ui, sans-serif; color: var(--dim);
+                text-align: center; margin-top: .7em; }
+  #join .also code { color: var(--fg); font-family: ui-monospace, Menlo, monospace;
+                     overflow-wrap: anywhere; }
   #buzzbtn.linked { color: var(--fg); }
   /* Paired and gone: the lost colour at the edge of vision, not an alarm. */
   #buzzbtn.offline { color: var(--lost); border-color: var(--lost); }
@@ -611,10 +656,11 @@
   #buzzer button:hover { color: var(--fg); border-color: var(--dim); }
   #buzzer .hint { color: var(--dim); font-size: .9em; line-height: 1.5; }
   #buzzer .trail { color: var(--dim); font-size: .85em; margin-top: .5em; }
-  #cast, #lists, #audio, #buzzer { display: none; }
+  #cast, #lists, #audio, #buzzer, #join { display: none; }
   body[data-cast="on"] #cast,
   body[data-lists="on"] #lists,
   body[data-buzz="on"] #buzzer,
+  body[data-join="on"] #join,
   body[data-audio="on"] #audio {
     display: block; position: absolute; z-index: 7; right: 1.2em; bottom: 3.4em;
     width: 34em; max-height: 66vh; overflow-y: auto; overflow-x: hidden;
@@ -625,7 +671,7 @@
     border-radius: 5px; background: #14171c; border: 1px solid var(--edge);
     box-shadow: 0 10px 40px rgba(0,0,0,.6);
   }
-  #cast h4, #lists h4, #audio h4 {
+  #cast h4, #lists h4, #audio h4, #join h4 {
     margin: 0 0 .6em; font: 600 .64em/1.4 ui-sans-serif, system-ui, sans-serif;
     letter-spacing: .12em; text-transform: uppercase; color: var(--dimmer);
   }
@@ -882,6 +928,7 @@
   <div id="lists"></div>
   <div id="audio"></div>
   <div id="buzzer"></div>
+  <div id="join"></div>
   <div id="view">
       <div id="hint">tap the line being spoken to put it back on track</div>
     <div id="prephint">click a line to edit it · double-click to give it a cue · alt-click to flag</div>
@@ -908,6 +955,7 @@
     <button id="castbtn" title="who is in this show, and on which microphone">cast</button>
     <button id="audiobtn" title="the input device, and which channel each input feeds">audio</button>
     <button id="buzzbtn" title="a wearable that taps the wrist before a cue">buzz</button>
+    <button id="joinbtn" title="how another screen joins this show"></button>
     <span id="flags">
       <button id="flagprev" title="previous flag">&#9664;</button>
       <button id="flag" title="flag the current line (alt-click any line)">&#9873;</button>
@@ -1577,6 +1625,11 @@
   // passing thumb change it, so for them there is no picker — which is what the
   // comment above this has always claimed and the code did not do.
   const LIST_IS_FIXED = !AT_THE_DESK && !!pinned;
+  // A screen that hands lists out is any screen not pinned to one. A tablet that
+  // followed an operator's own link is theirs and shows no picker; everything else —
+  // the desk, and a tablet that came through the join page — might be where the next
+  // person is standing when they ask how to join.
+  const CAN_SHARE = !LIST_IS_FIXED;
   // Everything-at-once is the stage manager's view and the desk's cross-check. Offered
   // where the whole board is somebody's job, not on a screen that has one list to run.
   if (!AT_THE_DESK && viewing === '*') viewing = null;
@@ -1812,6 +1865,17 @@
         b.textContent = name;
         b.classList.toggle('on', viewing === id);
         b.onclick = () => choose(id);
+        // Twice on a list is "how does somebody else get this one" — the question is
+        // always about a particular list, and this is where that list is already named.
+        // The single clicks it is built from land first and select it, which is what
+        // was wanted anyway. `all` has no address to give, so it opens on whatever the
+        // panel would have shown.
+        if (CAN_SHARE) {
+          b.ondblclick = () => {
+            if (document.body.dataset.join !== 'on') togglePanel('join', () => {});
+            paintJoin(id === '*' ? null : id);
+          };
+        }
         $picker.appendChild(b);
       }
       return;
@@ -2788,16 +2852,120 @@
     $lists.appendChild(add);
   }
 
+  // ---- how another screen joins ------------------------------------------------
+  //
+  // On this window rather than the library screen, because this is the window that is
+  // up. The app has one window and opening a show takes it, so the addresses were on a
+  // screen you had to navigate back to at exactly the moment somebody was standing
+  // there asking. Now they are where the asking happens — and on an operator's tablet
+  // too, so a list can go from one person to the next without either walking to the desk.
+  //
+  // The number goes in the code and the Bonjour name is printed under it, which is
+  // backwards from how they are ranked everywhere else and is deliberate: Android does
+  // not resolve `.local` at all, so a code carrying the name is one half the wing cannot
+  // use. The name is still the one worth keeping, because it outlives the lease.
+  const QR_MARK = '<svg viewBox="0 0 11 11" aria-hidden="true" fill="currentColor" fill-rule="evenodd" shape-rendering="crispEdges"><path d="M0 0h5v5h-5zM1 1h3v3h-3zM2 2h1v1h-1zM6 0h5v5h-5zM7 1h3v3h-3zM8 2h1v1h-1zM0 6h5v5h-5zM1 7h3v3h-3zM2 8h1v1h-1zM5 0h1v1h-1zM5 2h1v1h-1zM5 4h1v1h-1zM5 6h1v1h-1zM5 8h1v1h-1zM5 10h1v1h-1zM0 5h1v1h-1zM2 5h1v1h-1zM7 5h1v1h-1zM9 5h1v1h-1zM7 7h1v1h-1zM9 7h1v1h-1zM7 9h1v1h-1zM10 10h1v1h-1z"/></svg>';
+
+  const $join = document.getElementById('join');
+  let joinWhere = null;   // what /join.json said, once
+  let joinPick = null;    // the list whose code is showing
+
+  // Asked once the panel is first opened, and again every time after.
+  //
+  // The address is a DHCP lease and this window is open from the get-in to the curtain,
+  // so a copy taken at load is a copy that can be hours stale by the half — which is
+  // the one failure this whole thing exists to prevent.
+  async function paintJoin(id) {
+    if (id) joinPick = id;
+    $join.textContent = '';
+    const h4 = document.createElement('h4');
+    h4.textContent = 'how another screen joins';
+    $join.appendChild(h4);
+    const say = document.createElement('div');
+    say.className = 'say';
+    say.textContent = 'asking…';
+    $join.appendChild(say);
+    try { joinWhere = await App.get('/join.json'); }
+    catch (e) { say.textContent = e.message; return; }
+
+    const addrs = joinWhere.addresses || [];
+    const ip = addrs.find((a) => a.kind === 'ip') || null;
+    const named = addrs.find((a) => a.kind === 'name') || null;
+    const addr = ip || named;
+    const other = ip ? named : null;
+    if (!addr) {
+      say.textContent = 'This machine has no address on any network at the moment.';
+      return;
+    }
+    say.remove();
+
+    // Everything-at-once is a view, not a list anybody can be handed, so it is not
+    // offered here even where the picker offers it.
+    const real = sheets.filter((sh) => sh.id !== '*');
+    if (!real.length) { $join.appendChild(say); say.textContent = 'No cue lists yet.'; return; }
+    if (!real.some((sh) => sh.id === joinPick)) {
+      joinPick = real.some((sh) => sh.id === viewing) ? viewing : real[0].id;
+    }
+
+    const link = (a, sheet) => (joinWhere.durable
+      ? new URL('/list/' + encodeURIComponent(sheet), a.url)
+      : new URL('/?list=' + encodeURIComponent(sheet), a.url)).href;
+
+    // Every list at once, so handing out four of them is four taps and not four trips
+    // back to this panel.
+    const row = document.createElement('div');
+    row.className = 'lists';
+    for (const sh of real) {
+      const b = document.createElement('button');
+      b.textContent = sh.name;
+      b.classList.toggle('on', sh.id === joinPick);
+      b.onclick = () => paintJoin(sh.id);
+      row.appendChild(b);
+    }
+    $join.appendChild(row);
+
+    const url = link(addr, joinPick);
+    const tile = document.createElement('div');
+    tile.className = 'tile';
+    const img = document.createElement('img');
+    // The same string in the picture and in the words under it, so the two cannot drift.
+    img.src = '/qr?d=' + encodeURIComponent(url);
+    img.alt = '';
+    tile.appendChild(img);
+    $join.appendChild(tile);
+
+    const line = document.createElement('div');
+    line.className = 'url';
+    line.textContent = url;
+    $join.appendChild(line);
+
+    const also = document.createElement('div');
+    also.className = 'also';
+    if (!joinWhere.durable) {
+      also.textContent = 'This server was started on its own, so the address carries a '
+        + 'port that changes each time. Good for tonight, not worth bookmarking.';
+    } else if (other) {
+      also.innerHTML = 'Worth keeping, and it outlives the number: <code>'
+        + App.esc(link(other, joinPick)) + '</code> — iPads and Macs find it, Android does not.';
+    } else {
+      also.textContent = 'There is no Bonjour name here, so there is only the number — '
+        + 'and the number changes when the network hands out a new one.';
+    }
+    $join.appendChild(also);
+  }
+
   function togglePanel(which, paint) {
     const on = document.body.dataset[which] === 'on';
     document.body.dataset.cast = 'off';
     document.body.dataset.lists = 'off';
     document.body.dataset.audio = 'off';
     document.body.dataset.buzz = 'off';
+    document.body.dataset.join = 'off';
     if (!on) { document.body.dataset[which] = 'on'; paint(); }
     // The button that opened a panel lights up, because otherwise the way to close it
     // is a guess — identical buttons and no clue which one is holding the panel.
-    for (const [key, id] of [['cast', 'castbtn'], ['lists', 'listsbtn'], ['audio', 'audiobtn'], ['buzz', 'buzzbtn']]) {
+    for (const [key, id] of [['cast', 'castbtn'], ['lists', 'listsbtn'], ['audio', 'audiobtn'],
+                             ['buzz', 'buzzbtn'], ['join', 'joinbtn']]) {
       document.getElementById(id)
         .classList.toggle('on', document.body.dataset[key] === 'on');
     }
@@ -2817,6 +2985,10 @@
     togglePanel('audio', paintAudio);
   });
   document.getElementById('buzzbtn').addEventListener('click', () => togglePanel('buzz', paintBuzz));
+  document.getElementById('joinbtn').innerHTML = QR_MARK;
+  document.getElementById('joinbtn').append('join');
+  if (CAN_SHARE) document.body.dataset.share = 'on';
+  document.getElementById('joinbtn').addEventListener('click', () => togglePanel('join', paintJoin));
 
   // The flag list.
   //
