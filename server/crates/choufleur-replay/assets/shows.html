@@ -196,12 +196,12 @@
       b.textContent = a;
       b.title = 'copy';
       b.onclick = async () => {
-        try {
-          await navigator.clipboard.writeText(a);
-          const was = b.textContent;
-          b.textContent = 'copied';
-          setTimeout(() => { b.textContent = was; }, 1200);
-        } catch { /* it is on screen either way; the copy is the convenience */ }
+        const ok = await App.copyText(a);
+        const was = b.textContent;
+        // Says which happened. It is on screen either way, so a failed copy is not a
+        // problem — a button that claims it copied when it did not is.
+        b.textContent = ok ? 'copied' : 'select it';
+        setTimeout(() => { b.textContent = was; }, 1200);
       };
       box.appendChild(b);
     }

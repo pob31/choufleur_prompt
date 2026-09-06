@@ -3287,11 +3287,12 @@
           '\t' + state + '\t' + h.text;
       })
       .join('\n');
-    try {
-      await navigator.clipboard.writeText(text);
-      const b = e.target; const was = b.textContent;
-      b.textContent = 'copied'; setTimeout(() => { b.textContent = was; }, 1200);
-    } catch { /* selection still works; the button is the convenience */ }
+    const ok = await App.copyText(text);
+    const b = e.target; const was = b.textContent;
+    // Selection still works, so a refusal is survivable — but it has to say so, or the
+    // next paste is last night's clipboard and nobody knows why.
+    b.textContent = ok ? 'copied' : 'select it';
+    setTimeout(() => { b.textContent = was; }, 1200);
   });
   document.getElementById('ear').addEventListener('click', () => {
     document.body.dataset.heard = document.body.dataset.heard === 'off' ? 'on' : 'off';

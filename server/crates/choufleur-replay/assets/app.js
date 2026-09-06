@@ -124,5 +124,48 @@ const App = (() => {
   // to a different port.
   const shell = window.__CHOUFLEUR_SHELL__ ?? null;
 
-  return { fmt, slug, get, post, confirmButton, swatchRow, PALETTE, esc, shell };
+  // Copy, on a screen that may have no clipboard.
+  //
+  // `navigator.clipboard` is [SecureContext] and every operator reaches these pages over
+  // plain http, so on exactly the devices that most need to copy an address — to escape
+  // a scanner's in-app browser and open it somewhere real — the modern call is not there
+  // at all. The deprecated one still works everywhere, and a deprecated call that works
+  // beats a standard one that is absent.
+  //
+  // Which path is taken is decided *synchronously*, and that is the whole of why this
+  // exists. `execCommand` is only permitted inside the user gesture that reached it, so
+  // awaiting a rejected `writeText` and falling back afterwards would fall back into a
+  // gesture that has already ended — the same silent failure, one layer further in.
+  //
+  // Returns whether it worked, because a button that says "copied" when nothing was is
+  // worse than one that admits it.
+  async function copyText(text) {
+    if (navigator.clipboard?.writeText) {
+      try { await navigator.clipboard.writeText(text); return true; } catch { return false; }
+    }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    // On the page but invisible: `display: none` has no selection to copy. iOS will not
+    // select a plain readonly textarea by script either, hence `contentEditable` — which
+    // costs nothing anywhere else.
+    ta.setAttribute('readonly', '');
+    ta.contentEditable = 'true';
+    ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
+    document.body.appendChild(ta);
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(ta);
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      ta.setSelectionRange(0, text.length);
+      return document.execCommand('copy');
+    } catch {
+      return false;
+    } finally {
+      ta.remove();
+    }
+  }
+
+  return { fmt, slug, get, post, confirmButton, swatchRow, PALETTE, esc, shell, copyText };
 })();
