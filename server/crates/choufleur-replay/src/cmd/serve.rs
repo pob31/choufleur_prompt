@@ -1771,6 +1771,17 @@ fn serve_http(state: Arc<LiveState>, port: u16) -> Result<()> {
                     }))
                 }),
             )
+            // Where to send somebody who asks how to join, answered by the machine
+            // that knows. The page is on this server, which is not the one holding the
+            // durable address, and on a tablet it cannot even see that one.
+            .route(
+                "/join.json",
+                get(move || async move { axum::Json(crate::join::where_to_join(port)) }),
+            )
+            // Public here, unlike on the library server. Everything this server offers
+            // is: the page itself is what every operator loads, and a code for a list
+            // is worth exactly as much as the list's address, which they already have.
+            .route("/qr", get(crate::join::qr))
             .route(
                 "/ws",
                 get(

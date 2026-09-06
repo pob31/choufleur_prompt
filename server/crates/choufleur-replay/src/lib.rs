@@ -10,6 +10,7 @@ pub mod cmd;
 pub mod engine;
 pub mod eval;
 pub mod formats;
+pub mod join;
 pub mod live;
 pub mod manifest;
 pub mod monitor;

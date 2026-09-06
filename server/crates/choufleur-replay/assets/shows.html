@@ -79,11 +79,15 @@
   #operators .addr:hover { border-color: var(--dimmer); }
   /* A label, not an address — so it leaves the monospace to the things that are one,
      and carries a mark that says what it opens before the words are read. */
-  #operators .scan {
-    margin-left: .2em; font: var(--ui); display: inline-flex; align-items: center;
-    gap: .45em; padding: .25em .6em;
-  }
-  #operators .scan svg { display: block; width: 1.25em; height: 1.25em; }
+  #operators .scan { margin-left: .2em; font: var(--ui); }
+  /* The mark rides the text's baseline rather than being centred against it.
+     This strip is `align-items: baseline`, and a flex item that is itself a flex
+     container takes its baseline from its first child — which here is the mark, a
+     replaced box with no baseline of its own, so the browser invents one at its bottom
+     edge and the whole chip sits low. Left inline, the button's baseline is its text's,
+     which is what the addresses beside it are aligned on. */
+  #operators .scan svg { width: 1.15em; height: 1.15em; vertical-align: -.3em;
+                         margin-right: .45em; }
 
   /* The join code. Narrower than the form dialogs, because it holds one picture. */
   #qrdlg { width: min(30em, 94vw); max-height: 92vh; overflow-y: auto; }
