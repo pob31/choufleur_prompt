@@ -839,6 +839,59 @@ async fn to_list(
     axum::response::Redirect::to(&url).into_response()
 }
 
+/// How much of an address this will draw.
+///
+/// The payload is `http://192.168.1.40:8080/list/conduite-son` and its longest plausible
+/// relative is not twice that. The cap is not a resource limit — encoding is
+/// microseconds — it is a statement about what this endpoint is for: anything longer is
+/// not an address, and a symbol that dense is unreadable off a screen anyway.
+const QR_MAX: usize = 512;
+
+#[derive(Deserialize)]
+struct QrQuery {
+    d: String,
+}
+
+/// `/qr?d=<url>` — one QR code, as SVG.
+///
+/// Knows nothing about shows, lists or addresses, and that is the point: the screen
+/// builds the address it is about to print under the code and hands that same string to
+/// this, so the picture and the caption cannot disagree. They could, if each end composed
+/// its own.
+///
+/// Black on white, always, and never from the request. Two reasons, and the second is the
+/// serious one. A camera in a dark wing wants the contrast the format was designed for,
+/// and the palette the rest of this is written in would cost a get-in to discover. And
+/// `svg::Color` is interpolated verbatim into a `fill="…"` attribute: a colour taken from
+/// a query string is one quote away from being a `<script>` on this origin. The payload
+/// itself never reaches the markup — it becomes path geometry.
+async fn qr(axum::extract::Query(q): axum::extract::Query<QrQuery>) -> Reply<impl IntoResponse> {
+    if q.d.is_empty() || q.d.len() > QR_MAX {
+        return Err(Fail(anyhow::anyhow!(
+            "a join code carries an address; {} bytes is not one",
+            q.d.len()
+        )));
+    }
+    let svg = qrcode::QrCode::new(q.d.as_bytes())?
+        .render()
+        // The quiet zone is four modules and it is *inside* the picture — the renderer
+        // fills the whole canvas with the light colour first — so the margin a scanner
+        // needs survives being dropped into any layout, including a dark one.
+        .dark_color(qrcode::render::svg::Color("#000000"))
+        .light_color(qrcode::render::svg::Color("#ffffff"))
+        .build();
+    Ok((
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                "image/svg+xml; charset=utf-8",
+            ),
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+        ],
+        svg,
+    ))
+}
+
 /// Refuse anything that did not come from this machine.
 ///
 /// The show's controls belong to the desk. A tablet in the wings gets the join page and
@@ -1059,6 +1112,7 @@ pub fn run(root: PathBuf, port: u16, admin_from_anywhere: bool) -> Result<()> {
     let admin = axum::Router::new()
         .route("/admin", asset_route!("shows.html", "text/html; charset=utf-8"))
         .route("/api/state", get(state))
+        .route("/qr", get(qr))
         .route("/api/shows", get(list).post(create))
         .route("/api/import", post(import_show))
         .route("/api/shows/{name}/versions", get(versions))
@@ -1148,6 +1202,38 @@ pub fn run(root: PathBuf, port: u16, admin_from_anywhere: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The border is what a scanner locks on to, and it is not drawn — it is the light
+    /// fill showing through around the modules. So if that fill ever goes dark to match
+    /// the rest of the screen, the code stops working and nothing else about it changes.
+    #[test]
+    fn a_join_code_keeps_its_light_border() {
+        let code = qrcode::QrCode::new(b"http://192.168.1.40:8080/list/conduite-son").unwrap();
+        // Every QR version is 4n+17 modules across.
+        assert_eq!((code.width() - 17) % 4, 0);
+        let svg = code
+            .render()
+            .dark_color(qrcode::render::svg::Color("#000000"))
+            .light_color(qrcode::render::svg::Color("#ffffff"))
+            .build();
+        assert!(svg.contains(r##"fill="#ffffff""##), "{svg}");
+        // Four modules of quiet zone on every side, which is what `render` asks for.
+        //
+        // Checked in modules rather than in pixels: the renderer picks its own scale, so
+        // the numbers in the markup are module counts times something this test has no
+        // business knowing. Derive that factor, then assert the first dark module starts
+        // four modules in.
+        let across = code.width() + 8;
+        let side: usize = svg
+            .split(r#"viewBox="0 0 "#)
+            .nth(1)
+            .and_then(|t| t.split(' ').next())
+            .and_then(|n| n.parse().ok())
+            .expect("a viewBox");
+        assert_eq!(side % across, 0, "{side} is not a whole number of modules");
+        let quiet = 4 * (side / across);
+        assert!(svg.contains(&format!(r#"d="M{quiet} {quiet}h"#)), "{svg}");
+    }
 
     #[test]
     fn stamps_read_as_a_date_and_a_time() {
