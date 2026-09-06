@@ -2885,8 +2885,18 @@
     const addrs = joinWhere.addresses || [];
     const ip = addrs.find((a) => a.kind === 'ip') || null;
     const named = addrs.find((a) => a.kind === 'name') || null;
-    const addr = ip || named;
-    const other = ip ? named : null;
+    // By number unless this screen has been told otherwise, and the choice sticks.
+    //
+    // The number reaches anything; the name outlives it. Which to put in front of a
+    // camera used to be decided here on the belief that Android could not resolve
+    // `.local` at all — true for years, and untrue since the resolver module of
+    // November 2021. It still fails on some networks, so this is not something to
+    // assume in either direction: it is one tap to find out, and the answer is
+    // remembered for the machine that answered it.
+    let want = null;
+    try { want = localStorage.getItem('choufleur.joinhost'); } catch { }
+    const addr = (want === 'name' && named) || (want === 'ip' && ip) || ip || named;
+    const other = addr === ip ? named : ip;
     if (!addr) {
       say.textContent = 'This machine has no address on any network at the moment.';
       return;
@@ -2938,14 +2948,36 @@
     if (!joinWhere.durable) {
       also.textContent = 'This server was started on its own, so the address carries a '
         + 'port that changes each time. Good for tonight, not worth bookmarking.';
-    } else if (other) {
-      also.innerHTML = 'Worth keeping, and it outlives the number: <code>'
-        + App.esc(link(other, joinPick)) + '</code> — iPads and Macs find it, Android does not.';
-    } else {
+    } else if (!other) {
       also.textContent = 'There is no Bonjour name here, so there is only the number — '
         + 'and the number changes when the network hands out a new one.';
+    } else if (addr.kind === 'ip') {
+      also.textContent = 'By number, which reaches anything. It changes with the network, '
+        + 'so a device that keeps it will need the code again somewhere else.';
+    } else {
+      also.textContent = 'By name, which follows this machine onto any network — nothing '
+        + 'to redo after a move. Macs and iPads resolve it; Android has since 2021, but '
+        + 'not through a Private DNS setting and not on a network that blocks multicast.';
     }
     $join.appendChild(also);
+
+    // The swap, offered only when there is something to swap to.
+    if (other && joinWhere.durable) {
+      const pick = document.createElement('div');
+      pick.className = 'lists';
+      pick.style.margin = '.7em 0 0';
+      for (const [kind, label] of [['ip', 'by number'], ['name', 'by name']]) {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.classList.toggle('on', addr.kind === kind);
+        b.onclick = () => {
+          try { localStorage.setItem('choufleur.joinhost', kind); } catch { }
+          paintJoin();
+        };
+        pick.appendChild(b);
+      }
+      $join.appendChild(pick);
+    }
   }
 
   function togglePanel(which, paint) {
