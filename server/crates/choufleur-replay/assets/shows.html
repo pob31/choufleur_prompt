@@ -193,10 +193,10 @@
     for (const a of addrs) {
       const b = document.createElement('button');
       b.className = 'addr';
-      b.textContent = a;
+      b.textContent = a.url;
       b.title = 'copy';
       b.onclick = async () => {
-        const ok = await App.copyText(a);
+        const ok = await App.copyText(a.url);
         const was = b.textContent;
         // Says which happened. It is on screen either way, so a failed copy is not a
         // problem — a button that claims it copied when it did not is.

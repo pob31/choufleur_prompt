@@ -98,6 +98,34 @@ struct VersionDto {
     files: Vec<String>,
 }
 
+/// How an address was found, which is the only thing that says who can resolve it.
+///
+/// An Android browser does not do mDNS: `choufleur.local` is a name it will not look up,
+/// and the number is the only entry on this list a phone can reach the machine by. An
+/// iPad and a Mac resolve both. Something has to choose which of the two goes in front
+/// of a camera, and the shape of the string is the wrong place to ask — the two are
+/// distinguishable by eye today and by accident on the first day something adds a third
+/// kind of name.
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "lowercase")]
+enum AddrKind {
+    /// A Bonjour name. Outlives the lease the number does not; Android will not look it up.
+    Name,
+    /// A number. Reaches anything on the network, until the lease changes.
+    Ip,
+}
+
+/// One way in, ready to be read out or drawn.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+struct Operator {
+    kind: AddrKind,
+    /// The host alone, for building another path onto this machine.
+    host: String,
+    /// The whole address, exactly as it goes on a screen and out of a mouth.
+    url: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StateDto {
@@ -106,8 +134,10 @@ struct StateDto {
     /// because "which show" and "what is it doing" come from different processes.
     open: Option<serde_json::Value>,
     /// What to give the operators — see [`lan_addresses`]. Shown on the library screen
-    /// because that is the screen somebody is looking at when they read it out.
-    operators: Vec<String>,
+    /// because that is the screen somebody is looking at when they read it out, and
+    /// typed rather than printed because the screen also has to draw one of them as a
+    /// QR code and only this end knows which one a phone can resolve.
+    operators: Vec<Operator>,
 }
 
 #[derive(Serialize, Clone)]
@@ -258,10 +288,7 @@ async fn state(State(ui): State<Arc<Ui>>) -> Json<StateDto> {
     Json(StateDto {
         root: ui.root.to_string_lossy().into_owned(),
         open,
-        operators: lan_addresses()
-            .into_iter()
-            .map(|a| format!("http://{a}:{}/", ui.port))
-            .collect(),
+        operators: lan_addresses(ui.port),
     })
 }
 
@@ -843,7 +870,15 @@ async fn desk_only(
 /// The Bonjour name comes first on purpose. It survives the DHCP lease that the
 /// address does not — the number can change between the get-in and the half — and an
 /// iPad resolves `.local` with nothing configured.
-fn lan_addresses() -> Vec<String> {
+fn lan_addresses(port: u16) -> Vec<Operator> {
+    // The address is assembled here and only here. It used to be written out at both
+    // call sites — once for the screen and once for the terminal — which is two copies
+    // of one string with nothing keeping them the same.
+    let at = |kind, host: String| Operator {
+        url: format!("http://{host}:{port}/"),
+        host,
+        kind,
+    };
     let mut out = Vec::new();
     if let Ok(o) = std::process::Command::new("scutil")
         .args(["--get", "LocalHostName"])
@@ -851,7 +886,7 @@ fn lan_addresses() -> Vec<String> {
     {
         let name = String::from_utf8_lossy(&o.stdout).trim().to_string();
         if !name.is_empty() {
-            out.push(format!("{name}.local"));
+            out.push(at(AddrKind::Name, format!("{name}.local")));
         }
     }
     // Which interface a tablet would arrive on, asked of the routing table rather than
@@ -863,7 +898,7 @@ fn lan_addresses() -> Vec<String> {
             if let Ok(addr) = sock.local_addr() {
                 let ip = addr.ip().to_string();
                 if ip != "0.0.0.0" {
-                    out.push(ip);
+                    out.push(at(AddrKind::Ip, ip));
                 }
             }
         }
@@ -1049,8 +1084,8 @@ pub fn run(root: PathBuf, port: u16, admin_from_anywhere: bool) -> Result<()> {
         // whole point of the first. Operators need an address to type on a tablet, and
         // until this line nothing anywhere told anybody what it was.
         println!("\n  the library:   http://localhost:{port}/admin   (ctrl-c to stop)");
-        for addr in lan_addresses() {
-            println!("  the operators: http://{addr}:{port}/");
+        for a in lan_addresses(port) {
+            println!("  the operators: {}", a.url);
         }
         if admin_from_anywhere {
             println!(
