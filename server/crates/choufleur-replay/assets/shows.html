@@ -77,7 +77,13 @@
     padding: .2em .5em; cursor: pointer;
   }
   #operators .addr:hover { border-color: var(--dimmer); }
-  #operators .scan { margin-left: .2em; }
+  /* A label, not an address — so it leaves the monospace to the things that are one,
+     and carries a mark that says what it opens before the words are read. */
+  #operators .scan {
+    margin-left: .2em; font: var(--ui); display: inline-flex; align-items: center;
+    gap: .45em; padding: .25em .6em;
+  }
+  #operators .scan svg { display: block; width: 1.25em; height: 1.25em; }
 
   /* The join code. Narrower than the form dialogs, because it holds one picture. */
   #qrdlg { width: min(30em, 94vw); max-height: 92vh; overflow-y: auto; }
@@ -257,11 +263,22 @@
     if (openShow) {
       const scan = document.createElement('button');
       scan.className = 'addr scan';
-      scan.textContent = 'scan a cue list…';
+      // The mark is drawn rather than written: there is no character for a QR code, and
+      // the three corner squares are the part of one anybody recognises across a room.
+      // `currentColor` so it follows the button through hover and any later palette.
+      scan.innerHTML = QR_MARK;
+      scan.append('Cuelist QR code');
       scan.onclick = openQr;
       box.appendChild(scan);
     }
   }
+
+  // The mark on the button that opens the code.
+  //
+  // Three finder squares and a scatter of modules, on the 16-unit grid the whole thing
+  // is drawn to. Not a real symbol and not pretending to be — it is the shape somebody
+  // recognises from across a room, at the size of a word.
+  const QR_MARK = '<svg viewBox="0 0 11 11" aria-hidden="true" fill="currentColor" fill-rule="evenodd" shape-rendering="crispEdges"><path d="M0 0h5v5h-5zM1 1h3v3h-3zM2 2h1v1h-1zM6 0h5v5h-5zM7 1h3v3h-3zM8 2h1v1h-1zM0 6h5v5h-5zM1 7h3v3h-3zM2 8h1v1h-1zM5 0h1v1h-1zM5 2h1v1h-1zM5 4h1v1h-1zM5 6h1v1h-1zM5 8h1v1h-1zM5 10h1v1h-1zM0 5h1v1h-1zM2 5h1v1h-1zM7 5h1v1h-1zM9 5h1v1h-1zM7 7h1v1h-1zM9 7h1v1h-1zM7 9h1v1h-1zM10 10h1v1h-1z"/></svg>';
 
   // ---- the join code ---------------------------------------------------------
   //
