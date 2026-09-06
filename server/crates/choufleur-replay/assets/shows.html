@@ -77,6 +77,37 @@
     padding: .2em .5em; cursor: pointer;
   }
   #operators .addr:hover { border-color: var(--dimmer); }
+  #operators .scan { margin-left: .2em; }
+
+  /* The join code. Narrower than the form dialogs, because it holds one picture. */
+  #qrdlg { width: min(30em, 94vw); max-height: 92vh; overflow-y: auto; }
+  #qrlists { display: flex; gap: .4em; flex-wrap: wrap; margin: 0 0 1em; }
+  #qrbody { font: var(--ui); color: var(--dim); }
+
+  /* The one light thing in the whole application, and it has to be.
+     A scanner wants dark modules on a light field with a margin of its own. The quiet
+     zone is already inside the SVG — four modules, as the format asks — and this adds a
+     second one for a phone held at an angle. Dimming the white to spare the eye in a
+     dark booth is the one change here that would stop it working. */
+  #qrtile {
+    background: #fff; border-radius: 6px; padding: .9em;
+    width: min(56vh, 21em); margin: .2em auto .9em;
+  }
+  #qrtile img { display: block; width: 100%; height: auto; }
+
+  /* The address, verbatim, under its own picture.
+     Not decoration. `lan_addresses` asks the routing table for the default route, and a
+     machine with a lighting network on ethernet and the house on wifi can answer with
+     the wrong one. That was survivable while somebody read the number out; a code that
+     nobody reads removes the person who would have noticed. */
+  #qrurl { font: 400 .82em/1.5 ui-monospace, Menlo, monospace; color: var(--fg);
+           text-align: center; overflow-wrap: anywhere; }
+  #qralso { font: var(--ui); color: var(--dim); text-align: center; margin-top: .9em; }
+  /* `break-all` splits an address anywhere it runs out of room, including through the
+     middle of a port — `:80 / 99` reads as two numbers and neither is the one to type.
+     `anywhere` takes the same last resort but prefers the punctuation first. */
+  #qralso code { color: var(--fg); font-family: ui-monospace, Menlo, monospace;
+                 overflow-wrap: anywhere; }
 
   /* The models panel. Present only until the weights are, and then never seen again —
      so it says everything it has to say in one go rather than hiding half of it behind
@@ -157,6 +188,21 @@
   <pre class="report" id="impreport" hidden></pre>
 </dialog>
 
+<!-- The address, for a camera instead of a keyboard.
+     One list at a time and one large code, not a wall of them: this is held up to a
+     phone at the half, and six codes on a screen is six chances to scan the wrong one. -->
+<dialog id="qrdlg">
+  <h2>Scan for a cue list</h2>
+  <div id="qrbody"></div>
+  <div id="qrlists"></div>
+  <div id="qrtile" hidden><img id="qrimg" alt=""></div>
+  <div id="qrurl"></div>
+  <div id="qralso"></div>
+  <div class="foot">
+    <button class="pill" id="qrclose">Close</button>
+  </div>
+</dialog>
+
 <script src="/app.js"></script>
 <script>
 (() => {
@@ -171,7 +217,7 @@
     shows = s;
     open = st.open;
     $('where').textContent = st.root;
-    paintOperators(st.operators);
+    paintOperators(st.operators, st.open);
     paint();
     paintModels();
   }
@@ -181,7 +227,7 @@
   // Copyable rather than merely printed: it gets sent in a message far more often than
   // it gets read aloud, and retyping an IP into four tablets is how one of them ends up
   // on the wrong number.
-  function paintOperators(addrs) {
+  function paintOperators(addrs, openShow) {
     const box = $('operators');
     if (!addrs || !addrs.length) { box.hidden = true; return; }
     box.hidden = false;
@@ -205,7 +251,108 @@
       };
       box.appendChild(b);
     }
+    // Offered only with a show open, because that is the only time there is anything to
+    // scan: `/list/<id>` has nowhere to send a phone until a show server is up, and the
+    // lists themselves come from it.
+    if (openShow) {
+      const scan = document.createElement('button');
+      scan.className = 'addr scan';
+      scan.textContent = 'scan a cue list…';
+      scan.onclick = openQr;
+      box.appendChild(scan);
+    }
   }
+
+  // ---- the join code ---------------------------------------------------------
+  //
+  // A camera instead of a keyboard. Typing `10.160.58.186:8080/list/conduite-son` into
+  // four tablets in the dark is four chances to get one character wrong, and the one
+  // that is wrong is found at the top of the show.
+  //
+  // The number goes in the code and the Bonjour name goes underneath it, which is the
+  // wrong way round from everywhere else here and is deliberate: an Android browser does
+  // not resolve `.local` at all, so a code carrying the name is a code half the wing
+  // cannot use. The name is still the one worth keeping — it outlives the lease the
+  // number does not — so it is printed, to be typed once by whoever wants it.
+  let qrLists = [], qrPick = null, qrAddr = null, qrOther = null;
+
+  // Resolved against the address this end built, so the port is never spelled out twice
+  // and an id needing escaping survives the URL parser intact.
+  const joinLink = (a, id) => new URL('/list/' + encodeURIComponent(id), a.url).href;
+
+  async function openQr() {
+    const dlg = $('qrdlg');
+    $('qrlists').textContent = '';
+    $('qrtile').hidden = true;
+    $('qrurl').textContent = '';
+    $('qralso').textContent = '';
+    $('qrbody').textContent = 'asking the show…';
+    // Open first and fill after. `/api/lists` goes through this server to the show
+    // server and back, and a dialog that appears half a second after the click reads as
+    // a button that did not work.
+    dlg.showModal();
+
+    let st, ls;
+    // Asked again rather than taken from the last page load. This screen is left open
+    // from the get-in to the half, and the number in it is a DHCP lease: drawing an
+    // address that expired at 16:00 is the exact failure this is here to prevent.
+    try { [st, ls] = await Promise.all([App.get('/api/state'), App.get('/api/lists')]); }
+    catch (e) { $('qrbody').textContent = e.message; return; }
+
+    const ip = (st.operators || []).find((a) => a.kind === 'ip') || null;
+    const named = (st.operators || []).find((a) => a.kind === 'name') || null;
+    qrAddr = ip || named;
+    qrOther = ip ? named : null;
+    qrLists = ls.lists || [];
+
+    if (!qrAddr) {
+      $('qrbody').textContent =
+        'This machine has no address on any network at the moment, so there is nothing '
+        + 'for a phone to reach it at.';
+      return;
+    }
+    if (!qrLists.length) {
+      $('qrbody').textContent = ls.show
+        ? `${ls.show} carries no cue lists yet.`
+        : 'No show is open.';
+      return;
+    }
+    // Which show, and whether it will move. A code leading to a script open for
+    // preparation is not the same offer as one leading to a running show.
+    $('qrbody').textContent = ls.prep
+      ? `${ls.show} — open for preparation, so the script will not move.`
+      : ls.running ? `${ls.show} — now running.`
+        : `${ls.show} — open, but the tracker has stopped.`;
+    qrPick = qrLists.some((l) => l.id === qrPick) ? qrPick : qrLists[0].id;
+    paintQr();
+  }
+
+  function paintQr() {
+    const box = $('qrlists');
+    box.textContent = '';
+    // One list is not a choice.
+    if (qrLists.length > 1) {
+      for (const l of qrLists) {
+        const b = document.createElement('button');
+        b.className = 'pill' + (l.id === qrPick ? ' on' : '');
+        b.textContent = l.name;
+        b.onclick = () => { qrPick = l.id; paintQr(); };
+        box.appendChild(b);
+      }
+    }
+    const url = joinLink(qrAddr, qrPick);
+    // The same string in the picture and in the words under it, so the two cannot drift.
+    $('qrimg').src = '/qr?d=' + encodeURIComponent(url);
+    $('qrtile').hidden = false;
+    $('qrurl').textContent = url;
+    $('qralso').innerHTML = qrOther
+      ? 'Worth keeping, and it outlives the number: <code>' + App.esc(joinLink(qrOther, qrPick))
+        + '</code> — iPads and Macs find it, Android does not.'
+      : 'There is no Bonjour name here, so there is only the number — and the number '
+        + 'changes when the network hands out a new one.';
+  }
+
+  $('qrclose').onclick = () => $('qrdlg').close();
 
   // ---- the models ------------------------------------------------------------
   //
